@@ -2,6 +2,9 @@
 
 Este diretório guarda o arquivo base do projeto, usado como referência para as próximas etapas de desenvolvimento.
 
+- **`sol3d.html`** — arquivo base da simulação (detalhes abaixo).
+- **`images/`** — referências de imagem: astrofotografias solares em H-alpha e o render atual da simulação, documentadas em `images/README.md`.
+
 ## `sol3d.html`
 
 Simulação 3D do Sol totalmente autocontida em um único arquivo HTML (~650 KB). Basta abrir no navegador — não há dependências externas nem build.

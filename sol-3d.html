@@ -48,7 +48,7 @@
   <div id="ui">
     <div id="title-block">
       <h1>&#9737; O SOL</h1>
-      <p>convec&ccedil;&atilde;o fotosf&eacute;rica simulada em tempo real</p>
+      <p>cromosfera em H-alfa &middot; simula&ccedil;&atilde;o em tempo real</p>
     </div>
     <div id="hint">arraste para girar &middot; scroll para aproximar</div>
   </div>
@@ -540,6 +540,14 @@ function init(){
     '}'
   ].join('\n');
 
+  // aparelhos fracos: LIC com 5 amostras em vez de 7 (mesma técnica do
+  // ajuste de oitavas do fBm, feito por substituição de texto no GLSL)
+  if (isLowPower) {
+    sunFragmentShader = sunFragmentShader
+      .replace(/int i=-3;i<=3/g, 'int i=-2;i<=2')
+      .replace(/float\(i\)\/3\.0/g, 'float(i)/2.0');
+  }
+
   var sunMaterial = new THREE.ShaderMaterial({
     uniforms: sunUniforms,
     vertexShader: sunVertexShader,
@@ -577,8 +585,8 @@ function init(){
   var coronaOuterTex = makeRadialTexture([
     [0.00,'rgba(255,150,70,0)'],
     [0.40,'rgba(255,140,60,0)'],
-    [0.52,'rgba(255,120,48,0.05)'],
-    [0.75,'rgba(255,90,32,0.015)'],
+    [0.52,'rgba(255,120,48,0.028)'],
+    [0.75,'rgba(255,90,32,0.010)'],
     [1.00,'rgba(255,70,20,0)']
   ]);
 

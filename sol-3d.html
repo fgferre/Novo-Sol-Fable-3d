@@ -489,7 +489,7 @@ function init(){
   // exige resolução plena (fibrilas LIC, manchas, limbo).
   //   R = calor de larga escala   G = filamento   B = plage
   // ---------------------------------------------------------------
-  var CHROMO_W = isLowPower ? 512 : 1024;
+  var CHROMO_W = isLowPower ? 512 : 2048;
   var CHROMO_H = CHROMO_W >> 1;
   var chromoRT = new THREE.WebGLRenderTarget(CHROMO_W, CHROMO_H, simRTOptions);
   chromoRT.texture.wrapS = THREE.RepeatWrapping;   // costura de longitude
@@ -520,7 +520,11 @@ function init(){
     '    float s = float(i)/3.0;',
     '    float w = 1.0 - abs(s)*0.62;',
     '    vec3 q = normalize(p + dir*(s*stepLen));',
-    '    acc += snoise(q*freq + vec3(0.0,0.0,t*0.05)) * w;',
+    // ruído ANISOTRÓPICO: domínio comprimido ao longo do fluxo — cada
+    // fio nasce ~4x mais longo antes mesmo da convolução
+    '    vec3 qq = q*freq;',
+    '    qq -= dir*(dot(qq, dir)*0.72);',
+    '    acc += snoise(qq + vec3(0.0,0.0,t*0.05)) * w;',
     '    wsum += w;',
     '  }',
     '  acc /= wsum;',
@@ -635,7 +639,7 @@ function init(){
     '    ? (Bt*cos(wig) + cross(sp, Bt)*sin(wig)) / BtL',
     '    : vec3(0.5773);',
     // varredura longa: ±4 passos de ~3 texels ao longo do fluxo
-    '  float stepArc = uTexel.x * 6.28318530718 * 2.2;',
+    '  float stepArc = uTexel.x * 6.28318530718 * 1.6;',
     '  vec4 acc = vec4(0.0); float wsum = 0.0;',
     '  for(int i=-4;i<=4;i++){',
     '    vec3 q = normalize(sp + dir*(float(i)*stepArc));',
@@ -731,7 +735,11 @@ function init(){
     '    float s = float(i)/3.0;',
     '    float w = 1.0 - abs(s)*0.62;',
     '    vec3 q = normalize(p + dir*(s*stepLen));',
-    '    acc += snoise(q*freq + vec3(0.0,0.0,t*0.05)) * w;',
+    // ruído ANISOTRÓPICO: domínio comprimido ao longo do fluxo — cada
+    // fio nasce ~4x mais longo antes mesmo da convolução
+    '    vec3 qq = q*freq;',
+    '    qq -= dir*(dot(qq, dir)*0.72);',
+    '    acc += snoise(qq + vec3(0.0,0.0,t*0.05)) * w;',
     '    wsum += w;',
     '  }',
     '  acc /= wsum;',
@@ -757,7 +765,7 @@ function init(){
     // --- fibrilas grossas: baked (canal A). De perto, o claro/escuro é
     // FEITO de fibrilas: a larga escala modula o contraste dos fios ---
     '  float fibC = st.a*2.0 - 1.0;',
-    '  heat += fibC * mix(0.15, 0.30, close) * (0.65 + 0.70*st.r);',
+    '  heat += fibC * mix(0.115, 0.30, close) * (0.65 + 0.70*st.r);',
     // LOD: de perto, campo magnético + LIC ao vivo dão as camadas finas
     // (de longe o disco é praticamente só o sampler do bake)
     '  if (close > 0.003){',
@@ -771,12 +779,12 @@ function init(){
     '    vec3 fdir = (BtL > 1e-4)',
     '      ? (Bt*cos(wig) + cross(sp, Bt)*sin(wig)) / BtL',
     '      : vec3(0.5773);',
-    '    float fibF = licFibril(sp, fdir, uGranFreq*3.1, 0.085, t*1.3);',
-    '    heat += close * fibF * 0.15;',
+    '    float fibF = licFibril(sp, fdir, uGranFreq*2.0, 0.115, t*1.3);',
+    '    heat += close * fibF * 0.18;',
     // camada micro: só em zoom máximo, fios finíssimos
     '    float closer = smoothstep(4.8, 3.5, uCamDist);',
     '    if (closer > 0.003){',
-    '      heat += closer * licFibril(sp, fdir, uGranFreq*6.2, 0.048, t*1.6) * 0.10;',
+    '      heat += closer * licFibril(sp, fdir, uGranFreq*3.6, 0.065, t*1.6) * 0.12;',
     '    }',
     '  }',
     // --- manchas: nos PÉS das cargas magnéticas (regiões ativas) ---
@@ -822,7 +830,7 @@ function init(){
     // a matiz é quase constante; heat modula LUMINÂNCIA e desloca a matiz
     // só um pouco para o amarelo nas áreas quentes (plage).
     '  vec3 color = mix(vec3(1.0, 0.34, 0.06), vec3(1.0, 0.62, 0.24), smoothstep(0.15, 1.05, heat));',
-    '  color *= mix(0.30, 1.42, smoothstep(0.04, 1.08, heat));',
+    '  color *= mix(0.16, 1.42, smoothstep(0.04, 1.08, heat));',
     '  color += vec3(1.0, 0.55, 0.22) * flareGlow * 0.9;',   // pico HDR do flare
     // --- escurecimento + avermelhamento de limbo (lei linear, u=0.72) ---
     '  float limbU = 0.45;',   // H-alfa: escurecimento de limbo bem mais suave que no contínuo (ref-02)
@@ -1343,8 +1351,10 @@ function init(){
     // vinheta cinematográfica sutil
     '  vec2 vc = vUv - 0.5;',
     '  color *= 1.0 - dot(vc, vc)*0.55;',
-    // dithering: quebra o banding dos gradientes escuros da coroa
-    '  color += (hash12(gl_FragCoord.xy) - 0.5) * (1.6/255.0);',
+    // dithering só nas áreas ESCURAS (céu/coroa, onde há banding);
+    // no disco ele viraria chuvisco isotrópico sobre as fibrilas
+    '  float dith = smoothstep(0.30, 0.06, dot(color, vec3(0.3333)));',
+    '  color += (hash12(gl_FragCoord.xy) - 0.5) * (1.6/255.0) * dith;',
     '  gl_FragColor = vec4(color, 1.0);',
     '}'
   ].join('\n');
@@ -1534,11 +1544,32 @@ function init(){
   renderer.domElement.addEventListener('dblclick', function(e){ e.preventDefault(); toggleFrame(); });
   renderer.domElement.addEventListener('contextmenu', function(e){ e.preventDefault(); });
   window.addEventListener('keydown', onKeyDown);
-  // estado exposto para QA automatizado
+  // estado exposto para QA automatizado (leitura + posicionamento de câmera)
   try {
-    if (window.__solInfo) window.__solInfo.state = function(){
-      return { camDist: camDist, targetCamDist: targetCamDist, theta: theta, phi: phi };
-    };
+    if (window.__solInfo){
+      window.__solInfo.state = function(){
+        return { camDist: camDist, targetCamDist: targetCamDist, theta: theta, phi: phi,
+                 rotY: sunMesh.rotation.y, fitDist: fitDist, minDist: minDist };
+      };
+      window.__solInfo.regions = function(){
+        return pairStates.map(function(ps){
+          return { lead: [ps.lead.x, ps.lead.y, ps.lead.z], w: ps.lead.w, baseQ: ps.baseQ };
+        });
+      };
+      window.__solInfo.prominences = function(){
+        return prominenceMeshes.map(function(m){
+          var d = m.userData.dir;
+          return [d.x, d.y, d.z];
+        });
+      };
+      window.__solInfo.setView = function(th, ph, dist){
+        theta = th; phi = Math.max(0.18, Math.min(Math.PI-0.18, ph));
+        targetCamDist = camDist = Math.max(minDist, Math.min(maxDist, dist));
+        thetaVel = 0; phiVel = 0;
+        lastInteraction = performance.now();
+        updateCamera();
+      };
+    }
   } catch(_){}
 
   function onResize(){

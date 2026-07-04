@@ -219,6 +219,31 @@ function init(){
   ].join('\n');
 
   // ---------------------------------------------------------------
+  // Gradiente tangencial do Br TRANSPORTADO (canal G da simulação):
+  // o campo horizontal da cromosfera aponta ~ ao longo do gradiente do
+  // potencial magnético suavizado — as fibrilas do sol calmo agora
+  // seguem um campo que foi advectado pelo escoamento, não ruído fixo.
+  // (o shader que incluir este trecho precisa declarar uSimTex/uSimTexel)
+  // ---------------------------------------------------------------
+  var SFTDIR_GLSL = [
+    'vec3 sftGrad(vec2 uv){',
+    '  vec2 t3 = uSimTexel*3.0;',
+    '  vec2 t8 = uSimTexel*8.0;',
+    '  float bR = texture2D(uSimTex, vec2(fract(uv.x+t3.x), uv.y)).g + texture2D(uSimTex, vec2(fract(uv.x+t8.x), uv.y)).g;',
+    '  float bL = texture2D(uSimTex, vec2(fract(uv.x-t3.x), uv.y)).g + texture2D(uSimTex, vec2(fract(uv.x-t8.x), uv.y)).g;',
+    '  float bU = texture2D(uSimTex, vec2(uv.x, clamp(uv.y+t3.y, 0.0, 1.0))).g + texture2D(uSimTex, vec2(uv.x, clamp(uv.y+t8.y, 0.0, 1.0))).g;',
+    '  float bD = texture2D(uSimTex, vec2(uv.x, clamp(uv.y-t3.y, 0.0, 1.0))).g + texture2D(uSimTex, vec2(uv.x, clamp(uv.y-t8.y, 0.0, 1.0))).g;',
+    '  float lat = (uv.y-0.5)*3.14159265359;',
+    '  float lon = uv.x*6.28318530718;',
+    '  vec3 eLon = vec3(-sin(lon), 0.0, cos(lon));',
+    '  vec3 eLat = vec3(-sin(lat)*cos(lon), cos(lat), -sin(lat)*sin(lon));',
+    '  float gx = (bR-bL) / max(cos(lat), 0.2);',
+    '  float gy = (bU-bD);',
+    '  return eLon*gx + eLat*gy;',
+    '}'
+  ].join('\n');
+
+  // ---------------------------------------------------------------
   // Radiação de corpo negro (aproximação de Tanner Helland, válida
   // ~1000K-40000K). Usada para derivar cor a partir de temperatura,
   // em vez de uma rampa de cores escolhida à mão.
@@ -297,7 +322,8 @@ function init(){
     uDt: { value: 0.0 },
     uTime: { value: 0.0 },
     uSeed: { value: 1.0 },
-    uTexel: { value: new THREE.Vector2(1/SIM_W, 1/SIM_H) }
+    uTexel: { value: new THREE.Vector2(1/SIM_W, 1/SIM_H) },
+    uChargesSim: { value: null }   // preenchido após buildCharges
   };
 
   var simFragmentShader = NOISE_GLSL + '\n' + [
@@ -306,7 +332,26 @@ function init(){
     'uniform float uTime;',
     'uniform float uSeed;',
     'uniform vec2 uTexel;',
+    'uniform vec4 uChargesSim[10];',
     'varying vec2 vUv;',
+    // TRANSPORTE DE FLUXO EM SUPERFÍCIE (Leighton 1964): o alvo de Br é
+    // a soma dos bipolos das regiões ativas + o "tapete magnético" de
+    // polaridade mista do sol calmo; a advecção (abaixo) arrasta esse
+    // fluxo com o escoamento — indução MHD ideal reduzida à superfície.
+    'float targetBr(vec3 p3, float t){',
+    '  float b = 0.0;',
+    '  for(int i=0;i<8;i++){',
+    '    vec3 cd = uChargesSim[i].xyz;',
+    '    float cl = length(cd);',
+    '    if (cl < 1e-4) continue;',
+    '    float dAng = acos(clamp(dot(p3, cd/cl), -1.0, 1.0));',
+    '    b += uChargesSim[i].w * exp(-dAng*dAng*150.0);',
+    '  }',
+    '  b = clamp(b*0.7, -1.0, 1.0);',
+    '  float carpet = snoise(p3*7.5 + vec3(0.0, 0.0, t*0.012));',
+    '  carpet = sign(carpet) * smoothstep(0.30, 0.75, abs(carpet));',
+    '  return clamp(b + carpet*0.38, -1.0, 1.0);',
+    '}',
     'float potential(vec2 uv, float t){',
     '  float lon = uv.x*6.28318530718;',
     '  float lat = (uv.y-0.5)*3.14159265359;',
@@ -334,39 +379,50 @@ function init(){
     '  vec3 p3 = vec3(cos(lat)*cos(lon), sin(lat), cos(lat)*sin(lon));',
     '  float target = fbm(p3*3.6 + vec3(0.0,0.0,uTime*0.05));',
     '  target = target*0.5+0.5;',
+    '  float tBr = targetBr(p3, uTime);',
     '  if (uSeed > 0.5) {',
-    '    gl_FragColor = vec4(target,target,target,1.0);',
+    '    gl_FragColor = vec4(target, 0.5 + 0.5*tBr, target, 1.0);',
     '    return;',
     '  }',
     '  vec2 vel = curlVel(uv, uTime) * 1.1;',
     '  vel.x += diffRotDegPerDay(lat) * 0.00028;',
     '  vec2 srcUV = vec2(fract(uv.x - vel.x*uDt), clamp(uv.y - vel.y*uDt, 0.0015, 0.9985));',
-    '  float prevVal = texture2D(uPrevState, srcUV).r;',
-    '  float blur = prevVal;',
-    '  blur += texture2D(uPrevState, srcUV+vec2(uTexel.x,0.0)).r;',
-    '  blur += texture2D(uPrevState, srcUV-vec2(uTexel.x,0.0)).r;',
-    '  blur += texture2D(uPrevState, srcUV+vec2(0.0,uTexel.y)).r;',
-    '  blur += texture2D(uPrevState, srcUV-vec2(0.0,uTexel.y)).r;',
-    '  blur /= 5.0;',
+    '  vec4 prevC = texture2D(uPrevState, srcUV);',
+    '  vec4 cR = texture2D(uPrevState, srcUV+vec2(uTexel.x,0.0));',
+    '  vec4 cL = texture2D(uPrevState, srcUV-vec2(uTexel.x,0.0));',
+    '  vec4 cU = texture2D(uPrevState, srcUV+vec2(0.0,uTexel.y));',
+    '  vec4 cD = texture2D(uPrevState, srcUV-vec2(0.0,uTexel.y));',
+    '  float prevVal = prevC.r;',
+    '  float blur = (prevVal + cR.r + cL.r + cU.r + cD.r) / 5.0;',
     '  float advected = mix(prevVal, blur, 0.035);',
     '  float result = mix(advected, target, 0.022);',
     '  result = clamp(result, 0.0, 1.0);',
-    '  gl_FragColor = vec4(result,result,result,1.0);',
+    // Br: mesma advecção (fluxo congelado no escoamento) + difusão de
+    // Leighton um pouco maior + relaxação lenta para as fontes — o padrão
+    // que se vê é o alvo DISTORCIDO pela história do escoamento
+    '  float prevB = prevC.g*2.0 - 1.0;',
+    '  float blurB = (prevB + (cR.g*2.0-1.0) + (cL.g*2.0-1.0) + (cU.g*2.0-1.0) + (cD.g*2.0-1.0)) / 5.0;',
+    '  float advB = mix(prevB, blurB, 0.06);',
+    '  float resB = clamp(mix(advB, tBr, 0.028), -1.0, 1.0);',
+    '  gl_FragColor = vec4(result, 0.5 + 0.5*resB, result, 1.0);',
     '}'
   ].join('\n');
 
   var simStepMaterial = new THREE.ShaderMaterial({ uniforms: simUniforms, vertexShader: quadVertex, fragmentShader: simFragmentShader });
   var simStepScene = makeFullscreenScene(simStepMaterial);
 
-  // semeia os dois alvos com ruído em força total para não haver "pop-in"
-  simUniforms.uSeed.value = 1.0;
-  simUniforms.uTime.value = 0.0;
-  renderer.setRenderTarget(simRTs[0]);
-  renderer.render(simStepScene, quadCamera);
-  renderer.setRenderTarget(simRTs[1]);
-  renderer.render(simStepScene, quadCamera);
-  renderer.setRenderTarget(null);
-  simUniforms.uSeed.value = 0.0;
+  // semeia os dois alvos com ruído em força total para não haver "pop-in".
+  // Chamada DEPOIS de buildCharges (uChargesSim precisa estar preenchido).
+  function seedSimulation(){
+    simUniforms.uSeed.value = 1.0;
+    simUniforms.uTime.value = 0.0;
+    renderer.setRenderTarget(simRTs[0]);
+    renderer.render(simStepScene, quadCamera);
+    renderer.setRenderTarget(simRTs[1]);
+    renderer.render(simStepScene, quadCamera);
+    renderer.setRenderTarget(null);
+    simUniforms.uSeed.value = 0.0;
+  }
 
   var simClockTime = 0.0;
   function stepSimulation(dt){
@@ -380,6 +436,8 @@ function init(){
     renderer.render(simStepScene, quadCamera);
     simIndex = 1-simIndex;
     chromoUniforms.uSimTex.value = simRTs[simIndex].texture;
+    smearUniforms.uSimTex.value  = simRTs[simIndex].texture;
+    sunUniforms.uSimTex.value    = simRTs[simIndex].texture;
   }
 
   // ---------------------------------------------------------------
@@ -408,11 +466,29 @@ function init(){
     return new THREE.Vector3(Math.cos(la)*Math.cos(lo), Math.sin(la), Math.cos(la)*Math.sin(lo));
   }
   function placePair(ps){
-    var lat = ps.hemi * (0.24 + Math.random()*0.30);
-    var lon = Math.random()*Math.PI*2;
-    var sep = 0.14 + Math.random()*0.08;
-    var lead = sphDir(lon, lat).multiplyScalar(0.88);
-    var foll = sphDir(lon+sep, lat + (Math.random()-0.5)*0.06).multiplyScalar(0.88);
+    // rejeição: regiões ativas independentes não nascem sobrepostas —
+    // exige distância angular mínima dos líderes das outras regiões
+    var lat, lon, lead;
+    for (var attempt = 0; attempt < 24; attempt++){
+      lat = ps.hemi * (0.24 + Math.random()*0.30);
+      lon = Math.random()*Math.PI*2;
+      lead = sphDir(lon, lat);
+      var minAng = Math.PI;
+      for (var j = 0; j < pairStates.length; j++){
+        var other = pairStates[j];
+        if (other === ps || !other.lead) continue;
+        var od = new THREE.Vector3(other.lead.x, other.lead.y, other.lead.z);
+        if (od.lengthSq() < 1e-6) continue;
+        minAng = Math.min(minAng, lead.angleTo(od.normalize()));
+      }
+      if (minAng > 0.55) break;
+    }
+    // lei de Joy: o par é inclinado — o seguidor fica mais perto do polo;
+    // separação maior que o raio das manchas (pares reais não se tocam)
+    var sep = 0.19 + Math.random()*0.10;
+    var follLat = lat + ps.hemi * sep * (0.28 + Math.random()*0.22);
+    lead.multiplyScalar(0.88);
+    var foll = sphDir(lon+sep, follLat).multiplyScalar(0.88);
     ps.lead.set(lead.x, lead.y, lead.z, ps.lead.w);
     ps.foll.set(foll.x, foll.y, foll.z, ps.foll.w);
   }
@@ -437,6 +513,8 @@ function init(){
     charges.push(new THREE.Vector4(0,  0.55, 0,  0.5));
     charges.push(new THREE.Vector4(0, -0.55, 0, -0.5));
   })();
+  simUniforms.uChargesSim.value = charges;
+  seedSimulation();
   function lifeEnvelope(x){   // x em 0..1 dentro do período
     if (x < 0.14) { var a = x/0.14; return a*a*(3.0-2.0*a); }
     if (x < 0.58) return 1.0;
@@ -478,7 +556,9 @@ function init(){
     uGranFreq: { value: isLowPower ? 22.0 : 34.0 },
     uCamDist: { value: 6.0 },
     uCharges: { value: charges },
-    uFlare: { value: new THREE.Vector4(0, 0, 1, 0) }
+    uFlare: { value: new THREE.Vector4(0, 0, 1, 0) },
+    uSimTex: { value: simRTs[0].texture },
+    uSimTexel: { value: simUniforms.uTexel.value }
   };
 
   // ---------------------------------------------------------------
@@ -496,15 +576,17 @@ function init(){
   var chromoUniforms = {
     uTime: { value: 0 },
     uSimTex: { value: simRTs[0].texture },
+    uSimTexel: { value: simUniforms.uTexel.value },
     uGranFreq: { value: isLowPower ? 22.0 : 34.0 },
     uCharges: { value: charges }
   };
   var chromoFragment = NOISE_GLSL + '\n' + WORLEY_GLSL + '\n' + [
     'uniform float uTime;',
     'uniform sampler2D uSimTex;',
+    'uniform vec2 uSimTexel;',
     'uniform float uGranFreq;',
     'uniform vec4 uCharges[10];',
-    'varying vec2 vUv;',
+    'varying vec2 vUv;'].join('\n') + '\n' + SFTDIR_GLSL + '\n' + [
     'vec3 bField(vec3 p){',
     '  vec3 B = vec3(0.0);',
     '  for(int i=0;i<10;i++){',
@@ -516,14 +598,14 @@ function init(){
     '}',
     'float licFibril(vec3 p, vec3 dir, float freq, float stepLen, float t){',
     '  float acc = 0.0; float wsum = 0.0;',
-    '  for(int i=-3;i<=3;i++){',
-    '    float s = float(i)/3.0;',
+    '  for(int i=-6;i<=6;i++){',
+    '    float s = float(i)/6.0;',
     '    float w = 1.0 - abs(s)*0.62;',
     '    vec3 q = normalize(p + dir*(s*stepLen));',
     // ruído ANISOTRÓPICO: domínio comprimido ao longo do fluxo — cada
     // fio nasce ~4x mais longo antes mesmo da convolução
     '    vec3 qq = q*freq;',
-    '    qq -= dir*(dot(qq, dir)*0.72);',
+    '    qq -= dir*(dot(qq, dir)*0.88);',
     '    acc += snoise(qq + vec3(0.0,0.0,t*0.05)) * w;',
     '    wsum += w;',
     '  }',
@@ -551,24 +633,47 @@ function init(){
     '  heatLS += network * 0.075;',
     // campo magnético + ruído do sol calmo (idêntico ao shader do disco)
     '  vec3 B = bField(sp);',
-    '  B += 0.72 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
+    // sol calmo: a direção vem do GRADIENTE do fluxo transportado pela
+    // simulação (tapete magnético advectado) + um resto de ruído p/ vida
+    '  B += 0.30 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
     '                   snoise(sp*2.4 + vec3(4.2,7.1,t*0.006)),',
     '                   snoise(sp*2.4 + vec3(9.3,2.8,t*0.006)));',
+    '  vec3 gradEv = sftGrad(vUv);',
+    '  B += gradEv * 7.0;',
     '  float Br = dot(B, sp);',
     '  float Bmag = length(B) + 1e-5;',
-    // filamentos: linhas neutras com campo moderado
-    '  float nl = abs(Br) / Bmag;',
+    // FÍSICA: filamentos e plage agora derivam do Br EVOLUÍDO (canal G
+    // da simulação, transportado pelo escoamento) — não mais do campo
+    // analítico das cargas. Br suavizado com cruz de 5 taps:
+    '  float brEv = texture2D(uSimTex, vUv).g*2.0 - 1.0;',
+    '  brEv = (brEv',
+    '    + (texture2D(uSimTex, vec2(fract(vUv.x + uSimTexel.x*2.0), vUv.y)).g*2.0 - 1.0)',
+    '    + (texture2D(uSimTex, vec2(fract(vUv.x - uSimTexel.x*2.0), vUv.y)).g*2.0 - 1.0)',
+    '    + (texture2D(uSimTex, vec2(vUv.x, clamp(vUv.y + uSimTexel.y*2.0, 0.0, 1.0))).g*2.0 - 1.0)',
+    '    + (texture2D(uSimTex, vec2(vUv.x, clamp(vUv.y - uSimTexel.y*2.0, 0.0, 1.0))).g*2.0 - 1.0)) / 5.0;',
+    '  float gradM = length(gradEv);',
+    // filamentos: linha de INVERSÃO do fluxo transportado (|Br|~0 com
+    // fluxo oposto em volta — é onde filamentos reais se sustentam)
+    '  float nl = abs(brEv) / (abs(brEv) + gradM*1.1 + 0.01);',
     '  float filW1 = 0.09*(0.55 + 0.9*(fbmLight(sp*3.2 + vec3(9.1, 2.2, 0.0))*0.5+0.5));',
     '  float filW3 = 0.15*(0.50 + 0.9*(fbmLight(sp*2.1 + vec3(5.5, 0.9, 2.8))*0.5+0.5));',
-    '  float rib1 = 1.0 - smoothstep(filW1*0.3, filW1, nl);',
-    '  float rib3 = 1.0 - smoothstep(filW3*0.3, filW3, nl);',
+    '  float nlw = nl * (0.70 + 0.55*(fbmLight(sp*6.5 + vec3(7.7, 4.1, 1.9))*0.5+0.5));',
+    '  float rib1 = 1.0 - smoothstep(filW1*0.18, filW1*1.25, nlw);',
+    '  float rib3 = 1.0 - smoothstep(filW3*0.18, filW3*1.25, nlw);',
     '  float filGate1 = smoothstep(0.10, 0.45, fbm(sp*1.05 + vec3(3.3, 7.7, 0.5)));',
     '  float filGate3 = smoothstep(0.28, 0.52, fbm(sp*0.85 + vec3(6.1, 3.9, 8.2)));',
-    '  float filStr = smoothstep(0.35, 1.1, Bmag) * (1.0 - smoothstep(5.0, 10.0, Bmag));',
+    '  float filStr = smoothstep(0.05, 0.16, gradM) * (1.0 - smoothstep(1.6, 2.8, gradM));',
     '  float fil = max(rib1*filGate1, rib3*filGate3) * filStr;',
-    // plage: campo forte (a exclusão de umbra/penumbra fica no disco)
-    '  float plage = smoothstep(3.5, 11.0, Bmag);',
-    '  plage *= 0.7 + 0.3*(fbmLight(sp*9.0 + vec3(2.4))*0.5+0.5);',
+    // ganho: as máscaras multiplicadas raramente chegam a 1 — recupera a
+    // profundidade visível dos filamentos (posição continua vindo do Br)
+    '  fil = clamp(fil*2.4, 0.0, 1.0);',
+    // plage: concentração forte do fluxo EVOLUÍDO
+    '  float plage = smoothstep(0.26, 0.55, abs(brEv));',
+    // plage real é MOSQUEADA: flocos brilhantes seguindo a rede, não um
+    // disco liso — quebra forte em duas escalas
+    '  float fleck = fbmLight(sp*14.0 + vec3(2.4))*0.5+0.5;',
+    '  fleck = fleck * (0.55 + 0.45*(snoise(sp*34.0 + vec3(8.8))*0.5+0.5));',
+    '  plage *= 0.30 + 0.85*smoothstep(0.30, 0.72, fleck);',
     // fibrilas grossas também são baked (espaço do objeto: giram com a
     // esfera). As camadas fina/micro continuam vivas no disco, só de perto.
     '  vec3 Bt = B - sp*Br;',
@@ -577,14 +682,14 @@ function init(){
     '  vec3 fdir = (BtL > 1e-4)',
     '    ? (Bt*cos(wig) + cross(sp, Bt)*sin(wig)) / BtL',
     '    : vec3(0.5773);',
-    '  float fibC = licFibril(sp, fdir, uGranFreq*1.05, 0.14, t);',
+    '  float fibC = licFibril(sp, fdir, uGranFreq*1.45, 0.14, t);',
     '  gl_FragColor = vec4(min(heatLS, 1.0), fil, min(plage, 1.0), 0.5 + 0.5*fibC);',
     '}'
   ].join('\n');
   if (isLowPower) {
     chromoFragment = chromoFragment
-      .replace(/int i=-3;i<=3/g, 'int i=-2;i<=2')
-      .replace(/float\(i\)\/3\.0/g, 'float(i)/2.0');
+      .replace(/int i=-6;i<=6/g, 'int i=-3;i<=3')
+      .replace(/float\(i\)\/6\.0/g, 'float(i)/3.0');
   }
   var chromoMaterial = new THREE.ShaderMaterial({ uniforms: chromoUniforms, vertexShader: quadVertex, fragmentShader: chromoFragment });
   var chromoScene = makeFullscreenScene(chromoMaterial);
@@ -602,14 +707,18 @@ function init(){
     uSrc: { value: chromoRT.texture },
     uTime: { value: 0 },
     uCharges: { value: charges },
-    uTexel: { value: new THREE.Vector2(1/CHROMO_W, 1/CHROMO_H) }
+    uTexel: { value: new THREE.Vector2(1/CHROMO_W, 1/CHROMO_H) },
+    uSimTex: { value: simRTs[0].texture },
+    uSimTexel: { value: simUniforms.uTexel.value }
   };
   var smearFragment = NOISE_GLSL + '\n' + [
     'uniform sampler2D uSrc;',
     'uniform float uTime;',
     'uniform vec4 uCharges[10];',
     'uniform vec2 uTexel;',
-    'varying vec2 vUv;',
+    'uniform sampler2D uSimTex;',
+    'uniform vec2 uSimTexel;',
+    'varying vec2 vUv;'].join('\n') + '\n' + SFTDIR_GLSL + '\n' + [
     'vec3 bField(vec3 p){',
     '  vec3 B = vec3(0.0);',
     '  for(int i=0;i<10;i++){',
@@ -629,9 +738,11 @@ function init(){
     '  vec3 sp = vec3(cos(lat)*cos(lon), sin(lat), cos(lat)*sin(lon));',
     '  float t = uTime;',
     '  vec3 B = bField(sp);',
-    '  B += 0.72 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
+    // mesma direção do bake: gradiente do fluxo transportado + resto de ruído
+    '  B += 0.30 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
     '                   snoise(sp*2.4 + vec3(4.2,7.1,t*0.006)),',
     '                   snoise(sp*2.4 + vec3(9.3,2.8,t*0.006)));',
+    '  B += sftGrad(vUv) * 7.0;',
     '  vec3 Bt = B - sp*dot(B, sp);',
     '  float BtL = length(Bt);',
     '  float wig = 0.85*snoise(sp*3.4 + vec3(0.0,0.0,t*0.012));',
@@ -709,12 +820,14 @@ function init(){
     'uniform float uGranFreq;',
     'uniform float uCamDist;',
     'uniform vec4 uFlare;',
+    'uniform sampler2D uSimTex;',
+    'uniform vec2 uSimTexel;',
     'varying vec3 vNormalW;',
     'varying vec3 vPositionW;',
     'varying vec3 vPosObj;',
     'varying float vDisp;',
     'varying vec2 vUvV;',
-    'uniform vec4 uCharges[10];',
+    'uniform vec4 uCharges[10];'].join('\n') + '\n' + SFTDIR_GLSL + '\n' + [
     // Campo magnético de cargas pontuais sob a superfície + ruído fraco
     // (sal do sol calmo). É ESTE campo que organiza fibrilas, filamentos,
     // manchas e plage — como na cromosfera real.
@@ -731,14 +844,14 @@ function init(){
     // ao longo da direção do fluxo -> o ruído vira fios "escovados".
     'float licFibril(vec3 p, vec3 dir, float freq, float stepLen, float t){',
     '  float acc = 0.0; float wsum = 0.0;',
-    '  for(int i=-3;i<=3;i++){',
-    '    float s = float(i)/3.0;',
+    '  for(int i=-6;i<=6;i++){',
+    '    float s = float(i)/6.0;',
     '    float w = 1.0 - abs(s)*0.62;',
     '    vec3 q = normalize(p + dir*(s*stepLen));',
     // ruído ANISOTRÓPICO: domínio comprimido ao longo do fluxo — cada
     // fio nasce ~4x mais longo antes mesmo da convolução
     '    vec3 qq = q*freq;',
-    '    qq -= dir*(dot(qq, dir)*0.72);',
+    '    qq -= dir*(dot(qq, dir)*0.88);',
     '    acc += snoise(qq + vec3(0.0,0.0,t*0.05)) * w;',
     '    wsum += w;',
     '  }',
@@ -765,26 +878,29 @@ function init(){
     // --- fibrilas grossas: baked (canal A). De perto, o claro/escuro é
     // FEITO de fibrilas: a larga escala modula o contraste dos fios ---
     '  float fibC = st.a*2.0 - 1.0;',
-    '  heat += fibC * mix(0.115, 0.30, close) * (0.65 + 0.70*st.r);',
+    '  heat += fibC * mix(0.085, 0.12, close) * (0.65 + 0.70*st.r);',
     // LOD: de perto, campo magnético + LIC ao vivo dão as camadas finas
     // (de longe o disco é praticamente só o sampler do bake)
     '  if (close > 0.003){',
     '    vec3 B = bField(sp);',
-    '    B += 0.72 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
+    // mesma direção do bake (gradiente do fluxo transportado): as camadas
+    // finas ao vivo seguem o MESMO campo evoluído das camadas baked
+    '    B += 0.30 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
     '                     snoise(sp*2.4 + vec3(4.2,7.1,t*0.006)),',
     '                     snoise(sp*2.4 + vec3(9.3,2.8,t*0.006)));',
+    '    B += sftGrad(vUvV) * 7.0;',
     '    vec3 Bt = B - sp*dot(B, sp);',
     '    float BtL = length(Bt);',
     '    float wig = 0.85*snoise(sp*3.4 + vec3(0.0,0.0,t*0.012));',
     '    vec3 fdir = (BtL > 1e-4)',
     '      ? (Bt*cos(wig) + cross(sp, Bt)*sin(wig)) / BtL',
     '      : vec3(0.5773);',
-    '    float fibF = licFibril(sp, fdir, uGranFreq*2.0, 0.115, t*1.3);',
-    '    heat += close * fibF * 0.18;',
+    '    float fibF = licFibril(sp, fdir, uGranFreq*3.5, 0.22, t*1.3);',
+    '    heat += close * fibF * 0.16;',
     // camada micro: só em zoom máximo, fios finíssimos
     '    float closer = smoothstep(4.8, 3.5, uCamDist);',
     '    if (closer > 0.003){',
-    '      heat += closer * licFibril(sp, fdir, uGranFreq*3.6, 0.065, t*1.6) * 0.12;',
+    '      heat += closer * licFibril(sp, fdir, uGranFreq*7.0, 0.08, t*1.6) * 0.20;',
     '    }',
     '  }',
     // --- manchas: nos PÉS das cargas magnéticas (regiões ativas) ---
@@ -793,7 +909,14 @@ function init(){
     '    vec3 f = normalize(uCharges[i].xyz);',
     '    float aw = abs(uCharges[i].w);',
     '    float d = acos(clamp(dot(sp, f), -1.0, 1.0));',
-    '    float r = 0.034 + 0.030*aw;',
+    // assimetria física do par (lei de Hale na prática): o LÍDER (índice
+    // par) é grande e coeso; o SEGUIDOR (ímpar) é menor e fragmentado —
+    // pares reais nunca são dois olhos gêmeos
+    '    float isFoll = mod(float(i), 2.0);',
+    // contorno irregular: umbra real não é um círculo perfeito
+    '    d *= 1.0 + mix(0.18, 0.38, isFoll)*snoise(sp*24.0 + f*9.0)',
+    '           + mix(0.07, 0.16, isFoll)*snoise(sp*60.0 - f*4.0);',
+    '    float r = (0.034 + 0.030*aw) * (1.0 - 0.45*isFoll);',
     '    float ui = 1.0 - smoothstep(r*0.55, r, d);',
     '    float pi = clamp((1.0 - smoothstep(r, r*1.55, d)) - ui, 0.0, 1.0);',
     '    umbra = max(umbra, ui);',
@@ -811,7 +934,7 @@ function init(){
     // --- plage: onde o campo é forte (em volta das regiões ativas),
     // mas fora das manchas — brilha sem nunca chegar ao branco ---
     '  float plage = st.b * (1.0 - umbra - pen*0.7);',
-    '  heat = heat*(1.0 - umbra*0.96 - pen*0.38) + clamp(plage, 0.0, 1.0)*0.30;',
+    '  heat = heat*(1.0 - umbra*0.96 - pen*0.38) + clamp(plage, 0.0, 1.0)*0.22;',
     // --- flare: laço brilhante efêmero perto do pé de uma carga forte;
     // o pico vai direto na cor (HDR) para o bloom capturar ---
     '  float flareGlow = 0.0;',
@@ -850,8 +973,8 @@ function init(){
   // ajuste de oitavas do fBm, feito por substituição de texto no GLSL)
   if (isLowPower) {
     sunFragmentShader = sunFragmentShader
-      .replace(/int i=-3;i<=3/g, 'int i=-2;i<=2')
-      .replace(/float\(i\)\/3\.0/g, 'float(i)/2.0');
+      .replace(/int i=-6;i<=6/g, 'int i=-3;i<=3')
+      .replace(/float\(i\)\/6\.0/g, 'float(i)/3.0');
   }
 
   var sunMaterial = new THREE.ShaderMaterial({
@@ -1084,8 +1207,8 @@ function init(){
         '  a *= 1.0 - smoothstep(0.72, 1.0, abs(xn));',
         // corta abaixo da superfície curva (sem borda reta flutuante)
         '  a *= smoothstep(0.0, 0.07, y - uSag*xn*xn);',
-        '  vec3 col = mix(vec3(0.45,0.06,0.02), vec3(1.0,0.32,0.09), wisp*(1.0-y*0.8));',
-        '  gl_FragColor = vec4(col, a*0.8);',
+        '  vec3 col = mix(vec3(0.45,0.06,0.02), vec3(1.30,0.42,0.12), wisp*(1.0-y*0.8));',
+        '  gl_FragColor = vec4(col, a*1.05);',
         '}'
       ].join('\n');
       var fanFragment = NOISE_GLSL + '\n' + [
@@ -1112,8 +1235,8 @@ function init(){
           '  float hFall = 1.0 - smoothstep(0.42, 1.02, r);',
           '  float a = wisp * fan * hFall * hFall * uIntensity;',
           // H-alfa contra céu escuro: vermelho profundo, pontas mais frias
-          '  vec3 col = mix(vec3(0.48,0.07,0.02), vec3(1.0,0.34,0.10), wisp*hFall);',
-          '  gl_FragColor = vec4(col, a*0.85);',
+          '  vec3 col = mix(vec3(0.48,0.07,0.02), vec3(1.30,0.45,0.13), wisp*hFall);',
+          '  gl_FragColor = vec4(col, a*1.15);',
           '}'
         ].join('\n');
       var mat = new THREE.ShaderMaterial({
@@ -1400,6 +1523,7 @@ function init(){
   var rotLast = null;
   var rotId = null;
   var pinchPrevDist = 0;
+  var flingSamples = [];
 
   function updateCamera(){
     var sp = Math.sin(phi);
@@ -1426,6 +1550,7 @@ function init(){
       rotId = e.pointerId;
       rotLast = { x: e.clientX, y: e.clientY };
       thetaVel = 0; phiVel = 0;
+      flingSamples.length = 0;
     } else if (pointers.size === 2){
       rotId = null; rotLast = null;
       pinchPrevDist = pointerDistance();
@@ -1463,6 +1588,13 @@ function init(){
       onPointerMove._t = nowT;
       thetaVel = thetaVel*0.65 + (dth/dtv)*0.35;
       phiVel   = phiVel*0.65   + (dph/dtv)*0.35;
+      // janela p/ estimar o fling no soltar por deslocamento acumulado:
+      // robusto a stalls de frame (o estimador acima despenca se um único
+      // intervalo entre eventos vier longo). Usa o timestamp do EVENTO:
+      // reflete o ritmo real do gesto mesmo com a thread principal travada
+      var evT = (e.timeStamp && e.timeStamp > 0) ? e.timeStamp : nowT;
+      flingSamples.push({ t: evT, th: theta, ph: phi });
+      if (flingSamples.length > 12) flingSamples.shift();
       lastInteraction = nowT;
     }
   }
@@ -1477,6 +1609,29 @@ function init(){
       pinchPrevDist = 0;
     } else if (pointers.size === 0){
       rotId = null; rotLast = null; pinchPrevDist = 0;
+      // fling pela janela de deslocamento (~180ms): pega a amostra mais
+      // antiga ainda recente e deriva a velocidade média — não depende do
+      // espaçamento dos eventos individuais
+      var nowE = performance.now();
+      var nS = flingSamples.length;
+      if (nS >= 2){
+        var newest = flingSamples[nS-1];
+        var pick = null;
+        for (var fi = 0; fi < nS; fi++){
+          if (nowE - flingSamples[fi].t <= 180){ pick = flingSamples[fi]; break; }
+        }
+        // eventos muito espaçados (máquina lenta/stall): a janela só contém
+        // a última amostra (deslocamento zero) — usa a penúltima, que
+        // carrega a última perna real do gesto
+        if (pick === null || pick === newest) pick = flingSamples[nS-2];
+        if (pick !== newest){
+          var dtF = Math.max(0.016, (newest.t - pick.t)/1000);
+          thetaVel = (newest.th - pick.th)/dtF;
+          phiVel   = (newest.ph - pick.ph)/dtF;
+        }
+      }
+      // com 0-1 amostras, fica o estimador suavizado do arraste
+      flingSamples.length = 0;
     }
     lastInteraction = performance.now();
   }
@@ -1512,10 +1667,12 @@ function init(){
   function onKeyDown(e){
     var k = e.key;
     var handled = true;
-    if (k === 'ArrowLeft')       thetaVel += 2.0;
-    else if (k === 'ArrowRight') thetaVel -= 2.0;
-    else if (k === 'ArrowUp')    phiVel   -= 1.5;
-    else if (k === 'ArrowDown')  phiVel   += 1.5;
+    // passo imediato + impulso de inércia: responde já no keydown mesmo
+    // se o próximo frame demorar (máquinas lentas), sem mudar o "feel"
+    if (k === 'ArrowLeft')       { thetaVel += 2.0; theta += 0.08; }
+    else if (k === 'ArrowRight') { thetaVel -= 2.0; theta -= 0.08; }
+    else if (k === 'ArrowUp')    { phiVel   -= 1.5; phi = Math.max(0.18, phi - 0.06); }
+    else if (k === 'ArrowDown')  { phiVel   += 1.5; phi = Math.min(Math.PI-0.18, phi + 0.06); }
     else if (k === '+' || k === '=') targetCamDist = Math.max(minDist, targetCamDist*0.82);
     else if (k === '-' || k === '_') targetCamDist = Math.min(maxDist, targetCamDist*1.22);
     else if (k === 'r' || k === 'R') targetCamDist = fitDist;
@@ -1549,6 +1706,7 @@ function init(){
     if (window.__solInfo){
       window.__solInfo.state = function(){
         return { camDist: camDist, targetCamDist: targetCamDist, theta: theta, phi: phi,
+                 thetaVel: thetaVel, phiVel: phiVel,
                  rotY: sunMesh.rotation.y, fitDist: fitDist, minDist: minDist };
       };
       window.__solInfo.regions = function(){
@@ -1682,7 +1840,7 @@ function init(){
     prominenceMeshes.forEach(function(m){
       var f = 0.65 + 0.25*Math.sin(elapsed*m.userData.speed + m.userData.phase)
                  + 0.15*Math.sin(elapsed*m.userData.speed*2.7 + m.userData.phase*1.7);
-      var base = Math.max(0.25, Math.min(1.0, f));
+      var base = Math.max(0.55, Math.min(1.15, f + 0.2));
       if (m === flareTarget) base += 2.6 * flareEnvelope(flareT);
       // física do limbo: proeminências só brilham na borda; contra o disco, somem
       var wd = m.userData.dir.clone().applyQuaternion(prominenceGroup.quaternion);
@@ -1692,7 +1850,7 @@ function init(){
       base *= (0.05 + 0.95*(1.0 - s));
       // folha opticamente fina: esmaece quando o plano fica de frente
       m.getWorldDirection(promNormal);
-      base *= 1.0 - 0.72*Math.abs(promNormal.dot(camDirN));
+      base *= 1.0 - 0.5*Math.abs(promNormal.dot(camDirN));
       m.material.uniforms.uIntensity.value = base;
       m.material.uniforms.uTime.value = elapsed;
     });

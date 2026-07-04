@@ -403,24 +403,61 @@ function init(){
   // ---------------------------------------------------------------
   var CHARGE_COUNT = 10;
   var charges = [];
+  var pairStates = [];
+  function sphDir(lo, la){
+    return new THREE.Vector3(Math.cos(la)*Math.cos(lo), Math.sin(la), Math.cos(la)*Math.sin(lo));
+  }
+  function placePair(ps){
+    var lat = ps.hemi * (0.24 + Math.random()*0.30);
+    var lon = Math.random()*Math.PI*2;
+    var sep = 0.14 + Math.random()*0.08;
+    var lead = sphDir(lon, lat).multiplyScalar(0.88);
+    var foll = sphDir(lon+sep, lat + (Math.random()-0.5)*0.06).multiplyScalar(0.88);
+    ps.lead.set(lead.x, lead.y, lead.z, ps.lead.w);
+    ps.foll.set(foll.x, foll.y, foll.z, ps.foll.w);
+  }
   (function buildCharges(){
-    function sph(lo, la){
-      return new THREE.Vector3(Math.cos(la)*Math.cos(lo), Math.sin(la), Math.cos(la)*Math.sin(lo));
-    }
     for (var i=0;i<4;i++){
       var hemi = (i%2===0) ? 1 : -1;
-      var lat = hemi * (0.24 + Math.random()*0.30);
-      var lon = (i/4)*Math.PI*2 + Math.random()*1.2;
-      var sep = 0.14 + Math.random()*0.08;
       var q = (1.0 + Math.random()*0.8) * hemi;
-      var lead = sph(lon, lat).multiplyScalar(0.88);
-      var foll = sph(lon+sep, lat + (Math.random()-0.5)*0.06).multiplyScalar(0.88);
-      charges.push(new THREE.Vector4(lead.x, lead.y, lead.z, q));
-      charges.push(new THREE.Vector4(foll.x, foll.y, foll.z, -q*0.85));
+      var lead = new THREE.Vector4(0,0,0, q);
+      var foll = new THREE.Vector4(0,0,0, -q*0.85);
+      charges.push(lead); charges.push(foll);
+      // ciclo de vida: emerge -> madura -> decai -> some (e renasce em
+      // outro lugar). Fases espalhadas: sempre há 2-3 regiões vivas.
+      var ps = {
+        lead: lead, foll: foll, baseQ: q, hemi: hemi,
+        period: 150 + Math.random()*90,
+        phase: 0, reborn: false
+      };
+      ps.phase = (i/4 + Math.random()*0.1) * ps.period;
+      placePair(ps);
+      pairStates.push(ps);
     }
     charges.push(new THREE.Vector4(0,  0.55, 0,  0.5));
     charges.push(new THREE.Vector4(0, -0.55, 0, -0.5));
   })();
+  function lifeEnvelope(x){   // x em 0..1 dentro do período
+    if (x < 0.14) { var a = x/0.14; return a*a*(3.0-2.0*a); }
+    if (x < 0.58) return 1.0;
+    if (x < 0.90) { var b = (x-0.58)/0.32; return 1.0 - b*b*(3.0-2.0*b); }
+    return 0.0;
+  }
+  function updateActiveRegions(timeNow){
+    for (var i=0;i<pairStates.length;i++){
+      var ps = pairStates[i];
+      var x = ((timeNow + ps.phase) % ps.period) / ps.period;
+      var env = lifeEnvelope(x);
+      if (x >= 0.90){
+        if (!ps.reborn){ placePair(ps); ps.reborn = true; }   // renasce longe
+      } else {
+        ps.reborn = false;
+      }
+      ps.lead.w =  ps.baseQ * Math.max(env, 0.03);
+      ps.foll.w = -ps.baseQ * 0.85 * Math.max(env, 0.03);
+    }
+  }
+  updateActiveRegions(0);
   // avaliação do mesmo campo em JS (para ancorar proeminências etc.)
   function bFieldJS(p){
     var B = new THREE.Vector3();
@@ -439,7 +476,8 @@ function init(){
     uChromoTex: { value: null },
     uGranFreq: { value: isLowPower ? 22.0 : 34.0 },
     uCamDist: { value: 6.0 },
-    uCharges: { value: charges }
+    uCharges: { value: charges },
+    uFlare: { value: new THREE.Vector4(0, 0, 1, 0) }
   };
 
   // ---------------------------------------------------------------
@@ -460,7 +498,7 @@ function init(){
     uGranFreq: { value: isLowPower ? 22.0 : 34.0 },
     uCharges: { value: charges }
   };
-  var chromoFragment = NOISE_GLSL + '\n' + [
+  var chromoFragment = NOISE_GLSL + '\n' + WORLEY_GLSL + '\n' + [
     'uniform float uTime;',
     'uniform sampler2D uSimTex;',
     'uniform float uGranFreq;',
@@ -500,6 +538,12 @@ function init(){
     '  float turb = fbm(rq*1.7 + vec3(0.0, 0.0, t*0.06))*0.5+0.5;',
     '  float heatLS = sim*0.60 + turb*0.40;',
     '  heatLS = pow(max(heatLS, 0.0), 1.75) + 0.05;',
+    // rede de supergranulação: células ~30Mm; as BORDAS (F2-F1 pequeno)
+    // são a rede cromosférica brilhante que organiza o sol calmo
+    '  vec2 sg = worleyF1F2(sp*23.0 + vec3(0.0, 0.0, t*0.004));',
+    '  float network = 1.0 - smoothstep(0.0, 0.17, sg.y - sg.x);',
+    '  network *= 0.6 + 0.4*(snoise(sp*7.0 + vec3(1.3))*0.5+0.5);',
+    '  heatLS += network * 0.075;',
     // campo magnético + ruído do sol calmo (idêntico ao shader do disco)
     '  vec3 B = bField(sp);',
     '  B += 0.72 * vec3(snoise(sp*3.2 + vec3(0.0,0.0,t*0.006)),',
@@ -585,6 +629,7 @@ function init(){
     'uniform sampler2D uChromoTex;',
     'uniform float uGranFreq;',
     'uniform float uCamDist;',
+    'uniform vec4 uFlare;',
     'varying vec3 vNormalW;',
     'varying vec3 vPositionW;',
     'varying vec3 vPosObj;',
@@ -682,6 +727,15 @@ function init(){
     // mas fora das manchas — brilha sem nunca chegar ao branco ---
     '  float plage = st.b * (1.0 - umbra - pen*0.7);',
     '  heat = heat*(1.0 - umbra*0.96 - pen*0.45) + clamp(plage, 0.0, 1.0)*0.22;',
+    // --- flare: laço brilhante efêmero perto do pé de uma carga forte;
+    // o pico vai direto na cor (HDR) para o bloom capturar ---
+    '  float flareGlow = 0.0;',
+    '  if (uFlare.w > 0.004){',
+    '    float fdist = acos(clamp(dot(sp, uFlare.xyz), -1.0, 1.0));',
+    '    float frib = 0.55 + 0.45*(fbmLight(sp*26.0 + vec3(3.9))*0.5+0.5);',
+    '    flareGlow = uFlare.w * exp(-fdist*fdist*700.0) * frib;',
+    '    heat += flareGlow*0.5;',
+    '  }',
     // --- filamentos (linhas neutras) vêm do bake; exclusão de manchas aqui ---
     '  float fil = st.g * clamp(1.0 - umbra - pen, 0.0, 1.0);',
     '  heat *= 1.0 - fil*0.44;',
@@ -692,6 +746,7 @@ function init(){
     // só um pouco para o amarelo nas áreas quentes (plage).
     '  vec3 color = mix(vec3(1.0, 0.34, 0.06), vec3(1.0, 0.62, 0.24), smoothstep(0.15, 1.05, heat));',
     '  color *= mix(0.30, 1.42, smoothstep(0.04, 1.08, heat));',
+    '  color += vec3(1.0, 0.55, 0.22) * flareGlow * 0.9;',   // pico HDR do flare
     // --- escurecimento + avermelhamento de limbo (lei linear, u=0.72) ---
     '  float limbU = 0.80;',
     '  color *= (1.0-limbU) + limbU*mu;',
@@ -903,26 +958,48 @@ function init(){
         var bm = Bv.length() + 1e-6;
         if (Math.abs(Bv.dot(cand))/bm < 0.22 && bm > 0.5) break;
       }
-      var w = SUN_RADIUS*(0.55 + Math.random()*0.5);
-      var h = SUN_RADIUS*(0.22 + Math.random()*0.20);
+      // dois tipos: leque plumoso (ref-04) e "hedgerow" — cortina de fios
+      // verticais com topo em arco irregular, o tipo mais comum no limbo
+      var isHedgerow = (i % 2 === 1);
+      var w = isHedgerow ? SUN_RADIUS*(0.60 + Math.random()*0.32) : SUN_RADIUS*(0.55 + Math.random()*0.5);
+      var h = isHedgerow ? SUN_RADIUS*(0.15 + Math.random()*0.10) : SUN_RADIUS*(0.22 + Math.random()*0.20);
       var geo = new THREE.PlaneGeometry(w, h);
       geo.translate(0, h*0.5 - SUN_RADIUS*0.015, 0);   // base levemente dentro do disco
       var promUniforms = {
         uTime: { value: 0 },
         uSeed: { value: Math.random()*100 },
         uIntensity: { value: 1.0 },
-        uAspect: { value: w/h }
+        uAspect: { value: w/h },
+        // sagitta: o plano é reto, a esfera curva — nas pontas a base do
+        // plano flutua acima do limbo; os fios devem nascer mais alto lá
+        uSag: { value: ((w*0.5)*(w*0.5)/(2*SUN_RADIUS)) / h }
       };
-      var mat = new THREE.ShaderMaterial({
-        uniforms: promUniforms,
-        vertexShader: [
-          'varying vec2 vUv;',
-          'void main(){',
-          '  vUv = uv;',
-          '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);',
-          '}'
-        ].join('\n'),
-        fragmentShader: NOISE_GLSL + '\n' + [
+      var hedgerowFragment = NOISE_GLSL + '\n' + [
+        'uniform float uTime;',
+        'uniform float uSeed;',
+        'uniform float uIntensity;',
+        'uniform float uAspect;',
+        'uniform float uSag;',
+        'varying vec2 vUv;',
+        'void main(){',
+        '  float xn = vUv.x*2.0 - 1.0;',
+        '  float y = vUv.y;',
+        // topo em arco irregular (mais alto no meio, recortado por ruído)
+        '  float yTop = (0.62 + 0.22*snoise(vec3(xn*2.3, uSeed, 0.0))) * (1.0 - xn*xn*0.62);',
+        // cortina: fios VERTICAIS finos, drenando devagar
+        '  float th1 = snoise(vec3(vUv.x*uAspect*24.0, y*3.0 - uTime*0.05, uSeed));',
+        '  float th2 = snoise(vec3(vUv.x*uAspect*55.0, y*6.0 - uTime*0.08, uSeed+7.7));',
+        '  float wisp = smoothstep(0.05, 0.80, (th1*0.6 + th2*0.5)*0.5+0.5);',
+        '  float body = smoothstep(0.02, 0.16, yTop - y);',
+        '  float a = wisp * body * uIntensity;',
+        '  a *= 1.0 - smoothstep(0.72, 1.0, abs(xn));',
+        // corta abaixo da superfície curva (sem borda reta flutuante)
+        '  a *= smoothstep(0.0, 0.07, y - uSag*xn*xn);',
+        '  vec3 col = mix(vec3(0.45,0.06,0.02), vec3(1.0,0.32,0.09), wisp*(1.0-y*0.8));',
+        '  gl_FragColor = vec4(col, a*0.8);',
+        '}'
+      ].join('\n');
+      var fanFragment = NOISE_GLSL + '\n' + [
           'uniform float uTime;',
           'uniform float uSeed;',
           'uniform float uIntensity;',
@@ -949,29 +1026,43 @@ function init(){
           '  vec3 col = mix(vec3(0.48,0.07,0.02), vec3(1.0,0.34,0.10), wisp*hFall);',
           '  gl_FragColor = vec4(col, a*0.85);',
           '}'
+        ].join('\n');
+      var mat = new THREE.ShaderMaterial({
+        uniforms: promUniforms,
+        vertexShader: [
+          'varying vec2 vUv;',
+          'void main(){',
+          '  vUv = uv;',
+          '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);',
+          '}'
         ].join('\n'),
+        fragmentShader: isHedgerow ? hedgerowFragment : fanFragment,
         transparent: true,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
         side: THREE.DoubleSide
       });
       // dois planos cruzados a 90° (cartões de folhagem): nunca degeneram
-      // em "agulha" quando vistos de perfil
+      // em "agulha" quando vistos de perfil. Materiais independentes para
+      // que cada plano possa esmaecer conforme fica de FRENTE à câmera —
+      // proeminências são folhas opticamente finas: brilham de perfil.
+      var mat2 = mat.clone();
       var baseQ = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), anchor);
       var ang0 = Math.random()*Math.PI;
       var mesh = new THREE.Mesh(geo, mat);
-      var mesh2 = new THREE.Mesh(geo, mat);
+      var mesh2 = new THREE.Mesh(geo, mat2);
+      var phase = Math.random()*Math.PI*2;
+      var speed = 0.6+Math.random()*0.8;
       [mesh, mesh2].forEach(function(mm, k){
         var spin = new THREE.Quaternion().setFromAxisAngle(anchor, ang0 + k*Math.PI*0.5);
         mm.quaternion.copy(spin.multiply(baseQ.clone()));
         mm.position.copy(anchor).multiplyScalar(SUN_RADIUS*0.995);
+        mm.userData.phase = phase;
+        mm.userData.speed = speed;
+        mm.userData.dir = anchor.clone();   // direção radial da base
+        prominenceMeshes.push(mm);
+        prominenceGroup.add(mm);
       });
-      mesh.userData.phase = Math.random()*Math.PI*2;
-      mesh.userData.speed = 0.6+Math.random()*0.8;
-      mesh.userData.dir = anchor.clone();   // direção radial da base
-      prominenceMeshes.push(mesh);          // só o 1º dirige os uniforms (material compartilhado)
-      prominenceGroup.add(mesh);
-      prominenceGroup.add(mesh2);
     }
   })();
   scene.add(prominenceGroup);
@@ -1306,13 +1397,68 @@ function init(){
     lastInteraction = performance.now();
   }
 
+  // ---- polimento AAA de controles ----
+  // duplo clique / toque duplo: alterna entre enquadramento e close-up
+  function toggleFrame(){
+    var closeDist = Math.max(minDist*1.12, fitDist*0.42);
+    targetCamDist = (targetCamDist > fitDist*0.72) ? closeDist : fitDist;
+    lastInteraction = performance.now();
+  }
+  var lastTap = { t: -1e9, x: 0, y: 0 };
+  function onTapCheck(e){
+    if (e.pointerType !== 'touch') return;
+    var now = performance.now();
+    var dx = e.clientX - lastTap.x, dy = e.clientY - lastTap.y;
+    if (now - lastTap.t < 320 && (dx*dx + dy*dy) < 32*32){
+      toggleFrame();
+      lastTap.t = -1e9;
+    } else {
+      lastTap = { t: now, x: e.clientX, y: e.clientY };
+    }
+  }
+  // teclado: setas giram (com a mesma inércia do arraste), +/- aproxima,
+  // R volta ao enquadramento — acessível sem mouse
+  function onKeyDown(e){
+    var k = e.key;
+    var handled = true;
+    if (k === 'ArrowLeft')       thetaVel += 2.0;
+    else if (k === 'ArrowRight') thetaVel -= 2.0;
+    else if (k === 'ArrowUp')    phiVel   -= 1.5;
+    else if (k === 'ArrowDown')  phiVel   += 1.5;
+    else if (k === '+' || k === '=') targetCamDist = Math.max(minDist, targetCamDist*0.82);
+    else if (k === '-' || k === '_') targetCamDist = Math.min(maxDist, targetCamDist*1.22);
+    else if (k === 'r' || k === 'R') targetCamDist = fitDist;
+    else handled = false;
+    if (handled){
+      e.preventDefault();
+      lastInteraction = performance.now();
+    }
+  }
+
   renderer.domElement.style.touchAction = 'none';
-  renderer.domElement.addEventListener('pointerdown', onPointerDown);
+  renderer.domElement.style.cursor = 'grab';
+  renderer.domElement.addEventListener('pointerdown', function(e){
+    renderer.domElement.style.cursor = 'grabbing';
+    onPointerDown(e);
+    onTapCheck(e);
+  });
   renderer.domElement.addEventListener('pointermove', onPointerMove);
-  renderer.domElement.addEventListener('pointerup', endPointer);
+  renderer.domElement.addEventListener('pointerup', function(e){
+    renderer.domElement.style.cursor = 'grab';
+    endPointer(e);
+  });
   renderer.domElement.addEventListener('pointercancel', endPointer);
   renderer.domElement.addEventListener('lostpointercapture', endPointer);
   renderer.domElement.addEventListener('wheel', onWheel, {passive:false});
+  renderer.domElement.addEventListener('dblclick', function(e){ e.preventDefault(); toggleFrame(); });
+  renderer.domElement.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+  window.addEventListener('keydown', onKeyDown);
+  // estado exposto para QA automatizado
+  try {
+    if (window.__solInfo) window.__solInfo.state = function(){
+      return { camDist: camDist, targetCamDist: targetCamDist, theta: theta, phi: phi };
+    };
+  } catch(_){}
 
   function onResize(){
     camera.aspect = window.innerWidth/window.innerHeight;
@@ -1349,11 +1495,27 @@ function init(){
   function flareEnvelope(ft){
     return (1.0 - Math.exp(-ft*9.0)) * Math.exp(-ft*1.15);
   }
+  // flare de SUPERFÍCIE: laço brilhante na plage de uma região madura
+  var surfFlareT = 999;
+  var surfFlareCooldown = 8 + Math.random()*10;
+  var surfFlareDir = new THREE.Vector3(0, 0, 1);
+  function triggerSurfaceFlare(){
+    var live = pairStates.filter(function(ps){ return Math.abs(ps.lead.w) > Math.abs(ps.baseQ)*0.6; });
+    if (!live.length) return false;
+    var ps = live[Math.floor(Math.random()*live.length)];
+    // ponto entre o par (onde os laços de flare reais acontecem), com jitter
+    surfFlareDir.set(
+      (ps.lead.x + ps.foll.x)*0.5 + (Math.random()-0.5)*0.06,
+      (ps.lead.y + ps.foll.y)*0.5 + (Math.random()-0.5)*0.06,
+      (ps.lead.z + ps.foll.z)*0.5 + (Math.random()-0.5)*0.06
+    ).normalize();
+    return true;
+  }
 
   if (hintEl) {
     hintEl.textContent = hasTouch
-      ? 'arraste para girar · pince para aproximar'
-      : 'arraste para girar · scroll para aproximar';
+      ? 'arraste para girar · pince aproxima · toque duplo enquadra'
+      : 'arraste para girar · scroll aproxima · duplo clique enquadra';
   }
   setTimeout(function(){ if(hintEl) hintEl.style.opacity='0'; }, 6000);
 
@@ -1382,6 +1544,19 @@ function init(){
     prominenceGroup.rotation.y = sunMesh.rotation.y;
     spiculeMesh.rotation.y = sunMesh.rotation.y;
     spiculeUniforms.uTime.value = elapsed;
+
+    // ciclo de vida das regiões ativas (o bake absorve as mudanças a ~8Hz)
+    updateActiveRegions(elapsed);
+    // flare de superfície: ataque rápido, decaimento lento
+    surfFlareCooldown -= delta;
+    if (surfFlareCooldown <= 0){
+      if (triggerSurfaceFlare()) surfFlareT = 0;
+      surfFlareCooldown = 12 + Math.random()*14;
+    }
+    surfFlareT += delta;
+    var sfEnv = flareEnvelope(surfFlareT) * 1.7;
+    // uFlare.xyz em espaço do OBJETO (o mesmo das cargas/sp no shader)
+    sunUniforms.uFlare.value.set(surfFlareDir.x, surfFlareDir.y, surfFlareDir.z, sfEnv < 0.004 ? 0 : sfEnv);
     // gatilho de erupção
     flareCooldown -= delta;
     if (flareCooldown <= 0 && prominenceMeshes.length){
@@ -1391,6 +1566,7 @@ function init(){
     }
     flareT += delta;
     var camDirN = camera.position.clone().normalize();
+    var promNormal = new THREE.Vector3();
     prominenceMeshes.forEach(function(m){
       var f = 0.65 + 0.25*Math.sin(elapsed*m.userData.speed + m.userData.phase)
                  + 0.15*Math.sin(elapsed*m.userData.speed*2.7 + m.userData.phase*1.7);
@@ -1402,6 +1578,9 @@ function init(){
       var s = Math.min(1, Math.max(0, (facing - 0.10) / 0.42));
       s = s*s*(3.0-2.0*s);
       base *= (0.05 + 0.95*(1.0 - s));
+      // folha opticamente fina: esmaece quando o plano fica de frente
+      m.getWorldDirection(promNormal);
+      base *= 1.0 - 0.72*Math.abs(promNormal.dot(camDirN));
       m.material.uniforms.uIntensity.value = base;
       m.material.uniforms.uTime.value = elapsed;
     });

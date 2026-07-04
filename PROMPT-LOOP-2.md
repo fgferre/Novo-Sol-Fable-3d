@@ -43,7 +43,9 @@ Ferramentas (Playwright/Chromium prontos; NODE_PATH=/opt/node22/lib/node_modules
 - `python3 tools/analyze.py <dir> reference/images/ref-01-fibrilas-mancha.jpeg`
 - `node tools/qa-motion.js <dir>` + `python3 tools/motion-check.py <dir>`
 - `node tools/qa-controls.js` — controles não podem regredir
-- varredura de ângulos/zooms via `__solInfo.setView` (crie um sweep)
+- `node tools/sweep.js <dir> [arquivo.html]` — varredura 4 zooms x 4
+  ângulos via `__solInfo.setView` (o Sol precisa convencer em QUALQUER
+  vista; use o 2º argumento p/ testar cópias instrumentadas)
 
 Loop obrigatório por iteração:
 1. Capture TODAS as ferramentas acima + varredura de ângulos/zooms.

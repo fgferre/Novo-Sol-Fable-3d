@@ -794,6 +794,8 @@ function init(){
     '    vec3 f = normalize(uCharges[i].xyz);',
     '    float aw = abs(uCharges[i].w);',
     '    float d = acos(clamp(dot(sp, f), -1.0, 1.0));',
+    // contorno irregular: umbra real não é um círculo perfeito
+    '    d *= 1.0 + 0.18*snoise(sp*24.0 + f*9.0) + 0.07*snoise(sp*60.0 - f*4.0);',
     '    float r = 0.034 + 0.030*aw;',
     '    float ui = 1.0 - smoothstep(r*0.55, r, d);',
     '    float pi = clamp((1.0 - smoothstep(r, r*1.55, d)) - ui, 0.0, 1.0);',

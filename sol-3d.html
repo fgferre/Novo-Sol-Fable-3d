@@ -408,11 +408,29 @@ function init(){
     return new THREE.Vector3(Math.cos(la)*Math.cos(lo), Math.sin(la), Math.cos(la)*Math.sin(lo));
   }
   function placePair(ps){
-    var lat = ps.hemi * (0.24 + Math.random()*0.30);
-    var lon = Math.random()*Math.PI*2;
-    var sep = 0.14 + Math.random()*0.08;
-    var lead = sphDir(lon, lat).multiplyScalar(0.88);
-    var foll = sphDir(lon+sep, lat + (Math.random()-0.5)*0.06).multiplyScalar(0.88);
+    // rejeição: regiões ativas independentes não nascem sobrepostas —
+    // exige distância angular mínima dos líderes das outras regiões
+    var lat, lon, lead;
+    for (var attempt = 0; attempt < 24; attempt++){
+      lat = ps.hemi * (0.24 + Math.random()*0.30);
+      lon = Math.random()*Math.PI*2;
+      lead = sphDir(lon, lat);
+      var minAng = Math.PI;
+      for (var j = 0; j < pairStates.length; j++){
+        var other = pairStates[j];
+        if (other === ps || !other.lead) continue;
+        var od = new THREE.Vector3(other.lead.x, other.lead.y, other.lead.z);
+        if (od.lengthSq() < 1e-6) continue;
+        minAng = Math.min(minAng, lead.angleTo(od.normalize()));
+      }
+      if (minAng > 0.55) break;
+    }
+    // lei de Joy: o par é inclinado — o seguidor fica mais perto do polo;
+    // separação maior que o raio das manchas (pares reais não se tocam)
+    var sep = 0.19 + Math.random()*0.10;
+    var follLat = lat + ps.hemi * sep * (0.28 + Math.random()*0.22);
+    lead.multiplyScalar(0.88);
+    var foll = sphDir(lon+sep, follLat).multiplyScalar(0.88);
     ps.lead.set(lead.x, lead.y, lead.z, ps.lead.w);
     ps.foll.set(foll.x, foll.y, foll.z, ps.foll.w);
   }
@@ -551,9 +569,15 @@ function init(){
     '  heatLS += network * 0.075;',
     // campo magnético + ruído do sol calmo (idêntico ao shader do disco)
     '  vec3 B = bField(sp);',
-    '  B += 0.72 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
+    // sal magnético do sol calmo em DUAS escalas: a fina (supergranulação)
+    // decorrelaciona a direção das fibrilas — rosetas locais, não estrias
+    // penteadas atravessando o disco inteiro
+    '  B += 0.50 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
     '                   snoise(sp*2.4 + vec3(4.2,7.1,t*0.006)),',
     '                   snoise(sp*2.4 + vec3(9.3,2.8,t*0.006)));',
+    '  B += 0.42 * vec3(snoise(sp*7.5 + vec3(1.1,6.3,t*0.009)),',
+    '                   snoise(sp*7.5 + vec3(8.4,0.7,t*0.009)),',
+    '                   snoise(sp*7.5 + vec3(3.6,5.2,t*0.009)));',
     '  float Br = dot(B, sp);',
     '  float Bmag = length(B) + 1e-5;',
     // filamentos: linhas neutras com campo moderado
@@ -634,9 +658,15 @@ function init(){
     '  vec3 sp = vec3(cos(lat)*cos(lon), sin(lat), cos(lat)*sin(lon));',
     '  float t = uTime;',
     '  vec3 B = bField(sp);',
-    '  B += 0.72 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
+    // sal magnético do sol calmo em DUAS escalas: a fina (supergranulação)
+    // decorrelaciona a direção das fibrilas — rosetas locais, não estrias
+    // penteadas atravessando o disco inteiro
+    '  B += 0.50 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
     '                   snoise(sp*2.4 + vec3(4.2,7.1,t*0.006)),',
     '                   snoise(sp*2.4 + vec3(9.3,2.8,t*0.006)));',
+    '  B += 0.42 * vec3(snoise(sp*7.5 + vec3(1.1,6.3,t*0.009)),',
+    '                   snoise(sp*7.5 + vec3(8.4,0.7,t*0.009)),',
+    '                   snoise(sp*7.5 + vec3(3.6,5.2,t*0.009)));',
     '  vec3 Bt = B - sp*dot(B, sp);',
     '  float BtL = length(Bt);',
     '  float wig = 0.85*snoise(sp*3.4 + vec3(0.0,0.0,t*0.012));',
@@ -775,9 +805,13 @@ function init(){
     // (de longe o disco é praticamente só o sampler do bake)
     '  if (close > 0.003){',
     '    vec3 B = bField(sp);',
-    '    B += 0.72 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
+    // mesmo sal de duas escalas do bake: direções consistentes entre camadas
+    '    B += 0.50 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
     '                     snoise(sp*2.4 + vec3(4.2,7.1,t*0.006)),',
     '                     snoise(sp*2.4 + vec3(9.3,2.8,t*0.006)));',
+    '    B += 0.42 * vec3(snoise(sp*7.5 + vec3(1.1,6.3,t*0.009)),',
+    '                     snoise(sp*7.5 + vec3(8.4,0.7,t*0.009)),',
+    '                     snoise(sp*7.5 + vec3(3.6,5.2,t*0.009)));',
     '    vec3 Bt = B - sp*dot(B, sp);',
     '    float BtL = length(Bt);',
     '    float wig = 0.85*snoise(sp*3.4 + vec3(0.0,0.0,t*0.012));',
@@ -798,9 +832,14 @@ function init(){
     '    vec3 f = normalize(uCharges[i].xyz);',
     '    float aw = abs(uCharges[i].w);',
     '    float d = acos(clamp(dot(sp, f), -1.0, 1.0));',
+    // assimetria física do par (lei de Hale na prática): o LÍDER (índice
+    // par) é grande e coeso; o SEGUIDOR (ímpar) é menor e fragmentado —
+    // pares reais nunca são dois olhos gêmeos
+    '    float isFoll = mod(float(i), 2.0);',
     // contorno irregular: umbra real não é um círculo perfeito
-    '    d *= 1.0 + 0.18*snoise(sp*24.0 + f*9.0) + 0.07*snoise(sp*60.0 - f*4.0);',
-    '    float r = 0.034 + 0.030*aw;',
+    '    d *= 1.0 + mix(0.18, 0.38, isFoll)*snoise(sp*24.0 + f*9.0)',
+    '           + mix(0.07, 0.16, isFoll)*snoise(sp*60.0 - f*4.0);',
+    '    float r = (0.034 + 0.030*aw) * (1.0 - 0.45*isFoll);',
     '    float ui = 1.0 - smoothstep(r*0.55, r, d);',
     '    float pi = clamp((1.0 - smoothstep(r, r*1.55, d)) - ui, 0.0, 1.0);',
     '    umbra = max(umbra, ui);',
@@ -1407,6 +1446,7 @@ function init(){
   var rotLast = null;
   var rotId = null;
   var pinchPrevDist = 0;
+  var flingSamples = [];
 
   function updateCamera(){
     var sp = Math.sin(phi);
@@ -1433,6 +1473,7 @@ function init(){
       rotId = e.pointerId;
       rotLast = { x: e.clientX, y: e.clientY };
       thetaVel = 0; phiVel = 0;
+      flingSamples.length = 0;
     } else if (pointers.size === 2){
       rotId = null; rotLast = null;
       pinchPrevDist = pointerDistance();
@@ -1470,6 +1511,13 @@ function init(){
       onPointerMove._t = nowT;
       thetaVel = thetaVel*0.65 + (dth/dtv)*0.35;
       phiVel   = phiVel*0.65   + (dph/dtv)*0.35;
+      // janela p/ estimar o fling no soltar por deslocamento acumulado:
+      // robusto a stalls de frame (o estimador acima despenca se um único
+      // intervalo entre eventos vier longo). Usa o timestamp do EVENTO:
+      // reflete o ritmo real do gesto mesmo com a thread principal travada
+      var evT = (e.timeStamp && e.timeStamp > 0) ? e.timeStamp : nowT;
+      flingSamples.push({ t: evT, th: theta, ph: phi });
+      if (flingSamples.length > 12) flingSamples.shift();
       lastInteraction = nowT;
     }
   }
@@ -1484,6 +1532,29 @@ function init(){
       pinchPrevDist = 0;
     } else if (pointers.size === 0){
       rotId = null; rotLast = null; pinchPrevDist = 0;
+      // fling pela janela de deslocamento (~180ms): pega a amostra mais
+      // antiga ainda recente e deriva a velocidade média — não depende do
+      // espaçamento dos eventos individuais
+      var nowE = performance.now();
+      var nS = flingSamples.length;
+      if (nS >= 2){
+        var newest = flingSamples[nS-1];
+        var pick = null;
+        for (var fi = 0; fi < nS; fi++){
+          if (nowE - flingSamples[fi].t <= 180){ pick = flingSamples[fi]; break; }
+        }
+        // eventos muito espaçados (máquina lenta/stall): a janela só contém
+        // a última amostra (deslocamento zero) — usa a penúltima, que
+        // carrega a última perna real do gesto
+        if (pick === null || pick === newest) pick = flingSamples[nS-2];
+        if (pick !== newest){
+          var dtF = Math.max(0.016, (newest.t - pick.t)/1000);
+          thetaVel = (newest.th - pick.th)/dtF;
+          phiVel   = (newest.ph - pick.ph)/dtF;
+        }
+      }
+      // com 0-1 amostras, fica o estimador suavizado do arraste
+      flingSamples.length = 0;
     }
     lastInteraction = performance.now();
   }
@@ -1558,6 +1629,7 @@ function init(){
     if (window.__solInfo){
       window.__solInfo.state = function(){
         return { camDist: camDist, targetCamDist: targetCamDist, theta: theta, phi: phi,
+                 thetaVel: thetaVel, phiVel: phiVel,
                  rotY: sunMesh.rotation.y, fitDist: fitDist, minDist: minDist };
       };
       window.__solInfo.regions = function(){

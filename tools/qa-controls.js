@@ -53,10 +53,16 @@ const url = 'file://' + path.resolve('sol-3d.html');
   for (let i = 0; i < 8; i++) { await page.mouse.move(500 + i * 25, 350); await page.waitForTimeout(16); }
   await page.mouse.up();
   const s6 = await st();
-  // SwiftShader roda a ~1.5fps: espera o suficiente para conter frames de rAF
-  await page.waitForTimeout(2500);
+  // espera DOIS frames reais (rAF) em vez de tempo fixo: em SwiftShader um
+  // frame pode levar vários segundos e nenhum caber numa janela fixa
+  await page.evaluate(() => new Promise((res) => requestAnimationFrame(() => requestAnimationFrame(res))));
   const s7 = await st();
-  results.push(['inércia após soltar', Math.abs(s7.theta - s6.theta) > 0.005]);
+  // propriedade: sobrou velocidade ao soltar E ela integra theta nos frames
+  // seguintes. O deslocamento absoluto depende da velocidade do gesto, que
+  // em SwiftShader é limitada pelo próprio renderer — por isso não se exige
+  // um valor alto, apenas deriva real e consistente.
+  results.push(['inércia após soltar',
+    Math.abs(s6.thetaVel) > 0.01 && Math.abs(s7.theta - s6.theta) > 0.0008]);
 
   let fail = 0;
   for (const [name, ok] of results) { console.log((ok ? 'PASS' : 'FAIL') + '  ' + name); if (!ok) fail++; }

@@ -516,14 +516,14 @@ function init(){
     '}',
     'float licFibril(vec3 p, vec3 dir, float freq, float stepLen, float t){',
     '  float acc = 0.0; float wsum = 0.0;',
-    '  for(int i=-3;i<=3;i++){',
-    '    float s = float(i)/3.0;',
+    '  for(int i=-6;i<=6;i++){',
+    '    float s = float(i)/6.0;',
     '    float w = 1.0 - abs(s)*0.62;',
     '    vec3 q = normalize(p + dir*(s*stepLen));',
     // ruído ANISOTRÓPICO: domínio comprimido ao longo do fluxo — cada
     // fio nasce ~4x mais longo antes mesmo da convolução
     '    vec3 qq = q*freq;',
-    '    qq -= dir*(dot(qq, dir)*0.72);',
+    '    qq -= dir*(dot(qq, dir)*0.88);',
     '    acc += snoise(qq + vec3(0.0,0.0,t*0.05)) * w;',
     '    wsum += w;',
     '  }',
@@ -583,8 +583,8 @@ function init(){
   ].join('\n');
   if (isLowPower) {
     chromoFragment = chromoFragment
-      .replace(/int i=-3;i<=3/g, 'int i=-2;i<=2')
-      .replace(/float\(i\)\/3\.0/g, 'float(i)/2.0');
+      .replace(/int i=-6;i<=6/g, 'int i=-3;i<=3')
+      .replace(/float\(i\)\/6\.0/g, 'float(i)/3.0');
   }
   var chromoMaterial = new THREE.ShaderMaterial({ uniforms: chromoUniforms, vertexShader: quadVertex, fragmentShader: chromoFragment });
   var chromoScene = makeFullscreenScene(chromoMaterial);
@@ -731,14 +731,14 @@ function init(){
     // ao longo da direção do fluxo -> o ruído vira fios "escovados".
     'float licFibril(vec3 p, vec3 dir, float freq, float stepLen, float t){',
     '  float acc = 0.0; float wsum = 0.0;',
-    '  for(int i=-3;i<=3;i++){',
-    '    float s = float(i)/3.0;',
+    '  for(int i=-6;i<=6;i++){',
+    '    float s = float(i)/6.0;',
     '    float w = 1.0 - abs(s)*0.62;',
     '    vec3 q = normalize(p + dir*(s*stepLen));',
     // ruído ANISOTRÓPICO: domínio comprimido ao longo do fluxo — cada
     // fio nasce ~4x mais longo antes mesmo da convolução
     '    vec3 qq = q*freq;',
-    '    qq -= dir*(dot(qq, dir)*0.72);',
+    '    qq -= dir*(dot(qq, dir)*0.88);',
     '    acc += snoise(qq + vec3(0.0,0.0,t*0.05)) * w;',
     '    wsum += w;',
     '  }',
@@ -765,7 +765,7 @@ function init(){
     // --- fibrilas grossas: baked (canal A). De perto, o claro/escuro é
     // FEITO de fibrilas: a larga escala modula o contraste dos fios ---
     '  float fibC = st.a*2.0 - 1.0;',
-    '  heat += fibC * mix(0.115, 0.30, close) * (0.65 + 0.70*st.r);',
+    '  heat += fibC * mix(0.115, 0.12, close) * (0.65 + 0.70*st.r);',
     // LOD: de perto, campo magnético + LIC ao vivo dão as camadas finas
     // (de longe o disco é praticamente só o sampler do bake)
     '  if (close > 0.003){',
@@ -779,12 +779,12 @@ function init(){
     '    vec3 fdir = (BtL > 1e-4)',
     '      ? (Bt*cos(wig) + cross(sp, Bt)*sin(wig)) / BtL',
     '      : vec3(0.5773);',
-    '    float fibF = licFibril(sp, fdir, uGranFreq*2.0, 0.115, t*1.3);',
-    '    heat += close * fibF * 0.18;',
+    '    float fibF = licFibril(sp, fdir, uGranFreq*3.5, 0.22, t*1.3);',
+    '    heat += close * fibF * 0.16;',
     // camada micro: só em zoom máximo, fios finíssimos
     '    float closer = smoothstep(4.8, 3.5, uCamDist);',
     '    if (closer > 0.003){',
-    '      heat += closer * licFibril(sp, fdir, uGranFreq*3.6, 0.065, t*1.6) * 0.12;',
+    '      heat += closer * licFibril(sp, fdir, uGranFreq*7.0, 0.12, t*1.6) * 0.20;',
     '    }',
     '  }',
     // --- manchas: nos PÉS das cargas magnéticas (regiões ativas) ---
@@ -850,8 +850,8 @@ function init(){
   // ajuste de oitavas do fBm, feito por substituição de texto no GLSL)
   if (isLowPower) {
     sunFragmentShader = sunFragmentShader
-      .replace(/int i=-3;i<=3/g, 'int i=-2;i<=2')
-      .replace(/float\(i\)\/3\.0/g, 'float(i)/2.0');
+      .replace(/int i=-6;i<=6/g, 'int i=-3;i<=3')
+      .replace(/float\(i\)\/6\.0/g, 'float(i)/3.0');
   }
 
   var sunMaterial = new THREE.ShaderMaterial({
@@ -1512,10 +1512,12 @@ function init(){
   function onKeyDown(e){
     var k = e.key;
     var handled = true;
-    if (k === 'ArrowLeft')       thetaVel += 2.0;
-    else if (k === 'ArrowRight') thetaVel -= 2.0;
-    else if (k === 'ArrowUp')    phiVel   -= 1.5;
-    else if (k === 'ArrowDown')  phiVel   += 1.5;
+    // passo imediato + impulso de inércia: responde já no keydown mesmo
+    // se o próximo frame demorar (máquinas lentas), sem mudar o "feel"
+    if (k === 'ArrowLeft')       { thetaVel += 2.0; theta += 0.08; }
+    else if (k === 'ArrowRight') { thetaVel -= 2.0; theta -= 0.08; }
+    else if (k === 'ArrowUp')    { phiVel   -= 1.5; phi = Math.max(0.18, phi - 0.06); }
+    else if (k === 'ArrowDown')  { phiVel   += 1.5; phi = Math.min(Math.PI-0.18, phi + 0.06); }
     else if (k === '+' || k === '=') targetCamDist = Math.max(minDist, targetCamDist*0.82);
     else if (k === '-' || k === '_') targetCamDist = Math.min(maxDist, targetCamDist*1.22);
     else if (k === 'r' || k === 'R') targetCamDist = fitDist;

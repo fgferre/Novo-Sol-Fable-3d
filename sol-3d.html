@@ -390,12 +390,56 @@ function init(){
 
   var FACULAE_COLOR = kelvinToRGB(6400);
 
+  // ---------------------------------------------------------------
+  // MODELO MAGNÉTICO: o que organiza a cromosfera real é o campo B.
+  // Aproximamos com cargas pontuais logo abaixo da superfície:
+  //  - 4 regiões ativas BIPOLARES (par líder/seguidor separado em
+  //    longitude, em faixas de latitude, polaridade do líder oposta por
+  //    hemisfério — lei de Hale);
+  //  - 2 cargas polares fracas (dipolo global de fundo).
+  // Tudo deriva do MESMO campo: fibrilas seguem B tangencial, filamentos
+  // vivem nas linhas neutras (Br=0), manchas nos pés das cargas, plage
+  // onde |B| é forte. Posições em espaço do objeto: giram com a esfera.
+  // ---------------------------------------------------------------
+  var CHARGE_COUNT = 10;
+  var charges = [];
+  (function buildCharges(){
+    function sph(lo, la){
+      return new THREE.Vector3(Math.cos(la)*Math.cos(lo), Math.sin(la), Math.cos(la)*Math.sin(lo));
+    }
+    for (var i=0;i<4;i++){
+      var hemi = (i%2===0) ? 1 : -1;
+      var lat = hemi * (0.24 + Math.random()*0.30);
+      var lon = (i/4)*Math.PI*2 + Math.random()*1.2;
+      var sep = 0.14 + Math.random()*0.08;
+      var q = (1.0 + Math.random()*0.8) * hemi;
+      var lead = sph(lon, lat).multiplyScalar(0.88);
+      var foll = sph(lon+sep, lat + (Math.random()-0.5)*0.06).multiplyScalar(0.88);
+      charges.push(new THREE.Vector4(lead.x, lead.y, lead.z, q));
+      charges.push(new THREE.Vector4(foll.x, foll.y, foll.z, -q*0.85));
+    }
+    charges.push(new THREE.Vector4(0,  0.55, 0,  0.5));
+    charges.push(new THREE.Vector4(0, -0.55, 0, -0.5));
+  })();
+  // avaliação do mesmo campo em JS (para ancorar proeminências etc.)
+  function bFieldJS(p){
+    var B = new THREE.Vector3();
+    for (var i=0;i<charges.length;i++){
+      var c = charges[i];
+      var d = new THREE.Vector3(p.x-c.x, p.y-c.y, p.z-c.z);
+      var r2 = d.lengthSq() + 1e-3;
+      B.addScaledVector(d, c.w/(r2*Math.sqrt(r2)));
+    }
+    return B;
+  }
+
   var sunUniforms = {
     uTime: { value: 0 },
     uDispScale: { value: SUN_RADIUS * 0.004 },
     uSimTex: { value: simRTs[0].texture },
     uGranFreq: { value: isLowPower ? 22.0 : 34.0 },
-    uCamDist: { value: 6.0 }
+    uCamDist: { value: 6.0 },
+    uCharges: { value: charges }
   };
 
   var sunVertexShader = NOISE_GLSL + '\n' + [
@@ -430,7 +474,7 @@ function init(){
   // de mundo — bug real: o padrão ficava fixo no espaço enquanto a esfera
   // girava por baixo ("derrapagem" das manchas).
   // ---------------------------------------------------------------
-  var sunFragmentShader = NOISE_GLSL + '\n' + WORLEY_GLSL + '\n' + BLACKBODY_GLSL + '\n' + [
+  var sunFragmentShader = NOISE_GLSL + '\n' + BLACKBODY_GLSL + '\n' + [
     'uniform float uTime;',
     'uniform sampler2D uSimTex;',
     'uniform float uGranFreq;',
@@ -440,21 +484,18 @@ function init(){
     'varying vec3 vPosObj;',
     'varying float vDisp;',
     'varying vec2 vUvV;',
-    // Campo de fluxo pseudo-magnético: as fibrilas da cromosfera seguem
-    // linhas de campo. Usamos as ISOLINHAS de um potencial de ruído como
-    // linhas de campo: tangente = cross(radial, gradiente do potencial).
-    'float flowPot(vec3 p, float t){',
-    '  return snoise(p*1.35 + vec3(0.0,0.0,t*0.004)) + 0.5*snoise(p*3.1 + vec3(4.7,0.0,t*0.006));',
-    '}',
-    'vec3 flowDir(vec3 p, float t){',
-    '  float e = 0.03;',
-    '  vec3 g = vec3(',
-    '    flowPot(p+vec3(e,0.0,0.0),t)-flowPot(p-vec3(e,0.0,0.0),t),',
-    '    flowPot(p+vec3(0.0,e,0.0),t)-flowPot(p-vec3(0.0,e,0.0),t),',
-    '    flowPot(p+vec3(0.0,0.0,e),t)-flowPot(p-vec3(0.0,0.0,e),t));',
-    '  vec3 tg = cross(p, g);',
-    '  float L = length(tg);',
-    '  return (L>1e-4) ? tg/L : vec3(0.5773);',
+    'uniform vec4 uCharges[10];',
+    // Campo magnético de cargas pontuais sob a superfície + ruído fraco
+    // (sal do sol calmo). É ESTE campo que organiza fibrilas, filamentos,
+    // manchas e plage — como na cromosfera real.
+    'vec3 bField(vec3 p){',
+    '  vec3 B = vec3(0.0);',
+    '  for(int i=0;i<10;i++){',
+    '    vec3 d = p - uCharges[i].xyz;',
+    '    float r2 = dot(d,d) + 1e-3;',
+    '    B += uCharges[i].w * d / (r2*sqrt(r2));',
+    '  }',
+    '  return B;',
     '}',
     // LIC (line integral convolution) barata: média de ruído fino amostrado
     // ao longo da direção do fluxo -> o ruído vira fios "escovados".
@@ -491,11 +532,30 @@ function init(){
     // disciplina tonal H-alfa: o disco é quase plano em luminância; a
     // larga escala só sugere estrutura — a riqueza vem da textura fina.
     // De perto os "blobs" acalmam ainda mais e as fibrilas dominam.
-    '  heat = 0.50 + (heat - 0.52)*mix(0.45, 0.20, close);',
-    // --- fibrilas: ruído fino esticado ao longo do campo de fluxo ---
-    '  vec3 fdir = flowDir(sp, t);',
-    '  float fibC = licFibril(sp, fdir, uGranFreq*1.05, mix(0.12, 0.19, close), t);',
-    '  heat += fibC * mix(0.15, 0.26, close);',
+    '  heat = 0.50 + (heat - 0.52)*mix(0.45, 0.10, close);',
+    // --- campo magnético: base de TODA a estrutura abaixo ---
+    '  vec3 B = bField(sp);',
+    // sal do sol calmo: componente aleatória fraca, dominada pelas cargas
+    // perto das regiões ativas
+    // freq/amplitude calibradas para criar NULOS espalhados no sol calmo
+    // (os nulos do campo tangencial viram rosetas/redemoinhos de fibrilas)
+    '  B += 0.72 * vec3(snoise(sp*3.2 + vec3(0.0,0.0,t*0.006)),',
+    '                   snoise(sp*3.2 + vec3(4.2,7.1,t*0.006)),',
+    '                   snoise(sp*3.2 + vec3(9.3,2.8,t*0.006)));',
+    '  float Br = dot(B, sp);',
+    '  vec3 Bt = B - sp*Br;',
+    '  float BtL = length(Bt);',
+    '  float Bmag = length(B) + 1e-5;',
+    // --- fibrilas: seguem as linhas de campo tangenciais, com ondulação
+    // (rotação da tangente em torno da normal por ruído) ---
+    '  float wig = 0.85*snoise(sp*4.0 + vec3(0.0,0.0,t*0.012));',
+    '  vec3 fdir = (BtL > 1e-4)',
+    '    ? (Bt*cos(wig) + cross(sp, Bt)*sin(wig)) / BtL',
+    '    : vec3(0.5773);',
+    '  float fibC = licFibril(sp, fdir, uGranFreq*1.05, mix(0.12, 0.24, close), t);',
+    // de perto, o claro/escuro é FEITO de fibrilas: a larga escala modula
+    // o contraste dos fios em vez de somar manchas próprias
+    '  heat += fibC * mix(0.15, 0.30, close) * (0.70 + 0.60*sim);',
     '  if (close > 0.003){',
     '    float fibF = licFibril(sp, fdir, uGranFreq*3.1, 0.085, t*1.3);',
     '    heat += close * fibF * 0.15;',
@@ -505,50 +565,46 @@ function init(){
     '      heat += closer * licFibril(sp, fdir, uGranFreq*6.2, 0.048, t*1.6) * 0.10;',
     '    }',
     '  }',
-    // --- manchas solares em faixas de latitude (espaço do objeto) ---
-    '  float lat = asin(clamp(sp.y, -1.0, 1.0));',
-    '  float dLat = (abs(lat)-0.38)/0.26;',
-    '  float latGate = smoothstep(0.04, 0.14, abs(lat)) * exp(-(dLat*dLat));',
-    // regiões ativas: máscara de baixa frequência define ONDE há manchas;
-    // dentro delas, células de Worley dão umbras REDONDAS e pequenas, com
-    // a direção exata ao centro para os fios radiais da penumbra (ref-01)
-    '  float spotField = fbm(sp*1.55 + vec3(3.7, 0.0, t*0.008));',
-    '  float spotGroup = smoothstep(0.28, 0.42, spotField) * latGate;',
-    '  float umbra = 0.0; float pen = 0.0; float plageRing = 0.0;',
-    '  if (spotGroup > 0.002){',
-    '    vec4 wf = worleyF1Dir(sp*5.5 + vec3(17.0));',
-    '    float d1 = wf.w;',
-    '    umbra = (1.0 - smoothstep(0.09, 0.16, d1)) * spotGroup;',
-    '    pen = clamp((1.0 - smoothstep(0.16, 0.38, d1))*spotGroup - umbra, 0.0, 1.0);',
-    '    if (pen > 0.002){',
-    // tangente à superfície apontando para o centro da mancha
-    '      vec3 toC = wf.xyz - sp*dot(wf.xyz, sp);',
-    '      float tl = length(toC);',
-    '      vec3 dirRad = (tl > 1e-4) ? toC/tl : vec3(0.5773);',
-    '      float pf = licFibril(sp, dirRad, 62.0, 0.09, t);',
-    '      pen *= 0.45 + 0.95*(pf*0.5+0.5);',
+    // --- manchas: nos PÉS das cargas magnéticas (regiões ativas) ---
+    '  float umbra = 0.0; float pen = 0.0; vec3 dirRad = vec3(0.5773);',
+    '  for(int i=0;i<8;i++){',
+    '    vec3 f = normalize(uCharges[i].xyz);',
+    '    float aw = abs(uCharges[i].w);',
+    '    float d = acos(clamp(dot(sp, f), -1.0, 1.0));',
+    '    float r = 0.034 + 0.030*aw;',
+    '    float ui = 1.0 - smoothstep(r*0.55, r, d);',
+    '    float pi = clamp((1.0 - smoothstep(r, r*1.85, d)) - ui, 0.0, 1.0);',
+    '    umbra = max(umbra, ui);',
+    '    if (pi > pen){',
+    '      pen = pi;',
+    '      vec3 tc = f - sp*dot(f, sp);',
+    '      float tl = length(tc);',
+    '      if (tl > 1e-4) dirRad = tc/tl;',
     '    }',
-    // plage: anel brilhante em volta do complexo ativo (ref-01/03)
-    '    plageRing = clamp((1.0 - smoothstep(0.38, 0.75, d1))*spotGroup - umbra - pen*0.5, 0.0, 1.0);',
     '  }',
-    '  float fac = smoothstep(0.20, 0.30, spotField)*(1.0-smoothstep(0.30, 0.46, spotField))*latGate;',
-    '  heat = heat*(1.0 - umbra*0.96 - pen*0.60) + fac*0.09 + plageRing*0.16;',
-    // filamentos escuros (assinatura H-alfa): fitas DIFUSAS de largura
-    // variável ao longo de isolinhas do potencial de fluxo — o mesmo campo
-    // das fibrilas, então os filamentos "penteiam" na direção da textura.
-    // Um gate de baixa frequência quebra os anéis em segmentos esparsos.
-    '  float filP = flowPot(sp, t);',
-    '  float filW1 = 0.065*(0.55 + 0.9*(fbmLight(sp*3.2 + vec3(9.1, 2.2, 0.0))*0.5+0.5));',
-    '  float filW2 = 0.050*(0.55 + 0.9*(fbmLight(sp*2.6 + vec3(1.7, 8.4, 0.0))*0.5+0.5));',
-    // família "bold": fita larga e rara, como o filamento gigante da ref-02
-    '  float filW3 = 0.110*(0.50 + 0.9*(fbmLight(sp*2.1 + vec3(5.5, 0.9, 2.8))*0.5+0.5));',
-    '  float rib1 = 1.0 - smoothstep(filW1*0.25, filW1, abs(filP - 0.34));',
-    '  float rib2 = 1.0 - smoothstep(filW2*0.25, filW2, abs(filP + 0.52));',
-    '  float rib3 = 1.0 - smoothstep(filW3*0.30, filW3, abs(filP - 0.86));',
-    '  float filGate1 = smoothstep(0.12, 0.42, fbm(sp*1.05 + vec3(3.3, 7.7, 0.5)));',
-    '  float filGate2 = smoothstep(0.10, 0.40, fbm(sp*1.15 + vec3(8.9, 1.2, 4.1)));',
-    '  float filGate3 = smoothstep(0.30, 0.55, fbm(sp*0.85 + vec3(6.1, 3.9, 8.2)));',
-    '  float fil = max(max(rib1*filGate1, rib2*filGate2), rib3*filGate3);',
+    '  if (pen > 0.002){',
+    '    float pf = licFibril(sp, dirRad, 62.0, 0.09, t);',
+    '    pen *= 0.45 + 0.95*(pf*0.5+0.5);',
+    '  }',
+    // --- plage: onde o campo é forte (em volta das regiões ativas),
+    // mas fora das manchas — brilha sem nunca chegar ao branco ---
+    '  float plage = smoothstep(3.5, 11.0, Bmag) * (1.0 - umbra - pen*0.7);',
+    '  plage *= 0.7 + 0.3*(fbmLight(sp*9.0 + vec3(2.4))*0.5+0.5);',
+    '  heat = heat*(1.0 - umbra*0.96 - pen*0.45) + clamp(plage, 0.0, 1.0)*0.22;',
+    // --- filamentos: vivem nas LINHAS NEUTRAS do campo (Br = 0), como os
+    // reais — fitas difusas, largura variável, quebradas por gates ---
+    '  float nl = abs(Br) / Bmag;',
+    '  float filW1 = 0.09*(0.55 + 0.9*(fbmLight(sp*3.2 + vec3(9.1, 2.2, 0.0))*0.5+0.5));',
+    '  float filW3 = 0.15*(0.50 + 0.9*(fbmLight(sp*2.1 + vec3(5.5, 0.9, 2.8))*0.5+0.5));',
+    '  float rib1 = 1.0 - smoothstep(filW1*0.3, filW1, nl);',
+    '  float rib3 = 1.0 - smoothstep(filW3*0.3, filW3, nl);',
+    '  float filGate1 = smoothstep(0.10, 0.45, fbm(sp*1.05 + vec3(3.3, 7.7, 0.5)));',
+    '  float filGate3 = smoothstep(0.28, 0.52, fbm(sp*0.85 + vec3(6.1, 3.9, 8.2)));',
+    // linha neutra só é filamento onde há campo de verdade (não no calmo)
+    // filamentos: campo moderado (nem no calmo, nem em cima das manchas)
+    '  float filStr = smoothstep(0.35, 1.1, Bmag) * (1.0 - smoothstep(5.0, 10.0, Bmag));',
+    '  float fil = max(rib1*filGate1, rib3*filGate3) * filStr;',
+    '  fil *= clamp(1.0 - umbra - pen, 0.0, 1.0);',
     '  heat *= 1.0 - fil*0.44;',
     '  heat = clamp(heat, 0.0, 1.15);',
     // --- paleta H-alfa: emissão em banda estreita (656nm) exibida em
@@ -752,13 +808,22 @@ function init(){
       // O leque de fios é desenhado no shader em coordenadas polares a
       // partir da base — como as proeminências reais: fios finos que
       // sobem, curvam e se ramificam (ver ref-04).
-      var th = Math.random()*Math.PI*2;
-      var ph = Math.acos(2*Math.random()-1);
-      var anchor = new THREE.Vector3(
-        Math.sin(ph)*Math.cos(th),
-        Math.cos(ph),
-        Math.sin(ph)*Math.sin(th)
-      );
+      // âncora preferencialmente numa LINHA NEUTRA do campo magnético
+      // (é onde proeminências reais se sustentam) — amostragem por rejeição
+      var anchor = null;
+      for (var tries=0; tries<48; tries++){
+        var th = Math.random()*Math.PI*2;
+        var ph = Math.acos(2*Math.random()-1);
+        var cand = new THREE.Vector3(
+          Math.sin(ph)*Math.cos(th),
+          Math.cos(ph),
+          Math.sin(ph)*Math.sin(th)
+        );
+        anchor = cand;
+        var Bv = bFieldJS(cand);
+        var bm = Bv.length() + 1e-6;
+        if (Math.abs(Bv.dot(cand))/bm < 0.22 && bm > 0.5) break;
+      }
       var w = SUN_RADIUS*(0.55 + Math.random()*0.5);
       var h = SUN_RADIUS*(0.22 + Math.random()*0.20);
       var geo = new THREE.PlaneGeometry(w, h);

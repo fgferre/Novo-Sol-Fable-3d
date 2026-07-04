@@ -219,6 +219,31 @@ function init(){
   ].join('\n');
 
   // ---------------------------------------------------------------
+  // Gradiente tangencial do Br TRANSPORTADO (canal G da simulação):
+  // o campo horizontal da cromosfera aponta ~ ao longo do gradiente do
+  // potencial magnético suavizado — as fibrilas do sol calmo agora
+  // seguem um campo que foi advectado pelo escoamento, não ruído fixo.
+  // (o shader que incluir este trecho precisa declarar uSimTex/uSimTexel)
+  // ---------------------------------------------------------------
+  var SFTDIR_GLSL = [
+    'vec3 sftGrad(vec2 uv){',
+    '  vec2 t3 = uSimTexel*3.0;',
+    '  vec2 t8 = uSimTexel*8.0;',
+    '  float bR = texture2D(uSimTex, vec2(fract(uv.x+t3.x), uv.y)).g + texture2D(uSimTex, vec2(fract(uv.x+t8.x), uv.y)).g;',
+    '  float bL = texture2D(uSimTex, vec2(fract(uv.x-t3.x), uv.y)).g + texture2D(uSimTex, vec2(fract(uv.x-t8.x), uv.y)).g;',
+    '  float bU = texture2D(uSimTex, vec2(uv.x, clamp(uv.y+t3.y, 0.0, 1.0))).g + texture2D(uSimTex, vec2(uv.x, clamp(uv.y+t8.y, 0.0, 1.0))).g;',
+    '  float bD = texture2D(uSimTex, vec2(uv.x, clamp(uv.y-t3.y, 0.0, 1.0))).g + texture2D(uSimTex, vec2(uv.x, clamp(uv.y-t8.y, 0.0, 1.0))).g;',
+    '  float lat = (uv.y-0.5)*3.14159265359;',
+    '  float lon = uv.x*6.28318530718;',
+    '  vec3 eLon = vec3(-sin(lon), 0.0, cos(lon));',
+    '  vec3 eLat = vec3(-sin(lat)*cos(lon), cos(lat), -sin(lat)*sin(lon));',
+    '  float gx = (bR-bL) / max(cos(lat), 0.2);',
+    '  float gy = (bU-bD);',
+    '  return eLon*gx + eLat*gy;',
+    '}'
+  ].join('\n');
+
+  // ---------------------------------------------------------------
   // Radiação de corpo negro (aproximação de Tanner Helland, válida
   // ~1000K-40000K). Usada para derivar cor a partir de temperatura,
   // em vez de uma rampa de cores escolhida à mão.
@@ -297,7 +322,8 @@ function init(){
     uDt: { value: 0.0 },
     uTime: { value: 0.0 },
     uSeed: { value: 1.0 },
-    uTexel: { value: new THREE.Vector2(1/SIM_W, 1/SIM_H) }
+    uTexel: { value: new THREE.Vector2(1/SIM_W, 1/SIM_H) },
+    uChargesSim: { value: null }   // preenchido após buildCharges
   };
 
   var simFragmentShader = NOISE_GLSL + '\n' + [
@@ -306,7 +332,26 @@ function init(){
     'uniform float uTime;',
     'uniform float uSeed;',
     'uniform vec2 uTexel;',
+    'uniform vec4 uChargesSim[10];',
     'varying vec2 vUv;',
+    // TRANSPORTE DE FLUXO EM SUPERFÍCIE (Leighton 1964): o alvo de Br é
+    // a soma dos bipolos das regiões ativas + o "tapete magnético" de
+    // polaridade mista do sol calmo; a advecção (abaixo) arrasta esse
+    // fluxo com o escoamento — indução MHD ideal reduzida à superfície.
+    'float targetBr(vec3 p3, float t){',
+    '  float b = 0.0;',
+    '  for(int i=0;i<8;i++){',
+    '    vec3 cd = uChargesSim[i].xyz;',
+    '    float cl = length(cd);',
+    '    if (cl < 1e-4) continue;',
+    '    float dAng = acos(clamp(dot(p3, cd/cl), -1.0, 1.0));',
+    '    b += uChargesSim[i].w * exp(-dAng*dAng*150.0);',
+    '  }',
+    '  b = clamp(b*0.7, -1.0, 1.0);',
+    '  float carpet = snoise(p3*7.5 + vec3(0.0, 0.0, t*0.012));',
+    '  carpet = sign(carpet) * smoothstep(0.30, 0.75, abs(carpet));',
+    '  return clamp(b + carpet*0.38, -1.0, 1.0);',
+    '}',
     'float potential(vec2 uv, float t){',
     '  float lon = uv.x*6.28318530718;',
     '  float lat = (uv.y-0.5)*3.14159265359;',
@@ -334,39 +379,50 @@ function init(){
     '  vec3 p3 = vec3(cos(lat)*cos(lon), sin(lat), cos(lat)*sin(lon));',
     '  float target = fbm(p3*3.6 + vec3(0.0,0.0,uTime*0.05));',
     '  target = target*0.5+0.5;',
+    '  float tBr = targetBr(p3, uTime);',
     '  if (uSeed > 0.5) {',
-    '    gl_FragColor = vec4(target,target,target,1.0);',
+    '    gl_FragColor = vec4(target, 0.5 + 0.5*tBr, target, 1.0);',
     '    return;',
     '  }',
     '  vec2 vel = curlVel(uv, uTime) * 1.1;',
     '  vel.x += diffRotDegPerDay(lat) * 0.00028;',
     '  vec2 srcUV = vec2(fract(uv.x - vel.x*uDt), clamp(uv.y - vel.y*uDt, 0.0015, 0.9985));',
-    '  float prevVal = texture2D(uPrevState, srcUV).r;',
-    '  float blur = prevVal;',
-    '  blur += texture2D(uPrevState, srcUV+vec2(uTexel.x,0.0)).r;',
-    '  blur += texture2D(uPrevState, srcUV-vec2(uTexel.x,0.0)).r;',
-    '  blur += texture2D(uPrevState, srcUV+vec2(0.0,uTexel.y)).r;',
-    '  blur += texture2D(uPrevState, srcUV-vec2(0.0,uTexel.y)).r;',
-    '  blur /= 5.0;',
+    '  vec4 prevC = texture2D(uPrevState, srcUV);',
+    '  vec4 cR = texture2D(uPrevState, srcUV+vec2(uTexel.x,0.0));',
+    '  vec4 cL = texture2D(uPrevState, srcUV-vec2(uTexel.x,0.0));',
+    '  vec4 cU = texture2D(uPrevState, srcUV+vec2(0.0,uTexel.y));',
+    '  vec4 cD = texture2D(uPrevState, srcUV-vec2(0.0,uTexel.y));',
+    '  float prevVal = prevC.r;',
+    '  float blur = (prevVal + cR.r + cL.r + cU.r + cD.r) / 5.0;',
     '  float advected = mix(prevVal, blur, 0.035);',
     '  float result = mix(advected, target, 0.022);',
     '  result = clamp(result, 0.0, 1.0);',
-    '  gl_FragColor = vec4(result,result,result,1.0);',
+    // Br: mesma advecção (fluxo congelado no escoamento) + difusão de
+    // Leighton um pouco maior + relaxação lenta para as fontes — o padrão
+    // que se vê é o alvo DISTORCIDO pela história do escoamento
+    '  float prevB = prevC.g*2.0 - 1.0;',
+    '  float blurB = (prevB + (cR.g*2.0-1.0) + (cL.g*2.0-1.0) + (cU.g*2.0-1.0) + (cD.g*2.0-1.0)) / 5.0;',
+    '  float advB = mix(prevB, blurB, 0.06);',
+    '  float resB = clamp(mix(advB, tBr, 0.028), -1.0, 1.0);',
+    '  gl_FragColor = vec4(result, 0.5 + 0.5*resB, result, 1.0);',
     '}'
   ].join('\n');
 
   var simStepMaterial = new THREE.ShaderMaterial({ uniforms: simUniforms, vertexShader: quadVertex, fragmentShader: simFragmentShader });
   var simStepScene = makeFullscreenScene(simStepMaterial);
 
-  // semeia os dois alvos com ruído em força total para não haver "pop-in"
-  simUniforms.uSeed.value = 1.0;
-  simUniforms.uTime.value = 0.0;
-  renderer.setRenderTarget(simRTs[0]);
-  renderer.render(simStepScene, quadCamera);
-  renderer.setRenderTarget(simRTs[1]);
-  renderer.render(simStepScene, quadCamera);
-  renderer.setRenderTarget(null);
-  simUniforms.uSeed.value = 0.0;
+  // semeia os dois alvos com ruído em força total para não haver "pop-in".
+  // Chamada DEPOIS de buildCharges (uChargesSim precisa estar preenchido).
+  function seedSimulation(){
+    simUniforms.uSeed.value = 1.0;
+    simUniforms.uTime.value = 0.0;
+    renderer.setRenderTarget(simRTs[0]);
+    renderer.render(simStepScene, quadCamera);
+    renderer.setRenderTarget(simRTs[1]);
+    renderer.render(simStepScene, quadCamera);
+    renderer.setRenderTarget(null);
+    simUniforms.uSeed.value = 0.0;
+  }
 
   var simClockTime = 0.0;
   function stepSimulation(dt){
@@ -380,6 +436,8 @@ function init(){
     renderer.render(simStepScene, quadCamera);
     simIndex = 1-simIndex;
     chromoUniforms.uSimTex.value = simRTs[simIndex].texture;
+    smearUniforms.uSimTex.value  = simRTs[simIndex].texture;
+    sunUniforms.uSimTex.value    = simRTs[simIndex].texture;
   }
 
   // ---------------------------------------------------------------
@@ -455,6 +513,8 @@ function init(){
     charges.push(new THREE.Vector4(0,  0.55, 0,  0.5));
     charges.push(new THREE.Vector4(0, -0.55, 0, -0.5));
   })();
+  simUniforms.uChargesSim.value = charges;
+  seedSimulation();
   function lifeEnvelope(x){   // x em 0..1 dentro do período
     if (x < 0.14) { var a = x/0.14; return a*a*(3.0-2.0*a); }
     if (x < 0.58) return 1.0;
@@ -496,7 +556,9 @@ function init(){
     uGranFreq: { value: isLowPower ? 22.0 : 34.0 },
     uCamDist: { value: 6.0 },
     uCharges: { value: charges },
-    uFlare: { value: new THREE.Vector4(0, 0, 1, 0) }
+    uFlare: { value: new THREE.Vector4(0, 0, 1, 0) },
+    uSimTex: { value: simRTs[0].texture },
+    uSimTexel: { value: simUniforms.uTexel.value }
   };
 
   // ---------------------------------------------------------------
@@ -514,15 +576,17 @@ function init(){
   var chromoUniforms = {
     uTime: { value: 0 },
     uSimTex: { value: simRTs[0].texture },
+    uSimTexel: { value: simUniforms.uTexel.value },
     uGranFreq: { value: isLowPower ? 22.0 : 34.0 },
     uCharges: { value: charges }
   };
   var chromoFragment = NOISE_GLSL + '\n' + WORLEY_GLSL + '\n' + [
     'uniform float uTime;',
     'uniform sampler2D uSimTex;',
+    'uniform vec2 uSimTexel;',
     'uniform float uGranFreq;',
     'uniform vec4 uCharges[10];',
-    'varying vec2 vUv;',
+    'varying vec2 vUv;'].join('\n') + '\n' + SFTDIR_GLSL + '\n' + [
     'vec3 bField(vec3 p){',
     '  vec3 B = vec3(0.0);',
     '  for(int i=0;i<10;i++){',
@@ -569,15 +633,12 @@ function init(){
     '  heatLS += network * 0.075;',
     // campo magnético + ruído do sol calmo (idêntico ao shader do disco)
     '  vec3 B = bField(sp);',
-    // sal magnético do sol calmo em DUAS escalas: a fina (supergranulação)
-    // decorrelaciona a direção das fibrilas — rosetas locais, não estrias
-    // penteadas atravessando o disco inteiro
-    '  B += 0.50 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
+    // sol calmo: a direção vem do GRADIENTE do fluxo transportado pela
+    // simulação (tapete magnético advectado) + um resto de ruído p/ vida
+    '  B += 0.30 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
     '                   snoise(sp*2.4 + vec3(4.2,7.1,t*0.006)),',
     '                   snoise(sp*2.4 + vec3(9.3,2.8,t*0.006)));',
-    '  B += 0.42 * vec3(snoise(sp*7.5 + vec3(1.1,6.3,t*0.009)),',
-    '                   snoise(sp*7.5 + vec3(8.4,0.7,t*0.009)),',
-    '                   snoise(sp*7.5 + vec3(3.6,5.2,t*0.009)));',
+    '  B += sftGrad(vUv) * 7.0;',
     '  float Br = dot(B, sp);',
     '  float Bmag = length(B) + 1e-5;',
     // filamentos: linhas neutras com campo moderado
@@ -631,14 +692,18 @@ function init(){
     uSrc: { value: chromoRT.texture },
     uTime: { value: 0 },
     uCharges: { value: charges },
-    uTexel: { value: new THREE.Vector2(1/CHROMO_W, 1/CHROMO_H) }
+    uTexel: { value: new THREE.Vector2(1/CHROMO_W, 1/CHROMO_H) },
+    uSimTex: { value: simRTs[0].texture },
+    uSimTexel: { value: simUniforms.uTexel.value }
   };
   var smearFragment = NOISE_GLSL + '\n' + [
     'uniform sampler2D uSrc;',
     'uniform float uTime;',
     'uniform vec4 uCharges[10];',
     'uniform vec2 uTexel;',
-    'varying vec2 vUv;',
+    'uniform sampler2D uSimTex;',
+    'uniform vec2 uSimTexel;',
+    'varying vec2 vUv;'].join('\n') + '\n' + SFTDIR_GLSL + '\n' + [
     'vec3 bField(vec3 p){',
     '  vec3 B = vec3(0.0);',
     '  for(int i=0;i<10;i++){',
@@ -658,15 +723,11 @@ function init(){
     '  vec3 sp = vec3(cos(lat)*cos(lon), sin(lat), cos(lat)*sin(lon));',
     '  float t = uTime;',
     '  vec3 B = bField(sp);',
-    // sal magnético do sol calmo em DUAS escalas: a fina (supergranulação)
-    // decorrelaciona a direção das fibrilas — rosetas locais, não estrias
-    // penteadas atravessando o disco inteiro
-    '  B += 0.50 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
+    // mesma direção do bake: gradiente do fluxo transportado + resto de ruído
+    '  B += 0.30 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
     '                   snoise(sp*2.4 + vec3(4.2,7.1,t*0.006)),',
     '                   snoise(sp*2.4 + vec3(9.3,2.8,t*0.006)));',
-    '  B += 0.42 * vec3(snoise(sp*7.5 + vec3(1.1,6.3,t*0.009)),',
-    '                   snoise(sp*7.5 + vec3(8.4,0.7,t*0.009)),',
-    '                   snoise(sp*7.5 + vec3(3.6,5.2,t*0.009)));',
+    '  B += sftGrad(vUv) * 7.0;',
     '  vec3 Bt = B - sp*dot(B, sp);',
     '  float BtL = length(Bt);',
     '  float wig = 0.85*snoise(sp*3.4 + vec3(0.0,0.0,t*0.012));',
@@ -744,12 +805,14 @@ function init(){
     'uniform float uGranFreq;',
     'uniform float uCamDist;',
     'uniform vec4 uFlare;',
+    'uniform sampler2D uSimTex;',
+    'uniform vec2 uSimTexel;',
     'varying vec3 vNormalW;',
     'varying vec3 vPositionW;',
     'varying vec3 vPosObj;',
     'varying float vDisp;',
     'varying vec2 vUvV;',
-    'uniform vec4 uCharges[10];',
+    'uniform vec4 uCharges[10];'].join('\n') + '\n' + SFTDIR_GLSL + '\n' + [
     // Campo magnético de cargas pontuais sob a superfície + ruído fraco
     // (sal do sol calmo). É ESTE campo que organiza fibrilas, filamentos,
     // manchas e plage — como na cromosfera real.
@@ -805,13 +868,12 @@ function init(){
     // (de longe o disco é praticamente só o sampler do bake)
     '  if (close > 0.003){',
     '    vec3 B = bField(sp);',
-    // mesmo sal de duas escalas do bake: direções consistentes entre camadas
-    '    B += 0.50 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
+    // mesma direção do bake (gradiente do fluxo transportado): as camadas
+    // finas ao vivo seguem o MESMO campo evoluído das camadas baked
+    '    B += 0.30 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
     '                     snoise(sp*2.4 + vec3(4.2,7.1,t*0.006)),',
     '                     snoise(sp*2.4 + vec3(9.3,2.8,t*0.006)));',
-    '    B += 0.42 * vec3(snoise(sp*7.5 + vec3(1.1,6.3,t*0.009)),',
-    '                     snoise(sp*7.5 + vec3(8.4,0.7,t*0.009)),',
-    '                     snoise(sp*7.5 + vec3(3.6,5.2,t*0.009)));',
+    '    B += sftGrad(vUvV) * 7.0;',
     '    vec3 Bt = B - sp*dot(B, sp);',
     '    float BtL = length(Bt);',
     '    float wig = 0.85*snoise(sp*3.4 + vec3(0.0,0.0,t*0.012));',

@@ -1085,8 +1085,8 @@ function init(){
         '  a *= 1.0 - smoothstep(0.72, 1.0, abs(xn));',
         // corta abaixo da superfície curva (sem borda reta flutuante)
         '  a *= smoothstep(0.0, 0.07, y - uSag*xn*xn);',
-        '  vec3 col = mix(vec3(0.45,0.06,0.02), vec3(1.0,0.32,0.09), wisp*(1.0-y*0.8));',
-        '  gl_FragColor = vec4(col, a*0.8);',
+        '  vec3 col = mix(vec3(0.45,0.06,0.02), vec3(1.30,0.42,0.12), wisp*(1.0-y*0.8));',
+        '  gl_FragColor = vec4(col, a*1.05);',
         '}'
       ].join('\n');
       var fanFragment = NOISE_GLSL + '\n' + [
@@ -1113,8 +1113,8 @@ function init(){
           '  float hFall = 1.0 - smoothstep(0.42, 1.02, r);',
           '  float a = wisp * fan * hFall * hFall * uIntensity;',
           // H-alfa contra céu escuro: vermelho profundo, pontas mais frias
-          '  vec3 col = mix(vec3(0.48,0.07,0.02), vec3(1.0,0.34,0.10), wisp*hFall);',
-          '  gl_FragColor = vec4(col, a*0.85);',
+          '  vec3 col = mix(vec3(0.48,0.07,0.02), vec3(1.30,0.45,0.13), wisp*hFall);',
+          '  gl_FragColor = vec4(col, a*1.15);',
           '}'
         ].join('\n');
       var mat = new THREE.ShaderMaterial({
@@ -1685,7 +1685,7 @@ function init(){
     prominenceMeshes.forEach(function(m){
       var f = 0.65 + 0.25*Math.sin(elapsed*m.userData.speed + m.userData.phase)
                  + 0.15*Math.sin(elapsed*m.userData.speed*2.7 + m.userData.phase*1.7);
-      var base = Math.max(0.25, Math.min(1.0, f));
+      var base = Math.max(0.55, Math.min(1.15, f + 0.2));
       if (m === flareTarget) base += 2.6 * flareEnvelope(flareT);
       // física do limbo: proeminências só brilham na borda; contra o disco, somem
       var wd = m.userData.dir.clone().applyQuaternion(prominenceGroup.quaternion);
@@ -1695,7 +1695,7 @@ function init(){
       base *= (0.05 + 0.95*(1.0 - s));
       // folha opticamente fina: esmaece quando o plano fica de frente
       m.getWorldDirection(promNormal);
-      base *= 1.0 - 0.72*Math.abs(promNormal.dot(camDirN));
+      base *= 1.0 - 0.5*Math.abs(promNormal.dot(camDirN));
       m.material.uniforms.uIntensity.value = base;
       m.material.uniforms.uTime.value = elapsed;
     });

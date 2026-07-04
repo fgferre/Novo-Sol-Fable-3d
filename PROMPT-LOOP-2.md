@@ -59,6 +59,13 @@ Loop obrigatório por iteração:
 4. Repita até: todas as métricas PASS + checklist inteiro convincente +
    sem regressões. Commite cada iteração; push na branch designada.
 
+Integração (IMPORTANTE): o branch principal é o `main` — é o único que
+o dono acompanha. Ao encerrar o trabalho (convergência ou resumo de
+bloqueios), abra uma Pull Request da branch de trabalho para o `main` e
+FAÇA O MERGE (permissão já concedida pelo dono do repositório; ele
+prefere não acumular branches). Nada de trabalho valioso pode ficar só
+em branch `claude/*`.
+
 Invariantes: arquivo único sem rede; controles intactos (qa-controls
 10/10); zero erros de console; retrato enquadrado; física existente
 nunca removida, só aprofundada.

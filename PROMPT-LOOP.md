@@ -13,7 +13,8 @@ Atenção: `ref-04` e `ref-05` estão com tons INVERTIDOS (céu claro);
 `ref-00` é um render antigo — ignore-a como alvo.
 
 Ferramentas prontas (Playwright + Chromium já instalados; use
-`NODE_PATH=/opt/node22/lib/node_modules`):
+`NODE_PATH=/opt/node22/lib/node_modules`; se `analyze.py` reclamar de
+PIL, rode `pip install pillow` antes):
 - `node tools/shot.js <dir>` — screenshots desktop, retrato e zoom.
 - `node tools/qa-elements.js <dir>` — capturas dirigidas por elemento
   (limbo, mancha centrada, proeminência no limbo, fibrilas em zoom

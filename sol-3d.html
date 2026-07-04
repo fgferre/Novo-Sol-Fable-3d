@@ -474,6 +474,7 @@ function init(){
     uTime: { value: 0 },
     uDispScale: { value: SUN_RADIUS * 0.004 },
     uChromoTex: { value: null },
+    uChromoFar: { value: null },
     uGranFreq: { value: isLowPower ? 22.0 : 34.0 },
     uCamDist: { value: 6.0 },
     uCharges: { value: charges },
@@ -546,9 +547,9 @@ function init(){
     '  heatLS += network * 0.075;',
     // campo magnético + ruído do sol calmo (idêntico ao shader do disco)
     '  vec3 B = bField(sp);',
-    '  B += 0.72 * vec3(snoise(sp*3.2 + vec3(0.0,0.0,t*0.006)),',
-    '                   snoise(sp*3.2 + vec3(4.2,7.1,t*0.006)),',
-    '                   snoise(sp*3.2 + vec3(9.3,2.8,t*0.006)));',
+    '  B += 0.72 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
+    '                   snoise(sp*2.4 + vec3(4.2,7.1,t*0.006)),',
+    '                   snoise(sp*2.4 + vec3(9.3,2.8,t*0.006)));',
     '  float Br = dot(B, sp);',
     '  float Bmag = length(B) + 1e-5;',
     // filamentos: linhas neutras com campo moderado
@@ -568,7 +569,7 @@ function init(){
     // esfera). As camadas fina/micro continuam vivas no disco, só de perto.
     '  vec3 Bt = B - sp*Br;',
     '  float BtL = length(Bt);',
-    '  float wig = 0.85*snoise(sp*4.0 + vec3(0.0,0.0,t*0.012));',
+    '  float wig = 0.85*snoise(sp*3.4 + vec3(0.0,0.0,t*0.012));',
     '  vec3 fdir = (BtL > 1e-4)',
     '    ? (Bt*cos(wig) + cross(sp, Bt)*sin(wig)) / BtL',
     '    : vec3(0.5773);',
@@ -583,12 +584,85 @@ function init(){
   }
   var chromoMaterial = new THREE.ShaderMaterial({ uniforms: chromoUniforms, vertexShader: quadVertex, fragmentShader: chromoFragment });
   var chromoScene = makeFullscreenScene(chromoMaterial);
+
+  // ---------------------------------------------------------------
+  // 2º PASSE: LIC ITERADO em espaço de textura. Borra o resultado do
+  // 1º passe AO LONGO do campo magnético — os próprios "blobs" de
+  // luminância viram feixes varridos de fios longos, como nas fotos
+  // reais em H-alfa, onde até a plage é riscada na direção do campo.
+  // Só leituras de textura: custo desprezível a ~8Hz.
+  // ---------------------------------------------------------------
+  var chromoRT2 = new THREE.WebGLRenderTarget(CHROMO_W, CHROMO_H, simRTOptions);
+  chromoRT2.texture.wrapS = THREE.RepeatWrapping;
+  var smearUniforms = {
+    uSrc: { value: chromoRT.texture },
+    uTime: { value: 0 },
+    uCharges: { value: charges },
+    uTexel: { value: new THREE.Vector2(1/CHROMO_W, 1/CHROMO_H) }
+  };
+  var smearFragment = NOISE_GLSL + '\n' + [
+    'uniform sampler2D uSrc;',
+    'uniform float uTime;',
+    'uniform vec4 uCharges[10];',
+    'uniform vec2 uTexel;',
+    'varying vec2 vUv;',
+    'vec3 bField(vec3 p){',
+    '  vec3 B = vec3(0.0);',
+    '  for(int i=0;i<10;i++){',
+    '    vec3 d = p - uCharges[i].xyz;',
+    '    float r2 = dot(d,d) + 1e-3;',
+    '    B += uCharges[i].w * d / (r2*sqrt(r2));',
+    '  }',
+    '  return B;',
+    '}',
+    'vec2 sphToUv(vec3 q){',
+    '  return vec2(fract(atan(q.z, q.x)/6.28318530718),',
+    '              asin(clamp(q.y, -1.0, 1.0))/3.14159265359 + 0.5);',
+    '}',
+    'void main(){',
+    '  float lon = vUv.x*6.28318530718;',
+    '  float lat = (vUv.y-0.5)*3.14159265359;',
+    '  vec3 sp = vec3(cos(lat)*cos(lon), sin(lat), cos(lat)*sin(lon));',
+    '  float t = uTime;',
+    '  vec3 B = bField(sp);',
+    '  B += 0.72 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
+    '                   snoise(sp*2.4 + vec3(4.2,7.1,t*0.006)),',
+    '                   snoise(sp*2.4 + vec3(9.3,2.8,t*0.006)));',
+    '  vec3 Bt = B - sp*dot(B, sp);',
+    '  float BtL = length(Bt);',
+    '  float wig = 0.85*snoise(sp*3.4 + vec3(0.0,0.0,t*0.012));',
+    '  vec3 dir = (BtL > 1e-4)',
+    '    ? (Bt*cos(wig) + cross(sp, Bt)*sin(wig)) / BtL',
+    '    : vec3(0.5773);',
+    // varredura longa: ±4 passos de ~3 texels ao longo do fluxo
+    '  float stepArc = uTexel.x * 6.28318530718 * 2.2;',
+    '  vec4 acc = vec4(0.0); float wsum = 0.0;',
+    '  for(int i=-4;i<=4;i++){',
+    '    vec3 q = normalize(sp + dir*(float(i)*stepArc));',
+    '    float w = 1.0 - abs(float(i))/5.2;',
+    '    acc += texture2D(uSrc, sphToUv(q)) * w;',
+    '    wsum += w;',
+    '  }',
+    '  vec4 sm = acc / wsum;',
+    // recupera o contraste dos fios após o borrão direcional
+    '  float fib = sm.a*2.0 - 1.0;',
+    '  fib = sign(fib) * pow(abs(fib), 0.62);',
+    '  gl_FragColor = vec4(sm.r, sm.g, sm.b, fib*0.5 + 0.5);',
+    '}'
+  ].join('\n');
+  var smearMaterial = new THREE.ShaderMaterial({ uniforms: smearUniforms, vertexShader: quadVertex, fragmentShader: smearFragment });
+  var smearScene = makeFullscreenScene(smearMaterial);
+
   function bakeChromo(timeNow){
     chromoUniforms.uTime.value = timeNow;
     renderer.setRenderTarget(chromoRT);
     renderer.render(chromoScene, quadCamera);
+    smearUniforms.uTime.value = timeNow;
+    renderer.setRenderTarget(chromoRT2);
+    renderer.render(smearScene, quadCamera);
     renderer.setRenderTarget(null);
-    sunUniforms.uChromoTex.value = chromoRT.texture;
+    sunUniforms.uChromoTex.value = chromoRT2.texture;   // varrido (perto)
+    sunUniforms.uChromoFar.value = chromoRT.texture;    // calmo (longe)
   }
   bakeChromo(0.0);   // primeira passada: o disco nunca vê textura vazia
 
@@ -627,6 +701,7 @@ function init(){
   var sunFragmentShader = NOISE_GLSL + '\n' + BLACKBODY_GLSL + '\n' + [
     'uniform float uTime;',
     'uniform sampler2D uChromoTex;',
+    'uniform sampler2D uChromoFar;',
     'uniform float uGranFreq;',
     'uniform float uCamDist;',
     'uniform vec4 uFlare;',
@@ -669,9 +744,11 @@ function init(){
     '  float mu = max(dot(N, viewDir), 0.0);',
     '  vec3 sp = normalize(vPosObj);',
     '  float t = uTime;',
-    // --- estrutura baked: R=larga escala, G=filamento, B=plage ---
-    '  vec4 st = texture2D(uChromoTex, vUvV);',
+    // --- estrutura baked: R=larga escala, G=filamento, B=plage.
+    // De longe usa o passe calmo (o seeing borraria os feixes); de perto
+    // o passe com LIC iterado, onde tudo é feito de fios varridos ---
     '  float close = smoothstep(6.2, 3.4, uCamDist);',
+    '  vec4 st = mix(texture2D(uChromoFar, vUvV), texture2D(uChromoTex, vUvV), clamp(close*1.2 + 0.15, 0.0, 1.0));',
     '  float heat = st.r + vDisp*0.06;',
     // disciplina tonal H-alfa: o disco é quase plano em luminância; a
     // larga escala só sugere estrutura — a riqueza vem da textura fina.
@@ -685,12 +762,12 @@ function init(){
     // (de longe o disco é praticamente só o sampler do bake)
     '  if (close > 0.003){',
     '    vec3 B = bField(sp);',
-    '    B += 0.72 * vec3(snoise(sp*3.2 + vec3(0.0,0.0,t*0.006)),',
-    '                     snoise(sp*3.2 + vec3(4.2,7.1,t*0.006)),',
-    '                     snoise(sp*3.2 + vec3(9.3,2.8,t*0.006)));',
+    '    B += 0.72 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
+    '                     snoise(sp*2.4 + vec3(4.2,7.1,t*0.006)),',
+    '                     snoise(sp*2.4 + vec3(9.3,2.8,t*0.006)));',
     '    vec3 Bt = B - sp*dot(B, sp);',
     '    float BtL = length(Bt);',
-    '    float wig = 0.85*snoise(sp*4.0 + vec3(0.0,0.0,t*0.012));',
+    '    float wig = 0.85*snoise(sp*3.4 + vec3(0.0,0.0,t*0.012));',
     '    vec3 fdir = (BtL > 1e-4)',
     '      ? (Bt*cos(wig) + cross(sp, Bt)*sin(wig)) / BtL',
     '      : vec3(0.5773);',

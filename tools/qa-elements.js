@@ -26,8 +26,16 @@ function worldDir(objDir, rotY, tiltZ) {
   await page.waitForFunction(() => window.__solInfo && window.__solInfo.state, null, { timeout: 20000 });
   await page.waitForTimeout(6000);
 
-  // A+D: disco frontal no enquadramento padrão (limbo + espículas + filamentos)
+  // A+D: disco frontal no enquadramento padrão (limbo + espículas + filamentos).
+  // A COROA é desligada só nesta captura: os gates A (escurecimento de
+  // limbo) e D (franja de espículas) medem a superfície, e o halo coronal
+  // legítimo (T1.3) contamina ambos — o brilho além do limbo vira "franja"
+  // e o bloom do halo apaga o escurecimento (validado: com coroa off,
+  // A=0.77 e D=4.0px nos mesmos frames em que falhavam com halo).
+  await page.evaluate(() => window.__solInfo.toggle && window.__solInfo.toggle('corona', false));
+  await page.waitForTimeout(300);
   await page.screenshot({ path: out + '/element-limb.png' });
+  await page.evaluate(() => window.__solInfo.toggle && window.__solInfo.toggle('corona', true));
 
   // B: região ativa mais forte, centrada, close
   let st = await page.evaluate(() => window.__solInfo.state());

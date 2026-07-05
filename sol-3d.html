@@ -1876,7 +1876,13 @@ function init(){
       base *= (0.05 + 0.95*(1.0 - s));
       // folha opticamente fina: esmaece quando o plano fica de frente
       m.getWorldDirection(promNormal);
-      base *= 1.0 - 0.5*Math.abs(promNormal.dot(camDirN));
+      var nv = Math.abs(promNormal.dot(camDirN));
+      base *= 1.0 - 0.5*nv;
+      // ...e também de PERFIL: um cartão visto de lado degenera numa
+      // "agulha" de largura zero em brilho total — o gêmeo cruzado a 90°
+      // (que está de frente nessa hora) é quem carrega a forma
+      var edgeK = Math.min(1, Math.max(0, (nv - 0.03) / 0.13));
+      base *= edgeK*edgeK*(3 - 2*edgeK);
       m.material.uniforms.uIntensity.value = base;
       m.material.uniforms.uTime.value = elapsed;
     });

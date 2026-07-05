@@ -1806,9 +1806,10 @@ function init(){
   scene.add(stars);
   // camada esparsa de estrelas maiores e mais vivas: profundidade no fundo
   // camada brilhante mais PRÓXIMA (raio 500 vs 700): paralaxe diferencial
-  // real quando a câmera orbita — o fundo desliza menos que o primeiro plano
+  // real quando a câmera ORBITA o pivô — a casca próxima desloca MENOS
+  // que o fundo (lei R/(R+d); medido -5.4% por passo de órbita)
   var brightStars = buildStars(TP.bright, 500, true);
-  brightStars.material.size = 6.0;
+  brightStars.material.size = 12.0;   // ~9px na tela: a cruz do glint fica legível
   brightStars.material.opacity = 0.8;
   brightStars.material.map = glintTex;
   brightStars.material.blending = THREE.AdditiveBlending;
@@ -1823,13 +1824,15 @@ function init(){
     var v = new THREE.Vector3();
     for (var i = 0; i < pos.count; i++){
       v.set(pos.getX(i), pos.getY(i), pos.getZ(i));
+      var rr0 = v.length();
       v.addScaledVector(n, -v.dot(n)*0.86);
+      v.setLength(rr0);   // direção achatada, mas de volta à casca distante
       pos.setXYZ(i, v.x, v.y, v.z);
     }
     pos.needsUpdate = true;
   })();
-  milkyWay.material.size = 1.0;
-  milkyWay.material.opacity = 0.30;
+  milkyWay.material.size = 1.4;
+  milkyWay.material.opacity = 0.45;
   scene.add(milkyWay);
   // (Tentativa de faixa da Via Láctea removida: sem QA visual funcionando,
   // calibrar estética por estatística de pixels se provou má ideia.)

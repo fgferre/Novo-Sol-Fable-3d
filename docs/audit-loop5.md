@@ -176,6 +176,35 @@ paralaxe 4.0 · limbo/atmosfera 6.0 · proeminências hero 6.5.
   desliga a coroa só no element-limb (gates de superfície); o achado de
   que D-franja falhava com qualquer halo>0 fica resolvido na raiz.
 
+- **T1.4-8 FEITO** (dc1c9c8): breathing 1/f (3 oitavas, aperiodicidade
+  verificada), flares ∝ atividade e |w|, rotação diferencial nas cargas,
+  penumbra 2.3r, Joy 6-10°, limbo u=0.30 (gate A 0.78-0.84 OK),
+  relaxação Br 0.008, estrelas brilhantes maioria quente.
+- **GATE H VERDE** (fbb6932): continuidade dos canais (gates de
+  existência mais lentos, menos pinch, piso de gradiente menor) —
+  H PASS 3/3 (antes 1 PASS em ~10 rodadas), canais lêem como ref-03.
+  Vigiar gate I: 1 FAIL/3 (massa de filamento contada como mancha);
+  se recorrer, nlw 0.80+0.40 → 0.85+0.35.
+- **T2.3 FEITO** (fbb6932 + calibração): brilhos log, camada próxima
+  com cross-glint (size 12 após juiz apontar ilegível), Via Láctea
+  discreta re-normalizada à casca (setLength pós-flatten; opacity 0.45),
+  paralaxe diferencial medida (-5.4%/passo, geometricamente correta
+  para órbita: casca próxima desloca MENOS).
+
+## PENDÊNCIAS HONESTAS para um próximo loop
+
+- gamma pós-ACES (invalidaria as calibrações desta sessão — requer
+  re-calibração conjunta de bloom/plage/halo);
+- kernel LIC 0.03-0.05 rad + wiggle ±0.2-0.3 (mexe no aspecto mais bem
+  avaliado, 7.0 — fazer com sweep+juiz dedicados);
+- rede Worley advectada pelo escoamento;
+- cortes T3.3 c/d/e (coroa 1D, manchas no bake, LIC meia-res no zoom);
+- anel escuro no limbo + enquadramento desktop (T2.4);
+- glow de flare alongado na PIL (duas fitas);
+- validação de fps em device real (iPhone 15 Pro) — SÓ O DONO pode:
+  abrir com ?hud=1 (ou segurar o dedo parado ~1s) e conferir fps/p95
+  nos tiers mid e high.
+
 ## Ordem sugerida de execução (intercalar trilhas)
 
 T3.1 (instrumentação) → T2.1 (bloom) → T1.1 (prom↔filamento) →

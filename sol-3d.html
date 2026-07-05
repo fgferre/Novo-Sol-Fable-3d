@@ -917,8 +917,9 @@ function init(){
     // faixas escuras continuam bem visíveis no close-up — achatar a
     // larga escala 4.5x deixava o zoom um "pelo" uniforme irreal.
     // de LONGE mais suave ainda: as refs 02/03 mostram sol calmo quase
-    // plano em enquadramento cheio (métrica G: spread 0.10-0.16)
-    '  heat = 0.50 + (heat - 0.52)*mix(0.34, 0.26, close);',
+    // plano em enquadramento cheio (métrica G: spread 0.10-0.16).
+    // 0.31 dá margem ao gate mesmo com região ativa no centro do disco
+    '  heat = 0.50 + (heat - 0.52)*mix(0.31, 0.26, close);',
     // --- fibrilas grossas: baked (canal A). De perto, o claro/escuro é
     // FEITO de fibrilas: a larga escala modula o contraste dos fios ---
     '  float fibC = st.a*2.0 - 1.0;',
@@ -1214,11 +1215,23 @@ function init(){
         var bm = Bv.length() + 1e-6;
         if (Math.abs(Bv.dot(cand))/bm < 0.22 && bm > 0.5) break;
       }
-      // dois tipos: leque plumoso (ref-04) e "hedgerow" — cortina de fios
-      // verticais com topo em arco irregular, o tipo mais comum no limbo
-      var isHedgerow = (i % 2 === 1);
-      var w = isHedgerow ? SUN_RADIUS*(0.60 + Math.random()*0.32) : SUN_RADIUS*(0.55 + Math.random()*0.5);
-      var h = isHedgerow ? SUN_RADIUS*(0.15 + Math.random()*0.10) : SUN_RADIUS*(0.22 + Math.random()*0.20);
+      // três tipos: leque plumoso (ref-04), "hedgerow" — cortina de fios
+      // verticais com topo em arco irregular, o tipo mais comum no limbo —
+      // e ARCO/LAÇO: ponte de plasma com dois pés ancorados e vão escuro
+      // embaixo (a proeminência "clássica" de laço magnético)
+      var promType = i % 3;   // 0 leque, 1 hedgerow, 2 arco
+      var isHedgerow = (promType === 1);
+      var isArch = (promType === 2);
+      // DIMENSÕES calibradas pela observação (R☉ ≈ 696 Mm):
+      //  - laços/arcos: ápice típico 50-150 Mm; sistemas gigantes ~200 Mm
+      //    (limite histórico, ex. "Granddaddy" 1946). Com R0=0.78 e centro
+      //    -0.22, o ápice fica ~0.56·h => h 0.22-0.32R dá ápice 86-125 Mm ✓
+      //  - quiescentes/hedgerow: 30-100 Mm de altura => h 0.09-0.15R ✓
+      //  - plumas/surges eruptivos: 100-250 Mm => h 0.18-0.32R ✓
+      var w = isArch ? SUN_RADIUS*(0.80 + Math.random()*0.35)
+            : isHedgerow ? SUN_RADIUS*(0.60 + Math.random()*0.32) : SUN_RADIUS*(0.55 + Math.random()*0.5);
+      var h = isArch ? SUN_RADIUS*(0.22 + Math.random()*0.10)
+            : isHedgerow ? SUN_RADIUS*(0.09 + Math.random()*0.06) : SUN_RADIUS*(0.18 + Math.random()*0.14);
       var geo = new THREE.PlaneGeometry(w, h);
       geo.translate(0, h*0.5 - SUN_RADIUS*0.015, 0);   // base levemente dentro do disco
       var promUniforms = {
@@ -1240,8 +1253,10 @@ function init(){
         'void main(){',
         '  float xn = vUv.x*2.0 - 1.0;',
         '  float y = vUv.y;',
-        // topo em arco irregular (mais alto no meio, recortado por ruído)
-        '  float yTop = (0.62 + 0.22*snoise(vec3(xn*2.3, uSeed, 0.0))) * (1.0 - xn*xn*0.62);',
+        // topo em arco irregular (mais alto no meio, recortado por ruído
+        // em duas escalas — os montículos da ref-05 são bem denteados)
+        '  float yTop = (0.60 + 0.28*snoise(vec3(xn*2.3, uSeed, 0.0))',
+        '             + 0.12*snoise(vec3(xn*6.1, uSeed*1.7, 2.0))) * (1.0 - xn*xn*0.62);',
         // cortina: fios VERTICAIS finos, drenando devagar
         '  float th1 = snoise(vec3(vUv.x*uAspect*24.0, y*3.0 - uTime*0.05, uSeed));',
         '  float th2 = snoise(vec3(vUv.x*uAspect*55.0, y*6.0 - uTime*0.08, uSeed+7.7));',
@@ -1255,34 +1270,88 @@ function init(){
         '  gl_FragColor = vec4(col, a*1.05);',
         '}'
       ].join('\n');
+      // PLUMA VARRIDA (ref-04): a proeminência real da foto não é um
+      // leque denso e simétrico — são FEIXES distintos de fios finos
+      // quase paralelos, todos varridos para um lado, com pontas
+      // desfiadas e céu vazio entre os feixes
       var fanFragment = NOISE_GLSL + '\n' + [
           'uniform float uTime;',
           'uniform float uSeed;',
           'uniform float uIntensity;',
           'uniform float uAspect;',
+          'uniform float uSag;',
           'varying vec2 vUv;',
           'void main(){',
-          // coords polares a partir da base do leque
-          '  vec2 c = vec2((vUv.x-0.5)*uAspect, vUv.y + 0.10);',
-          '  float r = length(c);',
-          '  float ang = atan(c.x, c.y);',
-          // fios finos radiando da base; curvam ao subir (advecção do ângulo)
-          '  float bend = 0.62*snoise(vec3(uSeed*0.31, r*1.1, uSeed));',
-          '  float aa = ang*(1.0 + 0.25*r) + bend*r;',
-          '  float fib  = snoise(vec3(aa*13.0 + uSeed, r*2.2 - uTime*0.05, uSeed*1.7));',
-          '  float fib2 = snoise(vec3(aa*29.0 - uSeed, r*4.6 - uTime*0.08, uSeed*2.3));',
-          '  float fibv = fib*0.62 + fib2*0.50;',
-          '  float wisp = smoothstep(0.02, 0.85, fibv*0.5+0.5);',
-          // envelope: abertura angular do leque + esvaecimento com a altura
-          '  float spread = 0.85 + 0.35*snoise(vec3(uSeed, 1.7, uSeed*0.7));',
-          '  float fan = 1.0 - smoothstep(spread*0.45, spread, abs(ang));',
-          '  float hFall = 1.0 - smoothstep(0.42, 1.02, r);',
-          '  float a = wisp * fan * hFall * hFall * uIntensity;',
+          '  float xn = vUv.x*2.0 - 1.0;',
+          // pé deslocado para o lado oposto à varredura
+          '  float side = (fract(uSeed*0.73) > 0.5) ? 1.0 : -1.0;',
+          '  vec2 p = vec2(xn*uAspect*0.5 - 0.30*side, vUv.y + 0.06);',
+          '  float r = length(p);',
+          '  float ang = atan(-side*p.x, p.y);',
+          // varredura: o fio curva-se para o lado conforme sobe
+          '  float sweep = 0.55 + 0.40*snoise(vec3(uSeed*0.7, 1.3, 0.0));',
+          '  float aa = ang - sweep*r*1.35;',
+          // feixes com VÃOS: gate de baixa frequência sobre o ângulo varrido
+          '  float bundle = snoise(vec3(aa*3.4, uSeed*1.9, 0.4));',
+          '  float bgate = smoothstep(-0.05, 0.42, bundle);',
+          // fios finos e paralelos dentro de cada feixe (drenam devagar)
+          '  float th1 = snoise(vec3(aa*26.0 + uSeed, r*2.0 - uTime*0.045, uSeed));',
+          '  float th2 = snoise(vec3(aa*57.0 - uSeed, r*3.6 - uTime*0.07, uSeed*2.3));',
+          '  float wisp = smoothstep(0.12, 0.80, (th1*0.60 + th2*0.50)*0.5+0.5);',
+          // cada feixe tem comprimento próprio; a ponta é DESFIADA
+          '  float blen = 0.62 + 0.34*snoise(vec3(bundle*2.7, uSeed*1.3, 2.2));',
+          '  float fray = 0.12*snoise(vec3(aa*13.0, r*6.0, uSeed*3.1));',
+          '  float tip = 1.0 - smoothstep(blen*0.52, blen + fray, r);',
+          '  float a = wisp * bgate * tip * uIntensity;',
+          '  a *= 1.0 - smoothstep(1.05, 1.45, abs(ang));',
+          '  a *= smoothstep(0.0, 0.05, vUv.y - uSag*xn*xn);',
           // H-alfa contra céu escuro: vermelho profundo, pontas mais frias
-          '  vec3 col = mix(vec3(0.48,0.07,0.02), vec3(1.30,0.45,0.13), wisp*hFall);',
+          '  vec3 col = mix(vec3(0.48,0.07,0.02), vec3(1.30,0.45,0.13), wisp*tip);',
           '  gl_FragColor = vec4(col, a*1.15);',
           '}'
         ].join('\n');
+      // ARCO: tubo de fios seguindo um laço magnético — coordenadas
+      // polares centradas ABAIXO da base; o feixe vive num anel |r-R0|
+      // fino, fios comprimidos na direção ANGULAR (seguem o arco), pés
+      // mais grossos/brilhantes e vão transparente sob o vão do laço
+      var archFragment = NOISE_GLSL + '\n' + [
+        'uniform float uTime;',
+        'uniform float uSeed;',
+        'uniform float uIntensity;',
+        'uniform float uAspect;',
+        'uniform float uSag;',
+        'varying vec2 vUv;',
+        'void main(){',
+        '  float xn = vUv.x*2.0 - 1.0;',
+        '  float y = vUv.y;',
+        '  vec2 p = vec2(xn*uAspect*0.5, y + 0.22);',
+        '  float r = length(p);',
+        '  float ang = atan(p.x, p.y);',
+        // raio do laço: UM arco só por proeminência (o raio não pode
+        // ondular com o ângulo, senão vira renda de arquinhos) — apenas
+        // uma assimetria suave e respiração lenta. Alto o bastante para
+        // o vão sob o laço se erguer claramente do limbo
+        '  float R0 = 0.78 + 0.05*snoise(vec3(uSeed, 2.1, 0.0))',
+        '           + 0.030*snoise(vec3(ang*0.8 + uSeed, 5.3, uTime*0.02));',
+        '  float d = r - R0;',
+        // fios ao longo do arco (dreno lento de matéria pelos pés: o
+        // padrão angular desliza para baixo dos dois lados)
+        '  float drift = uTime*0.045;',
+        '  float th1 = snoise(vec3(ang*8.0 + uSeed + sign(ang)*drift, d*16.0, uSeed*1.3));',
+        '  float th2 = snoise(vec3(ang*19.0 - uSeed + sign(ang)*drift*1.6, d*30.0, uSeed*2.1));',
+        // denso mas não saturado: tubo contínuo com estrias visíveis
+        '  float wisp = smoothstep(-0.08, 0.78, (th1*0.62 + th2*0.5)*0.5+0.5);',
+        // tubo mais grosso e denso nos pés (como nos laços reais)
+        '  float thick = 0.10 + 0.05*smoothstep(0.35, 1.15, abs(ang))',
+        '              + 0.025*snoise(vec3(ang*3.1, uSeed*0.7, 0.0));',
+        '  float tube = 1.0 - smoothstep(thick*0.30, thick, abs(d));',
+        '  float feet = 1.0 - smoothstep(1.08, 1.38, abs(ang));',
+        '  float a = wisp * tube * feet * uIntensity;',
+        '  a *= smoothstep(0.0, 0.06, y - uSag*xn*xn);',
+        '  vec3 col = mix(vec3(0.45,0.06,0.02), vec3(1.28,0.42,0.12), wisp*tube);',
+        '  gl_FragColor = vec4(col, a*0.9);',
+        '}'
+      ].join('\n');
       var mat = new THREE.ShaderMaterial({
         uniforms: promUniforms,
         vertexShader: [
@@ -1292,7 +1361,7 @@ function init(){
           '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);',
           '}'
         ].join('\n'),
-        fragmentShader: isHedgerow ? hedgerowFragment : fanFragment,
+        fragmentShader: isArch ? archFragment : (isHedgerow ? hedgerowFragment : fanFragment),
         transparent: true,
         blending: THREE.AdditiveBlending,
         depthWrite: false,

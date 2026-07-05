@@ -1285,7 +1285,13 @@ function init(){
         uSag: { value: 0.0 },
         // ciclo de vida (0..1): a ESTRUTURA cresce da superfície no
         // nascimento e recolhe no colapso — nunca pop-in
-        uLife: { value: 0.0 }
+        uLife: { value: 0.0 },
+        // agitação por flare vizinho (0..1): ergue e reaviva o plasma
+        uAgit: { value: 0.0 },
+        // "tempo do plasma": acumulado em JS com velocidade variável
+        // (acelera sob agitação SEM saltar a fase do ruído — multiplicar
+        // uTime por um fator transitório saltaria a coordenada do noise)
+        uPTime: { value: 0.0 }
       };
       var hedgerowFragment = NOISE_GLSL + '\n' + [
         'uniform float uTime;',
@@ -1294,6 +1300,8 @@ function init(){
         'uniform float uAspect;',
         'uniform float uSag;',
         'uniform float uLife;',
+        'uniform float uAgit;',
+        'uniform float uPTime;',
         'varying vec2 vUv;',
         'void main(){',
         '  float xn = vUv.x*2.0 - 1.0;',
@@ -1304,9 +1312,12 @@ function init(){
         '             + 0.12*snoise(vec3(xn*6.1, uSeed*1.7, 2.0))) * (1.0 - xn*xn*0.62);',
         // ciclo de vida: a cortina CRESCE da superfície e recolhe no fim
         '  yTop *= 0.10 + 0.90*uLife;',
-        // cortina: fios VERTICAIS finos, drenando devagar
-        '  float th1 = snoise(vec3(vUv.x*uAspect*24.0, y*3.0 - uTime*0.05, uSeed));',
-        '  float th2 = snoise(vec3(vUv.x*uAspect*55.0, y*6.0 - uTime*0.08, uSeed+7.7));',
+        // flare vizinho ERGUE a cortina (injeção de energia por baixo)
+        '  yTop *= 1.0 + 0.60*uAgit;',
+        // cortina: fios VERTICAIS finos, drenando devagar (uPTime acelera
+        // a drenagem sob agitação, sem saltos)
+        '  float th1 = snoise(vec3(vUv.x*uAspect*24.0, y*3.0 - uPTime*0.05, uSeed));',
+        '  float th2 = snoise(vec3(vUv.x*uAspect*55.0, y*6.0 - uPTime*0.08, uSeed+7.7));',
         '  float wisp = smoothstep(0.05, 0.80, (th1*0.6 + th2*0.5)*0.5+0.5);',
         '  float body = smoothstep(0.02, 0.16, yTop - y);',
         '  float a = wisp * body * uIntensity;',
@@ -1315,6 +1326,9 @@ function init(){
         '  a *= smoothstep(0.0, 0.07, y - uSag*xn*xn);',
         '  a *= smoothstep(0.0, 0.08, uLife);',
         '  vec3 col = mix(vec3(0.45,0.06,0.02), vec3(1.30,0.42,0.12), wisp*(1.0-y*0.8));',
+        // brilho HDR do flare: a COR sobe (o alfa satura no corpo denso e
+        // esconderia o reavivamento; >1.0 o bloom captura)
+        '  col *= 1.0 + 0.9*uAgit;',
         '  gl_FragColor = vec4(col, a*1.05);',
         '}'
       ].join('\n');
@@ -1329,6 +1343,8 @@ function init(){
           'uniform float uAspect;',
           'uniform float uSag;',
           'uniform float uLife;',
+          'uniform float uAgit;',
+          'uniform float uPTime;',
           'varying vec2 vUv;',
           'void main(){',
           '  float xn = vUv.x*2.0 - 1.0;',
@@ -1344,13 +1360,15 @@ function init(){
           '  float bundle = snoise(vec3(aa*3.4, uSeed*1.9, 0.4));',
           '  float bgate = smoothstep(-0.05, 0.42, bundle);',
           // fios finos e paralelos dentro de cada feixe (drenam devagar)
-          '  float th1 = snoise(vec3(aa*26.0 + uSeed, r*2.0 - uTime*0.045, uSeed));',
-          '  float th2 = snoise(vec3(aa*57.0 - uSeed, r*3.6 - uTime*0.07, uSeed*2.3));',
+          '  float th1 = snoise(vec3(aa*26.0 + uSeed, r*2.0 - uPTime*0.045, uSeed));',
+          '  float th2 = snoise(vec3(aa*57.0 - uSeed, r*3.6 - uPTime*0.07, uSeed*2.3));',
           '  float wisp = smoothstep(0.12, 0.80, (th1*0.60 + th2*0.50)*0.5+0.5);',
           // cada feixe tem comprimento próprio; a ponta é DESFIADA
           '  float blen = 0.62 + 0.34*snoise(vec3(bundle*2.7, uSeed*1.3, 2.2));',
           // ciclo de vida: os feixes ALONGAM a partir da superfície
           '  blen *= 0.10 + 0.90*uLife;',
+          // flare vizinho alonga/ergue os feixes
+          '  blen *= 1.0 + 0.50*uAgit;',
           '  float fray = 0.12*snoise(vec3(aa*13.0, r*6.0, uSeed*3.1));',
           '  float tip = 1.0 - smoothstep(blen*0.52, blen + fray, r);',
           '  float a = wisp * bgate * tip * uIntensity;',
@@ -1359,6 +1377,7 @@ function init(){
           '  a *= smoothstep(0.0, 0.08, uLife);',
           // H-alfa contra céu escuro: vermelho profundo, pontas mais frias
           '  vec3 col = mix(vec3(0.48,0.07,0.02), vec3(1.30,0.45,0.13), wisp*tip);',
+          '  col *= 1.0 + 0.9*uAgit;',
           '  gl_FragColor = vec4(col, a*1.15);',
           '}'
         ].join('\n');
@@ -1373,6 +1392,8 @@ function init(){
         'uniform float uAspect;',
         'uniform float uSag;',
         'uniform float uLife;',
+        'uniform float uAgit;',
+        'uniform float uPTime;',
         'varying vec2 vUv;',
         'void main(){',
         '  float xn = vUv.x*2.0 - 1.0;',
@@ -1389,10 +1410,13 @@ function init(){
         // ciclo de vida: o laço ERGUE-SE de sob a superfície (R0 pequeno
         // fica todo abaixo do limbo) e afunda de volta no colapso
         '  R0 *= 0.15 + 0.85*uLife;',
+        // flare vizinho ERGUE o laço inteiro
+        '  R0 *= 1.0 + 0.32*uAgit;',
         '  float d = r - R0;',
         // fios ao longo do arco (dreno lento de matéria pelos pés: o
-        // padrão angular desliza para baixo dos dois lados)
-        '  float drift = uTime*0.045;',
+        // padrão angular desliza para baixo dos dois lados; uPTime
+        // acelera o dreno sob agitação, sem saltos)
+        '  float drift = uPTime*0.045;',
         '  float th1 = snoise(vec3(ang*8.0 + uSeed + sign(ang)*drift, d*16.0, uSeed*1.3));',
         '  float th2 = snoise(vec3(ang*19.0 - uSeed + sign(ang)*drift*1.6, d*30.0, uSeed*2.1));',
         // denso mas não saturado: tubo contínuo com estrias visíveis
@@ -1406,6 +1430,7 @@ function init(){
         '  a *= smoothstep(0.0, 0.06, y - uSag*xn*xn);',
         '  a *= smoothstep(0.0, 0.08, uLife);',
         '  vec3 col = mix(vec3(0.45,0.06,0.02), vec3(1.28,0.42,0.12), wisp*tube);',
+        '  col *= 1.0 + 0.9*uAgit;',
         '  gl_FragColor = vec4(col, a*0.9);',
         '}'
       ].join('\n');
@@ -1895,6 +1920,26 @@ function init(){
       // p/ dentro do disco ou atrás do limbo). Congelar/ajustar a rotação
       // torna a captura determinística sem tocar no resto da animação.
       window.__solInfo.setRotSpeed = function(v){ ROT_SPEED = v; };
+      // QA (calibração): força do campo e fatores aplicados por proeminência
+      window.__solInfo.promField = function(){
+        return promStates.map(function(ps){
+          return { Bm: bFieldJS(ps.meshes[0].userData.dir).length(),
+                   fieldK: ps.fieldK, agit: ps.agit || 0 };
+        });
+      };
+      // QA: fixa a agitação num valor (fotografia determinística — sob
+      // SwiftShader o tempo simulado corre ~10-20x mais devagar e o
+      // envelope natural nunca coincide com o instante do screenshot)
+      window.__solInfo.holdPromAgit = function(i, v){
+        promStates[i].agitHold = (v == null) ? null : v;
+      };
+      // QA: dispara um flare de superfície na âncora da proeminência i
+      // (testa a interação flare->proeminência sem esperar o cooldown)
+      window.__solInfo.forceFlareAt = function(i){
+        surfFlareDir.copy(promStates[i].meshes[0].userData.dir).normalize();
+        surfFlareT = 0;
+        return !!agitateNearestProm(surfFlareDir);
+      };
       window.__solInfo.setView = function(th, ph, dist){
         theta = th; phi = Math.max(0.18, Math.min(Math.PI-0.18, ph));
         targetCamDist = camDist = Math.max(minDist, Math.min(maxDist, dist));
@@ -1932,11 +1977,6 @@ function init(){
   var SIM_DT = 0.6;
   var ROT_SPEED = 0.042;
 
-  // Erupções solares: de tempos em tempos uma proeminência "explode" —
-  // ataque rápido, decaimento lento, brilho HDR que o bloom captura.
-  var flareTarget = null;
-  var flareT = 999;
-  var flareCooldown = 5 + Math.random()*7;
   function flareEnvelope(ft){
     return (1.0 - Math.exp(-ft*9.0)) * Math.exp(-ft*1.15);
   }
@@ -1944,6 +1984,19 @@ function init(){
   var surfFlareT = 999;
   var surfFlareCooldown = 8 + Math.random()*10;
   var surfFlareDir = new THREE.Vector3(0, 0, 1);
+  // flare <-> proeminência: a reconexão que ilumina a superfície também
+  // injeta energia no plasma suspenso — o flare AGITA/ERGUE a proeminência
+  // madura ancorada mais perto (< ~60°); as outras não sentem nada
+  function agitateNearestProm(dir){
+    var bestPs = null, bestDot = 0.5;
+    promStates.forEach(function(pp){
+      if ((pp.env || 0) < 0.35) return;   // jovem/moribunda não responde
+      var d = pp.meshes[0].userData.dir.dot(dir);
+      if (d > bestDot){ bestDot = d; bestPs = pp; }
+    });
+    if (bestPs) bestPs.agitT = 0;
+    return bestPs;
+  }
   function triggerSurfaceFlare(){
     var live = pairStates.filter(function(ps){ return Math.abs(ps.lead.w) > Math.abs(ps.baseQ)*0.6; });
     if (!live.length) return false;
@@ -1954,6 +2007,7 @@ function init(){
       (ps.lead.y + ps.foll.y)*0.5 + (Math.random()-0.5)*0.06,
       (ps.lead.z + ps.foll.z)*0.5 + (Math.random()-0.5)*0.06
     ).normalize();
+    agitateNearestProm(surfFlareDir);
     return true;
   }
 
@@ -2002,31 +2056,46 @@ function init(){
     var sfEnv = flareEnvelope(surfFlareT) * 1.7;
     // uFlare.xyz em espaço do OBJETO (o mesmo das cargas/sp no shader)
     sunUniforms.uFlare.value.set(surfFlareDir.x, surfFlareDir.y, surfFlareDir.z, sfEnv < 0.004 ? 0 : sfEnv);
-    // gatilho de erupção
-    flareCooldown -= delta;
-    if (flareCooldown <= 0 && prominenceMeshes.length){
-      flareTarget = prominenceMeshes[Math.floor(Math.random()*prominenceMeshes.length)];
-      flareT = 0;
-      flareCooldown = 7 + Math.random()*9;
-    }
-    flareT += delta;
-    var camDirN = camera.position.clone().normalize();
-    var promNormal = new THREE.Vector3();
-    prominenceMeshes.forEach(function(m){
+    // estado por proeminência (uma vez por PAR de cartões, não por mesh)
+    promStates.forEach(function(ps){
       // ciclo de vida: nasce crescendo da superfície, vive, colapsa e a
       // slot RENASCE noutra linha neutra (mesmo padrão das regiões ativas)
-      var ps = m.userData.state;
       var lx = ((elapsed + ps.phase) % ps.period) / ps.period;
-      var env = lifeEnvelope(lx);
+      ps.env = lifeEnvelope(lx);
       if (lx >= 0.90){
         if (!ps.reborn){ placeProminence(ps, sampleProminenceAnchor()); ps.reborn = true; }
       } else ps.reborn = false;
+      // proeminência <-> campo: a intensidade acompanha a força LOCAL do
+      // campo das cargas (bFieldJS) na âncora AO LONGO DA VIDA — as
+      // regiões ativas que sustentam a linha neutra crescem e decaem, e o
+      // plasma suspenso esmorece/reaviva junto (suavizado p/ não tremer)
+      var Bm = bFieldJS(ps.meshes[0].userData.dir).length();
+      var fieldK = Math.min(1.2, 0.35 + 0.65*(Bm/1.1));
+      ps.fieldK = (ps.fieldK === undefined) ? fieldK
+                : ps.fieldK + (fieldK - ps.fieldK)*Math.min(1, delta*0.8);
+      // agitação por flare vizinho: ataque rápido (~1s), relaxa em ~6s
+      ps.agitT = (ps.agitT === undefined) ? 999 : ps.agitT + delta;
+      ps.agit = (1.0 - Math.exp(-ps.agitT*3.0)) * Math.exp(-ps.agitT*0.55);
+      if (ps.agit < 0.004) ps.agit = 0;
+      if (ps.agitHold != null) ps.agit = ps.agitHold;   // QA: valor fixado
+      // "tempo do plasma": corre mais rápido sob agitação (dreno acelera)
+      ps.drift = (ps.drift || 0) + delta*(1.0 + 4.0*ps.agit);
+    });
+    var camDirN = camera.position.clone().normalize();
+    var promNormal = new THREE.Vector3();
+    prominenceMeshes.forEach(function(m){
+      var ps = m.userData.state;
+      var env = ps.env;
       m.material.uniforms.uLife.value = env;
+      m.material.uniforms.uAgit.value = ps.agit;
+      m.material.uniforms.uPTime.value = ps.drift;
       var f = 0.65 + 0.25*Math.sin(elapsed*m.userData.speed + m.userData.phase)
                  + 0.15*Math.sin(elapsed*m.userData.speed*2.7 + m.userData.phase*1.7);
       var base = Math.max(0.55, Math.min(1.15, f + 0.2));
       base *= 0.30 + 0.70*env;   // jovem/moribunda é mais tênue que madura
-      if (m === flareTarget) base += 2.6 * flareEnvelope(flareT);
+      base *= ps.fieldK;
+      // flare vizinho reaviva o plasma suspenso (interação visível)
+      base += 1.6 * ps.agit;
       // física do limbo: proeminências só brilham na borda; contra o disco, somem
       var wd = m.userData.dir.clone().applyQuaternion(prominenceGroup.quaternion);
       var facing = wd.dot(camDirN);

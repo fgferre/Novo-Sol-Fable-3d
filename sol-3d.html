@@ -482,7 +482,7 @@ function init(){
     '  float prevB = prevC.g*2.0 - 1.0;',
     '  float blurB = (prevB + (cR.g*2.0-1.0) + (cL.g*2.0-1.0) + (cU.g*2.0-1.0) + (cD.g*2.0-1.0)) / 5.0;',
     '  float advB = mix(prevB, blurB, 0.06);',
-    '  float resB = clamp(mix(advB, tBr, 0.028), -1.0, 1.0);',
+    '  float resB = clamp(mix(advB, tBr, 0.008), -1.0, 1.0);',
     '  gl_FragColor = vec4(result, 0.5 + 0.5*resB, result, 1.0);',
     '}'
   ].join('\n');
@@ -641,7 +641,7 @@ function init(){
     // lei de Joy: o par é inclinado — o seguidor fica mais perto do polo;
     // separação maior que o raio das manchas (pares reais não se tocam)
     var sep = 0.19 + Math.random()*0.10;
-    var follLat = lat + ps.hemi * sep * (0.28 + Math.random()*0.22);
+    var follLat = lat + ps.hemi * sep * (0.105 + Math.random()*0.071);   // tilt de Joy 6-10 graus
     lead.multiplyScalar(0.88);
     var foll = sphDir(lon+sep, follLat).multiplyScalar(0.88);
     ps.lead.set(lead.x, lead.y, lead.z, ps.lead.w);
@@ -676,7 +676,13 @@ function init(){
     if (x < 0.90) { var b = (x-0.58)/0.32; return 1.0 - b*b*(3.0-2.0*b); }
     return 0.0;
   }
+  var lastRegionT = 0;
   function updateActiveRegions(timeNow){
+    // rotação diferencial nas CARGAS (mesma lei Snodgrass do sim, relativa
+    // à taxa de Carrington 14.18°/dia): manchas derivam em sincronia com a
+    // plage advectada — antes só a textura cisalhava e as cargas ficavam
+    var regDt = Math.min(timeNow - lastRegionT, 0.2);
+    lastRegionT = timeNow;
     for (var i=0;i<pairStates.length;i++){
       var ps = pairStates[i];
       var x = ((timeNow + ps.phase) % ps.period) / ps.period;
@@ -688,9 +694,29 @@ function init(){
       }
       ps.lead.w =  ps.baseQ * Math.max(env, 0.03);
       ps.foll.w = -ps.baseQ * 0.85 * Math.max(env, 0.03);
+      if (regDt > 0){ driftCharge(ps.lead, regDt); driftCharge(ps.foll, regDt); }
     }
   }
   updateActiveRegions(0);
+  // cisalhamento diferencial de uma carga: mesma constante do sim
+  // (vel.x = (Ω(lat)-14.18)*0.00028 em unidades de uv por tempo simulado)
+  function driftCharge(c, dt){
+    var lat = Math.asin(Math.max(-1, Math.min(1, c.y)));
+    var s2 = Math.sin(lat)*Math.sin(lat);
+    var omega = 14.71 - 2.39*s2 - 1.78*s2*s2;
+    var dlon = (omega - 14.18) * 0.00028 * 6.28318 * dt;
+    var cx = c.x, cz = c.z, cd = Math.cos(dlon), sd = Math.sin(dlon);
+    c.x = cx*cd - cz*sd; c.z = cx*sd + cz*cd;
+  }
+  // value noise 1D com 3 oitavas (flicker 1/f do plasma suspenso)
+  function vhash1(i){ var s = Math.sin(i*127.1 + 311.7)*43758.5453; return s - Math.floor(s); }
+  function vnoise1(x){
+    var i = Math.floor(x), fr = x - i, u = fr*fr*(3-2*fr);
+    return (vhash1(i)*(1-u) + vhash1(i+1)*u)*2 - 1;
+  }
+  function flicker1f(t){
+    return (vnoise1(t) + 0.5*vnoise1(t*2.17 + 7.3) + 0.25*vnoise1(t*4.61 + 13.1)) / 1.75;
+  }
   // avaliação do mesmo campo em JS (para ancorar proeminências etc.)
   function bFieldJS(p){
     var B = new THREE.Vector3();
@@ -1122,7 +1148,7 @@ function init(){
     // uma ordem de grandeza acima de qualquer mancha já registrada
     '    float r = (0.016 + 0.014*aw) * (1.0 - 0.45*isFoll);',
     '    float ui = 1.0 - smoothstep(r*0.55, r, d);',
-    '    float pi = clamp((1.0 - smoothstep(r, r*1.55, d)) - ui, 0.0, 1.0);',
+    '    float pi = clamp((1.0 - smoothstep(r, r*2.3, d)) - ui, 0.0, 1.0);',
     '    umbra = max(umbra, ui);',
     '    if (pi > pen){',
     '      pen = pi;',
@@ -1167,7 +1193,7 @@ function init(){
     '  color *= mix(0.16, 1.42, smoothstep(0.04, 1.08, heat));',
     '  color += vec3(1.0, 0.55, 0.22) * flareGlow * 0.9;',   // pico HDR do flare
     // --- escurecimento + avermelhamento de limbo (lei linear, u=0.72) ---
-    '  float limbU = 0.45;',   // H-alfa: escurecimento de limbo bem mais suave que no contínuo (ref-02)
+    '  float limbU = 0.30;',   // núcleo H-alfa: u≈0.25-0.30 na literatura (bem mais suave que contínuo)
     '  color *= (1.0-limbU) + limbU*mu;',
     '  float edge = pow(1.0-mu, 1.7);',
     '  color.g *= 1.0 - edge*0.30;',
@@ -1733,7 +1759,7 @@ function init(){
   // (a maioria das estrelas visíveis é fria/avermelhada; poucas são
   // quentes/azuis), usando a mesma função de corpo negro.
   // ---------------------------------------------------------------
-  function buildStars(count, radius){
+  function buildStars(count, radius, hotBias){
     var positions = new Float32Array(count*3);
     var colors = new Float32Array(count*3);
     for(var i=0;i<count;i++){
@@ -1744,7 +1770,9 @@ function init(){
       positions[i*3]   = rr*Math.sin(ph)*Math.cos(th);
       positions[i*3+1] = rr*Math.sin(ph)*Math.sin(th);
       positions[i*3+2] = rr*Math.cos(ph);
-      var starTemp = Math.random()<0.75 ? (2800+Math.random()*3200) : (6000+Math.random()*20000);
+      var starTemp = (Math.random() < (hotBias ? 0.30 : 0.75))
+        ? (2800+Math.random()*3200)
+        : (hotBias ? (7000+Math.random()*13000) : (6000+Math.random()*20000));
       var sc = kelvinToRGB(starTemp);
       var b = 0.55+Math.random()*0.45;
       colors[i*3]=sc.r*b; colors[i*3+1]=sc.g*b; colors[i*3+2]=sc.b*b;
@@ -1758,7 +1786,7 @@ function init(){
   var stars = buildStars(STAR_COUNT, 700);
   scene.add(stars);
   // camada esparsa de estrelas maiores e mais vivas: profundidade no fundo
-  var brightStars = buildStars(TP.bright, 680);
+  var brightStars = buildStars(TP.bright, 680, true);
   brightStars.material.size = 3.0;
   brightStars.material.opacity = 0.7;
   scene.add(brightStars);
@@ -2420,6 +2448,7 @@ function init(){
   }
   // flare de SUPERFÍCIE: laço brilhante na plage de uma região madura
   var surfFlareT = 999;
+  var surfFlareAmp = 1.0;
   var surfFlareCooldown = 8 + Math.random()*10;
   var surfFlareDir = new THREE.Vector3(0, 0, 1);
   // flare <-> proeminência: a reconexão que ilumina a superfície também
@@ -2445,6 +2474,8 @@ function init(){
       (ps.lead.y + ps.foll.y)*0.5 + (Math.random()-0.5)*0.06,
       (ps.lead.z + ps.foll.z)*0.5 + (Math.random()-0.5)*0.06
     ).normalize();
+    // amplitude ∝ |w| da região que flareia (X-class só em região forte)
+    surfFlareAmp = Math.min(1.5, 0.55 + 0.55*Math.abs(ps.lead.w));
     agitateNearestProm(surfFlareDir);
     return true;
   }
@@ -2499,10 +2530,11 @@ function init(){
     surfFlareCooldown -= delta;
     if (surfFlareCooldown <= 0){
       if (triggerSurfaceFlare()) surfFlareT = 0;
-      surfFlareCooldown = 12 + Math.random()*14;
+      // sol ativo flareia mais: cooldown encolhe com a atividade global
+      surfFlareCooldown = (12 + Math.random()*14) / (0.5 + 1.1*coronaRaysUniforms.uActivity.value);
     }
     surfFlareT += delta;
-    var sfEnv = flareEnvelope(surfFlareT) * 1.7;
+    var sfEnv = flareEnvelope(surfFlareT) * 1.7 * surfFlareAmp;
     // uFlare.xyz em espaço do OBJETO (o mesmo das cargas/sp no shader)
     sunUniforms.uFlare.value.set(surfFlareDir.x, surfFlareDir.y, surfFlareDir.z, sfEnv < 0.004 ? 0 : sfEnv);
     var camDirN = camera.position.clone().normalize();
@@ -2551,8 +2583,10 @@ function init(){
       m.material.uniforms.uLife.value = env;
       m.material.uniforms.uAgit.value = ps.agit;
       m.material.uniforms.uPTime.value = ps.drift;
-      var f = 0.65 + 0.25*Math.sin(elapsed*m.userData.speed + m.userData.phase)
-                 + 0.15*Math.sin(elapsed*m.userData.speed*2.7 + m.userData.phase*1.7);
+      // flicker 1/f: 3 oitavas de value noise — remove a periodicidade
+      // audível dos 2 senos; respira mais forte sob campo forte/agitação
+      var famp = 0.16 + 0.14*ps.fieldK + 0.45*ps.agit;
+      var f = 0.65 + famp * flicker1f(elapsed*m.userData.speed + m.userData.phase);
       var base = Math.max(0.55, Math.min(1.15, f + 0.2));
       base *= 0.30 + 0.70*env;   // jovem/moribunda é mais tênue que madura
       base *= ps.fieldK;

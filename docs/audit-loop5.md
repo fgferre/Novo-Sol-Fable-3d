@@ -191,6 +191,12 @@ paralaxe 4.0 · limbo/atmosfera 6.0 · proeminências hero 6.5.
   paralaxe diferencial medida (-5.4%/passo, geometricamente correta
   para órbita: casca próxima desloca MENOS).
 
+- **KNOBS CINEMATOGRÁFICOS** (pós-merge, pedido do dono): ?speed
+  (compressão temporal coerente; câmera não escala), ?bloom/?bloomth/
+  ?exposure, ?sat/?vig/?grain, ?plageglow, ?halo/?ray/?cact, ?stars/?mw,
+  ?idle=1 (câmera idle), __solInfo.knobs(). Defaults = visual calibrado
+  (neutralidade validada por gates). QA 4/4.
+
 ## PENDÊNCIAS HONESTAS para um próximo loop
 
 - gamma pós-ACES (invalidaria as calibrações desta sessão — requer

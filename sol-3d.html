@@ -95,6 +95,16 @@ function init(){
       urlQ[p[0]] = decodeURIComponent(p[1] || '');
     });
   } catch(e){}
+  function knob(name, dflt, lo, hi){
+    var v = parseFloat(urlQ[name]);
+    return (v === v) ? Math.min(hi, Math.max(lo, v)) : dflt;
+  }
+  // Knobs cinematográficos (defaults = visual calibrado do LOOP-5; sem
+  // query string NADA muda). speed comprime/expande o tempo SIMULADO de
+  // forma coerente (rotação, deriva, ciclos, flares, sim) sem tocar na
+  // resposta dos controles de câmera.
+  var TIME_SCALE = knob('speed', 1.0, 0.05, 3.0);
+  var IDLE_CINE = urlQ.idle === '1';
   var RENDER_SCALE = (parseFloat(urlQ.scale) > 0)
     ? Math.min(2.0, Math.max(0.3, parseFloat(urlQ.scale))) : 1.0;
 
@@ -738,6 +748,7 @@ function init(){
     uCamDist: { value: 6.0 },
     uCharges: { value: charges },
     uFlare: { value: new THREE.Vector4(0, 0, 1, 0) },
+    uPlageEm: { value: knob('plageglow', 0.35, 0.0, 1.5) },
     uSimTex: { value: simRTs[0].texture },
     uSimTexel: { value: simUniforms.uTexel.value }
   };
@@ -1041,6 +1052,7 @@ function init(){
     'uniform sampler2D uChromoFar;',
     'uniform float uGranFreq;',
     'uniform float uCamDist;',
+    'uniform float uPlageEm;',
     'uniform vec4 uFlare;',
     'uniform sampler2D uSimTex;',
     'uniform vec2 uSimTexel;',
@@ -1207,7 +1219,7 @@ function init(){
     // plage como fonte HDR (>1.0): é o que faz o bloom finalmente ler
     // como bloom (glow suave em volta das regiões ativas, ref-03) sem
     // tocar na luminância mediana do disco
-    '  color += vec3(1.0, 0.70, 0.32) * clamp(plage, 0.0, 1.0) * 0.35;',
+    '  color += vec3(1.0, 0.70, 0.32) * clamp(plage, 0.0, 1.0) * uPlageEm;',
     '  gl_FragColor = vec4(color, 1.0);',
     '}'
   ].join('\n');
@@ -1278,9 +1290,9 @@ function init(){
     uRotY: { value: 0 },
     uCharges: { value: charges },
     uActivity: { value: 0.5 },
-    uHalo: { value: 0.55 },
-    uActGain: { value: 0.50 },
-    uRayBoost: { value: 0.90 }
+    uHalo: { value: knob('halo', 0.55, 0.0, 2.0) },
+    uActGain: { value: knob('cact', 0.50, 0.0, 2.0) },
+    uRayBoost: { value: knob('ray', 0.90, 0.0, 3.0) }
   };
   var coronaRaysMat = new THREE.ShaderMaterial({
     uniforms: coronaRaysUniforms,
@@ -1832,7 +1844,10 @@ function init(){
     pos.needsUpdate = true;
   })();
   milkyWay.material.size = 1.4;
-  milkyWay.material.opacity = 0.45;
+  milkyWay.material.opacity = knob('mw', 0.45, 0.0, 1.0);
+  var starK = knob('stars', 1.0, 0.0, 3.0);
+  stars.material.opacity = Math.min(1, stars.material.opacity*starK);
+  brightStars.material.opacity = Math.min(1, brightStars.material.opacity*starK);
   scene.add(milkyWay);
   // (Tentativa de faixa da Via Láctea removida: sem QA visual funcionando,
   // calibrar estética por estatística de pixels se provou má ideia.)
@@ -1861,7 +1876,7 @@ function init(){
   // H-alfa pico ~0.98 de luminância, threshold 1.0 nunca florescia — só
   // flare raro. 0.72 + emissivos HDR de plage/limbo (no shader do sol)
   // fazem o bloom LER sem lavar o disco (p50 +2%, 0% de pixels clipados).
-  var BLOOM_THRESHOLD = isHDR ? 0.72 : 0.82;
+  var BLOOM_THRESHOLD = knob('bloomth', isHDR ? 0.72 : 0.82, 0.2, 2.0);
   // diagnóstico acessível via console: window.__solInfo
   try { window.__solInfo = { webgl2: !!(renderer.capabilities && renderer.capabilities.isWebGL2), hdr: isHDR, tier: TIER, scale: RENDER_SCALE }; } catch(e){}
 
@@ -1955,17 +1970,23 @@ function init(){
     }
   }
 
-  var BLOOM_STRENGTH_BASE = isHDR ? 0.62 : 0.55;
+  var BLOOM_STRENGTH_BASE = (isHDR ? 0.62 : 0.55) * knob('bloom', 1.0, 0.0, 3.0);
   var compUniforms = {
     tScene:{value:null}, tBloom:{value:null},
     uBloomStrength:{value: BLOOM_STRENGTH_BASE},
-    uExposure:{value: isHDR ? 1.02 : 1.06}
+    uExposure:{value: (isHDR ? 1.02 : 1.06) * knob('exposure', 1.0, 0.3, 2.5)},
+    uSat:{value: knob('sat', 1.0, 0.0, 2.0)},
+    uVig:{value: knob('vig', 0.55, 0.0, 1.5)},
+    uGrain:{value: knob('grain', 1.0, 0.0, 5.0)}
   };
   var compFragment = [
     'uniform sampler2D tScene;',
     'uniform sampler2D tBloom;',
     'uniform float uBloomStrength;',
     'uniform float uExposure;',
+    'uniform float uSat;',
+    'uniform float uVig;',
+    'uniform float uGrain;',
     'varying vec2 vUv;',
     'vec3 ACESFilm(vec3 x){',
     '  float a=2.51; float b=0.03; float c=2.43; float d=0.59; float e=0.14;',
@@ -1981,13 +2002,14 @@ function init(){
     '  vec3 bloomCol = texture2D(tBloom, vUv).rgb;',
     '  vec3 color = (sceneCol + bloomCol*uBloomStrength) * uExposure;',
     '  color = ACESFilm(color);',
+    '  color = mix(vec3(dot(color, vec3(0.299,0.587,0.114))), color, uSat);',
     // vinheta cinematográfica sutil
     '  vec2 vc = vUv - 0.5;',
-    '  color *= 1.0 - dot(vc, vc)*0.55;',
+    '  color *= 1.0 - dot(vc, vc)*uVig;',
     // dithering só nas áreas ESCURAS (céu/coroa, onde há banding);
     // no disco ele viraria chuvisco isotrópico sobre as fibrilas
     '  float dith = smoothstep(0.30, 0.06, dot(color, vec3(0.3333)));',
-    '  color += (hash12(gl_FragCoord.xy) - 0.5) * (1.6/255.0) * dith;',
+    '  color += (hash12(gl_FragCoord.xy) - 0.5) * (1.6/255.0) * dith * uGrain;',
     '  gl_FragColor = vec4(color, 1.0);',
     '}'
   ].join('\n');
@@ -2342,6 +2364,17 @@ function init(){
                  toggles: JSON.parse(JSON.stringify(subToggle)),
                  size: [renderer.domElement.width, renderer.domElement.height] };
       };
+      // painel de knobs ativos (introspecção p/ QA e usuário)
+      window.__solInfo.knobs = function(){
+        return { speed: TIME_SCALE, idle: IDLE_CINE,
+                 bloom: compUniforms.uBloomStrength.value, bloomth: BLOOM_THRESHOLD,
+                 exposure: compUniforms.uExposure.value, sat: compUniforms.uSat.value,
+                 vig: compUniforms.uVig.value, grain: compUniforms.uGrain.value,
+                 plageglow: sunUniforms.uPlageEm.value,
+                 halo: coronaRaysUniforms.uHalo.value, ray: coronaRaysUniforms.uRayBoost.value,
+                 cact: coronaRaysUniforms.uActGain.value,
+                 mw: milkyWay.material.opacity, stars: stars.material.opacity };
+      };
       window.__solInfo.perfReset = function(){
         perfN = 0; perfIdx = 0; perfLastT = 0; perfBakes.length = 0;
       };
@@ -2534,7 +2567,8 @@ function init(){
   function animate(){
     requestAnimationFrame(animate);
     var frameT0 = performance.now();
-    var delta = Math.min(clock.getDelta(), 0.1);
+    var rawDelta = Math.min(clock.getDelta(), 0.1);
+    var delta = rawDelta * TIME_SCALE;
     elapsed += delta;
     sunUniforms.uTime.value = elapsed;
 
@@ -2664,20 +2698,26 @@ function init(){
 
     // inércia: continua girando ao soltar, com amortecimento exponencial
     if (pointers.size === 0){
-      theta += thetaVel*delta;
-      phi   += phiVel*delta;
+      theta += thetaVel*rawDelta;
+      phi   += phiVel*rawDelta;
       phi = Math.max(0.18, Math.min(Math.PI-0.18, phi));
-      var damp = Math.exp(-2.6*delta);
+      var damp = Math.exp(-2.6*rawDelta);
       thetaVel *= damp; phiVel *= damp;
       if (Math.abs(thetaVel) < 0.002) thetaVel = 0;
       if (Math.abs(phiVel) < 0.002) phiVel = 0;
     }
     // zoom amortecido
-    camDist += (targetCamDist - camDist) * (1.0 - Math.exp(-9.0*delta));
+    camDist += (targetCamDist - camDist) * (1.0 - Math.exp(-9.0*rawDelta));
     sunUniforms.uCamDist.value = camDist;
 
     if (pointers.size === 0 && performance.now()-lastInteraction > 2200){
-      theta += 0.066*delta;
+      theta += 0.066*rawDelta;
+      // ?idle=1: câmera idle cinematográfica — deriva orbital + balanço
+      // de latitude + respiração de zoom, tudo senoidal (média zero)
+      if (IDLE_CINE){
+        phi += 0.012*Math.sin(elapsed*0.11)*rawDelta;
+        targetCamDist += Math.sin(elapsed*0.073)*0.010*rawDelta*targetCamDist;
+      }
     }
     updateCamera();
 
@@ -2693,7 +2733,7 @@ function init(){
     renderer.render(compScene, quadCamera);
 
     // HUD: atualiza a ~2Hz com as mesmas métricas do __solInfo.perf()
-    hudAccum += delta;
+    hudAccum += rawDelta;
     if (hudOn && hudAccum >= 0.5 && window.__solInfo && window.__solInfo.perf){
       hudAccum = 0;
       var P = window.__solInfo.perf();
@@ -2708,7 +2748,7 @@ function init(){
     perfBusyMs[perfIdx] = frameT1 - frameT0;
     perfFrameMs[perfIdx] = fMs;
     perfLastT = frameT0;
-    if (autoTuneOn) autoTune(delta, fMs);
+    if (autoTuneOn) autoTune(rawDelta, fMs);
     perfIdx = (perfIdx + 1) % 240;
     if (perfN < 240) perfN++;
     perfCalls = renderer.info.render.calls;

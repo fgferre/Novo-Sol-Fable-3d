@@ -38,21 +38,24 @@ function worldDir(objDir, rotY, tiltZ) {
   // a mais equatorial fica visível de mais ângulos; entre as equatoriais,
   // prefira uma MADURA (env alto) se o build expõe o ciclo de vida
   let anchor = proms.reduce((a, b) => (Math.abs(b[1]) < Math.abs(a[1]) ? b : a));
+  let lifeIdx = -1;
   const life = await page.evaluate(() => window.__solInfo.promLife ? window.__solInfo.promLife() : null);
   if (life) {
     const best = life.filter((l) => Math.abs(l.dir[1]) < 0.6)
       .sort((a, b) => (b.env - Math.abs(b.dir[1])*0.2) - (a.env - Math.abs(a.dir[1])*0.2))[0];
-    if (best) {
-      anchor = best.dir;
-      const idx = life.indexOf(best);
-      // fixa a fase na maturidade para a sessão de fotos não pegar o alvo
-      // nascendo/morrendo (os estágios têm QA dedicado via setPromLife)
-      await page.evaluate((i) => window.__solInfo.setPromLife(i, 0.3), idx);
-      await page.waitForTimeout(600);
-    }
+    if (best) { anchor = best.dir; lifeIdx = life.indexOf(best); }
   }
 
   async function aim(offset) {
+    // re-fixa a MATURIDADE e relê a âncora a CADA mira: a sessão inteira
+    // leva minutos (SwiftShader) e o ciclo de vida é de 70-120s — sem
+    // isso o alvo morre e RENASCE longe no meio da sessão, e as fotos
+    // seguintes miram uma âncora obsoleta (limbo vazio no QA)
+    if (lifeIdx >= 0) {
+      await page.evaluate((i) => window.__solInfo.setPromLife(i, 0.3), lifeIdx);
+      await page.waitForTimeout(400);
+      anchor = (await page.evaluate(() => window.__solInfo.promLife()))[lifeIdx].dir;
+    }
     const st = await page.evaluate(() => window.__solInfo.state());
     const dw = worldDir(anchor, st.rotY, 0.1265);
     const th = Math.atan2(dw[2], dw[0]) - Math.PI / 2 + offset;

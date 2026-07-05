@@ -310,7 +310,29 @@ function init(){
   // magnetohidrodinâmica de primeiros princípios como as usadas em
   // física solar de verdade.
   // ---------------------------------------------------------------
-  var simRTOptions = { minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, format:THREE.RGBAFormat, depthBuffer:false, stencilBuffer:false };
+  // HDR: detecção de half-float ANTES dos render targets da simulação —
+  // o estado do transporte de fluxo precisa de precisão: em 8 bits os
+  // incrementos de ~3% por passo quantizam para zero e o campo evoluído
+  // congela/erode até virar uniforme.
+  var rtType = THREE.UnsignedByteType;
+  try {
+    var glCtx0 = renderer.getContext();
+    var isWebGL2Ctx = !!(renderer.capabilities && renderer.capabilities.isWebGL2);
+    if (isWebGL2Ctx) {
+      if (glCtx0.getExtension('EXT_color_buffer_float') || glCtx0.getExtension('EXT_color_buffer_half_float')) {
+        rtType = THREE.HalfFloatType;
+      }
+    } else {
+      if (glCtx0.getExtension('OES_texture_half_float') &&
+          glCtx0.getExtension('OES_texture_half_float_linear') &&
+          glCtx0.getExtension('EXT_color_buffer_half_float')) {
+        rtType = THREE.HalfFloatType;
+      }
+    }
+  } catch(e){}
+  var isHDR = (rtType === THREE.HalfFloatType);
+
+  var simRTOptions = { minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, format:THREE.RGBAFormat, type: rtType, depthBuffer:false, stencilBuffer:false };
   var simRTs = [
     new THREE.WebGLRenderTarget(SIM_W, SIM_H, simRTOptions),
     new THREE.WebGLRenderTarget(SIM_W, SIM_H, simRTOptions)
@@ -384,8 +406,19 @@ function init(){
     '    gl_FragColor = vec4(target, 0.5 + 0.5*tBr, target, 1.0);',
     '    return;',
     '  }',
-    '  vec2 vel = curlVel(uv, uTime) * 1.1;',
-    '  vel.x += diffRotDegPerDay(lat) * 0.00028;',
+    // CFL: o passo semi-Lagrangiano só transporta coerentemente se o
+    // deslocamento por passo for ~1-2 texels. O curl-noise cru tem
+    // gradiente O(10) em unidades de uv — sem este teto o estado era
+    // amostrado a dezenas de texels de distância por passo e o campo
+    // transportado se desintegrava em ruído uniforme (o Br evoluído
+    // morria e levava filamentos, plage e fibrilas junto).
+    '  vec2 cv = curlVel(uv, uTime);',
+    '  float cvm = length(cv);',
+    '  vec2 vel = cv * (0.005 / (cvm + 1.0));',
+    // rotação diferencial RELATIVA ao referencial da malha (taxa de
+    // Carrington ~14.18°/dia): a rotação média já é a própria esfera
+    // girando; na textura fica só o CISALHAMENTO diferencial
+    '  vel.x += (diffRotDegPerDay(lat) - 14.18) * 0.00028;',
     '  vec2 srcUV = vec2(fract(uv.x - vel.x*uDt), clamp(uv.y - vel.y*uDt, 0.0015, 0.9985));',
     '  vec4 prevC = texture2D(uPrevState, srcUV);',
     '  vec4 cR = texture2D(uPrevState, srcUV+vec2(uTexel.x,0.0));',
@@ -1335,23 +1368,7 @@ function init(){
   //    EXT_color_buffer_half_float.
   // Consultamos gl.getExtension direto (silencioso), nunca
   // renderer.extensions.get (que loga warning quando não acha).
-  var rtType = THREE.UnsignedByteType;
-  try {
-    var glCtx = renderer.getContext();
-    var isWebGL2 = !!(renderer.capabilities && renderer.capabilities.isWebGL2);
-    if (isWebGL2) {
-      if (glCtx.getExtension('EXT_color_buffer_float') || glCtx.getExtension('EXT_color_buffer_half_float')) {
-        rtType = THREE.HalfFloatType;
-      }
-    } else {
-      if (glCtx.getExtension('OES_texture_half_float') &&
-          glCtx.getExtension('OES_texture_half_float_linear') &&
-          glCtx.getExtension('EXT_color_buffer_half_float')) {
-        rtType = THREE.HalfFloatType;
-      }
-    }
-  } catch(e){}
-  var isHDR = (rtType === THREE.HalfFloatType);
+  // (rtType/isHDR detectados no topo, antes dos targets da simulação)
   var BLOOM_THRESHOLD = isHDR ? 1.0 : 0.82;
   // diagnóstico acessível via console: window.__solInfo
   try { window.__solInfo = { webgl2: !!(renderer.capabilities && renderer.capabilities.isWebGL2), hdr: isHDR }; } catch(e){}

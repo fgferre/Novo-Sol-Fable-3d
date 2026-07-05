@@ -1417,21 +1417,33 @@ function init(){
         // padrão angular desliza para baixo dos dois lados; uPTime
         // acelera o dreno sob agitação, sem saltos)
         '  float drift = uPTime*0.045;',
-        '  float th1 = snoise(vec3(ang*8.0 + uSeed + sign(ang)*drift, d*16.0, uSeed*1.3));',
-        '  float th2 = snoise(vec3(ang*19.0 - uSeed + sign(ang)*drift*1.6, d*30.0, uSeed*2.1));',
-        // denso mas não saturado: tubo contínuo com estrias visíveis
-        '  float wisp = smoothstep(-0.08, 0.78, (th1*0.62 + th2*0.5)*0.5+0.5);',
+        // FIOS ANISOTRÓPICOS (ref-04): fios reais correm PARALELOS ao
+        // arco — variação rápida ATRAVÉS do tubo (d), lenta ao longo
+        // (ang). Frequências parecidas nos dois eixos viravam mancha
+        // isotrópica ("pele de onça" num tubo sólido).
+        // frequência angular BAIXA: fios longos e contínuos ao longo do
+        // arco (freq alta picotava em "confete tracejado")
+        '  float th1 = snoise(vec3(ang*1.6 + uSeed + sign(ang)*drift, d*34.0, uSeed*1.3));',
+        '  float th2 = snoise(vec3(ang*3.0 - uSeed + sign(ang)*drift*1.6, d*70.0, uSeed*2.1));',
+        // gate chega a ZERO entre fios: céu aparece ATRAVÉS do laço
+        // (proeminência é opticamente fina, não tubo opaco)
+        '  float wisp = smoothstep(0.34, 0.74, (th1*0.62 + th2*0.5)*0.5+0.5);',
+        // feixes com vãos de céu entre grupos de fios
+        '  float bund = smoothstep(-0.35, 0.30, snoise(vec3(ang*2.3 + uSeed*3.1, d*7.0, uSeed)));',
         // tubo mais grosso e denso nos pés (como nos laços reais)
-        '  float thick = 0.10 + 0.05*smoothstep(0.35, 1.15, abs(ang))',
+        '  float thick = 0.12 + 0.05*smoothstep(0.35, 1.15, abs(ang))',
         '              + 0.025*snoise(vec3(ang*3.1, uSeed*0.7, 0.0));',
-        '  float tube = 1.0 - smoothstep(thick*0.30, thick, abs(d));',
+        // borda EMPLUMADA: os fios definem a silhueta, não um degrau
+        '  float tube = 1.0 - smoothstep(thick*0.10, thick*1.30, abs(d));',
         '  float feet = 1.0 - smoothstep(1.08, 1.38, abs(ang));',
-        '  float a = wisp * tube * feet * uIntensity;',
+        '  float a = wisp * bund * tube * feet * uIntensity;',
         '  a *= smoothstep(0.0, 0.06, y - uSag*xn*xn);',
         '  a *= smoothstep(0.0, 0.08, uLife);',
-        '  vec3 col = mix(vec3(0.45,0.06,0.02), vec3(1.28,0.42,0.12), wisp*tube);',
+        '  vec3 col = mix(vec3(0.45,0.06,0.02), vec3(1.28,0.42,0.12), wisp);',
         '  col *= 1.0 + 0.9*uAgit;',
-        '  gl_FragColor = vec4(col, a*0.9);',
+        // vãos derrubaram a cobertura média: compensa no alfa para o laço
+        // existir em exposição nativa (fios finos MAS visíveis)
+        '  gl_FragColor = vec4(col, a*2.0);',
         '}'
       ].join('\n');
       var mat = new THREE.ShaderMaterial({
@@ -1463,7 +1475,8 @@ function init(){
       var ps = { meshes: [mesh, mesh2], period: 70 + Math.random()*50,
                  phase: 0, reborn: false };
       ps.phase = (i/PROMINENCE_COUNT + Math.random()*0.08) * ps.period;
-      [mesh, mesh2].forEach(function(mm){
+      [mesh, mesh2].forEach(function(mm, k){
+        mm.userData.twinIdx = k;
         mm.userData.phase = phase;
         mm.userData.speed = speed;
         mm.userData.state = ps;
@@ -2056,6 +2069,8 @@ function init(){
     var sfEnv = flareEnvelope(surfFlareT) * 1.7;
     // uFlare.xyz em espaço do OBJETO (o mesmo das cargas/sp no shader)
     sunUniforms.uFlare.value.set(surfFlareDir.x, surfFlareDir.y, surfFlareDir.z, sfEnv < 0.004 ? 0 : sfEnv);
+    var camDirN = camera.position.clone().normalize();
+    var promNormal = new THREE.Vector3();
     // estado por proeminência (uma vez por PAR de cartões, não por mesh)
     promStates.forEach(function(ps){
       // ciclo de vida: nasce crescendo da superfície, vive, colapsa e a
@@ -2080,9 +2095,18 @@ function init(){
       if (ps.agitHold != null) ps.agit = ps.agitHold;   // QA: valor fixado
       // "tempo do plasma": corre mais rápido sob agitação (dreno acelera)
       ps.drift = (ps.drift || 0) + delta*(1.0 + 4.0*ps.agit);
+      // orientação dos DOIS cartões: folha fina esmaece de frente (nv) e
+      // de perfil (edgeK), mas o PAR deve somar brilho ~constante — o
+      // gêmeo carrega o que o outro perde. Sem a normalização, a sorte
+      // do spin deixava proeminências até ~2.6x mais fracas que outras.
+      ps.orient = ps.meshes.map(function(mm){
+        mm.getWorldDirection(promNormal);
+        var nv = Math.abs(promNormal.dot(camDirN));
+        var ek = Math.min(1, Math.max(0, (nv - 0.03) / 0.13));
+        return (1.0 - 0.5*nv) * ek*ek*(3 - 2*ek);
+      });
+      ps.orientNorm = 1.05 / Math.max(0.45, ps.orient[0] + ps.orient[1]);
     });
-    var camDirN = camera.position.clone().normalize();
-    var promNormal = new THREE.Vector3();
     prominenceMeshes.forEach(function(m){
       var ps = m.userData.state;
       var env = ps.env;
@@ -2102,15 +2126,10 @@ function init(){
       var s = Math.min(1, Math.max(0, (facing - 0.10) / 0.42));
       s = s*s*(3.0-2.0*s);
       base *= (0.05 + 0.95*(1.0 - s));
-      // folha opticamente fina: esmaece quando o plano fica de frente
-      m.getWorldDirection(promNormal);
-      var nv = Math.abs(promNormal.dot(camDirN));
-      base *= 1.0 - 0.5*nv;
-      // ...e também de PERFIL: um cartão visto de lado degenera numa
-      // "agulha" de largura zero em brilho total — o gêmeo cruzado a 90°
-      // (que está de frente nessa hora) é quem carrega a forma
-      var edgeK = Math.min(1, Math.max(0, (nv - 0.03) / 0.13));
-      base *= edgeK*edgeK*(3 - 2*edgeK);
+      // orientação normalizada por PAR (calculada no loop de estados):
+      // preserva o fade físico de cada cartão, mas a soma dos gêmeos
+      // rende brilho ~constante em qualquer ângulo/spin
+      base *= ps.orient[m.userData.twinIdx] * ps.orientNorm;
       m.material.uniforms.uIntensity.value = base;
       m.material.uniforms.uTime.value = elapsed;
     });

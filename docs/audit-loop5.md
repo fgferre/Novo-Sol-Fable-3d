@@ -134,6 +134,12 @@ paralaxe 4.0 · limbo/atmosfera 6.0 · proeminências hero 6.5.
   (events=2, autoScale 0.7, solTier='mid', zero pageerror).
 - Ruído conhecido: warning "GPU stall due to ReadPixels" no console em
   shots (readback das PILs da T1.1, 1× por renascimento) — não é erro.
+- **T1.2 FEITO** (f4404ed): casca de espículas recebe uSimTex e modula
+  comprimento ×[0.85..1.27], clump +45% e densidade ×[0.80..1.30] por
+  |brEv| na silhueta. QA: correlação medida no limbo ativo vs calmo
+  (+29% de altura média, visivelmente mais tufado), gates 2 amostras OK
+  (D-tufos 2.50/1.72 — melhorou vs as oscilações 1.46/1.57), zero
+  pageerror, aparência ref-05 preservada.
 
 ## Ordem sugerida de execução (intercalar trilhas)
 

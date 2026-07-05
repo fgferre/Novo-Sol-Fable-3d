@@ -1214,11 +1214,17 @@ function init(){
         var bm = Bv.length() + 1e-6;
         if (Math.abs(Bv.dot(cand))/bm < 0.22 && bm > 0.5) break;
       }
-      // dois tipos: leque plumoso (ref-04) e "hedgerow" — cortina de fios
-      // verticais com topo em arco irregular, o tipo mais comum no limbo
-      var isHedgerow = (i % 2 === 1);
-      var w = isHedgerow ? SUN_RADIUS*(0.60 + Math.random()*0.32) : SUN_RADIUS*(0.55 + Math.random()*0.5);
-      var h = isHedgerow ? SUN_RADIUS*(0.15 + Math.random()*0.10) : SUN_RADIUS*(0.22 + Math.random()*0.20);
+      // três tipos: leque plumoso (ref-04), "hedgerow" — cortina de fios
+      // verticais com topo em arco irregular, o tipo mais comum no limbo —
+      // e ARCO/LAÇO: ponte de plasma com dois pés ancorados e vão escuro
+      // embaixo (a proeminência "clássica" de laço magnético)
+      var promType = i % 3;   // 0 leque, 1 hedgerow, 2 arco
+      var isHedgerow = (promType === 1);
+      var isArch = (promType === 2);
+      var w = isArch ? SUN_RADIUS*(0.80 + Math.random()*0.35)
+            : isHedgerow ? SUN_RADIUS*(0.60 + Math.random()*0.32) : SUN_RADIUS*(0.55 + Math.random()*0.5);
+      var h = isArch ? SUN_RADIUS*(0.28 + Math.random()*0.12)
+            : isHedgerow ? SUN_RADIUS*(0.15 + Math.random()*0.10) : SUN_RADIUS*(0.22 + Math.random()*0.20);
       var geo = new THREE.PlaneGeometry(w, h);
       geo.translate(0, h*0.5 - SUN_RADIUS*0.015, 0);   // base levemente dentro do disco
       var promUniforms = {
@@ -1283,6 +1289,43 @@ function init(){
           '  gl_FragColor = vec4(col, a*1.15);',
           '}'
         ].join('\n');
+      // ARCO: tubo de fios seguindo um laço magnético — coordenadas
+      // polares centradas ABAIXO da base; o feixe vive num anel |r-R0|
+      // fino, fios comprimidos na direção ANGULAR (seguem o arco), pés
+      // mais grossos/brilhantes e vão transparente sob o vão do laço
+      var archFragment = NOISE_GLSL + '\n' + [
+        'uniform float uTime;',
+        'uniform float uSeed;',
+        'uniform float uIntensity;',
+        'uniform float uAspect;',
+        'uniform float uSag;',
+        'varying vec2 vUv;',
+        'void main(){',
+        '  float xn = vUv.x*2.0 - 1.0;',
+        '  float y = vUv.y;',
+        '  vec2 p = vec2(xn*uAspect*0.5, y + 0.18);',
+        '  float r = length(p);',
+        '  float ang = atan(p.x, p.y);',
+        // raio do laço, irregular e respirando devagar
+        '  float R0 = 0.62 + 0.09*snoise(vec3(ang*1.6, uSeed, uTime*0.02));',
+        '  float d = r - R0;',
+        // fios ao longo do arco (dreno lento de matéria pelos pés: o
+        // padrão angular desliza para baixo dos dois lados)
+        '  float drift = uTime*0.045;',
+        '  float th1 = snoise(vec3(ang*9.0 + uSeed + sign(ang)*drift, d*26.0, uSeed*1.3));',
+        '  float th2 = snoise(vec3(ang*21.0 - uSeed + sign(ang)*drift*1.6, d*44.0, uSeed*2.1));',
+        '  float wisp = smoothstep(0.05, 0.85, (th1*0.62 + th2*0.5)*0.5+0.5);',
+        // tubo mais grosso e denso nos pés (como nos laços reais)
+        '  float thick = 0.085 + 0.055*smoothstep(0.35, 1.15, abs(ang))',
+        '              + 0.030*snoise(vec3(ang*3.1, uSeed*0.7, 0.0));',
+        '  float tube = 1.0 - smoothstep(thick*0.35, thick, abs(d));',
+        '  float feet = 1.0 - smoothstep(1.08, 1.38, abs(ang));',
+        '  float a = wisp * tube * feet * uIntensity;',
+        '  a *= smoothstep(0.0, 0.06, y - uSag*xn*xn);',
+        '  vec3 col = mix(vec3(0.45,0.06,0.02), vec3(1.28,0.42,0.12), wisp*tube);',
+        '  gl_FragColor = vec4(col, a*1.1);',
+        '}'
+      ].join('\n');
       var mat = new THREE.ShaderMaterial({
         uniforms: promUniforms,
         vertexShader: [
@@ -1292,7 +1335,7 @@ function init(){
           '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);',
           '}'
         ].join('\n'),
-        fragmentShader: isHedgerow ? hedgerowFragment : fanFragment,
+        fragmentShader: isArch ? archFragment : (isHedgerow ? hedgerowFragment : fanFragment),
         transparent: true,
         blending: THREE.AdditiveBlending,
         depthWrite: false,

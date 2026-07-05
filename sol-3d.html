@@ -85,8 +85,21 @@ try {
 
 function init(){
 
+  // Overrides de QA/perf via URL: ?tier=low|mid|high força o tier de
+  // partida e ?scale= multiplica o pixelRatio — o profiler mede A/B de
+  // custo por resolução e por tier sem editar o arquivo.
+  var urlQ = {};
+  try {
+    (location.search || '').replace(/^\?/, '').split('&').forEach(function(kv){
+      if (!kv) return; var p = kv.split('=');
+      urlQ[p[0]] = decodeURIComponent(p[1] || '');
+    });
+  } catch(e){}
+  var RENDER_SCALE = (parseFloat(urlQ.scale) > 0)
+    ? Math.min(2.0, Math.max(0.3, parseFloat(urlQ.scale))) : 1.0;
+
   var renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-  var pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+  var pixelRatio = Math.min(window.devicePixelRatio || 1, 2) * RENDER_SCALE;
   renderer.setPixelRatio(pixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setClearColor(0x000000, 1);
@@ -101,13 +114,24 @@ function init(){
   var coarsePointer = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
   var smallScreen = Math.max(window.innerWidth, window.innerHeight) < 820;
   var isLowPower = coarsePointer || smallScreen;
-  var FBM_OCTAVES = isLowPower ? 4 : 5;
-  var SPHERE_SEG  = isLowPower ? 96 : 128;
-  var STAR_COUNT  = isLowPower ? 3500 : 7000;
-  var SIM_W = isLowPower ? 384 : 768;
-  var SIM_H = isLowPower ? 192 : 384;
-  var BLOOM_LEVELS = isLowPower ? 3 : 4;
-  var PROMINENCE_COUNT = isLowPower ? 4 : 7;
+  // Tiers NOMEADOS (low/mid/high) em vez do booleano isLowPower: a
+  // partida ainda usa a heurística antiga (toque/tela pequena => low),
+  // mas o profiler pode forçar qualquer tier por URL. MID é o alvo do
+  // iPhone 15 Pro: bake 1024, SIM 768x384, LIC 7 taps, 4 níveis de bloom.
+  var TIER_PARAMS = {
+    low:  { fbm:4, seg:96,  stars:3500, bright:130, simW:384, simH:192, simStep:1/16, bloom:3, prom:4, chromo:512,  granFreq:22.0, lic7:false },
+    mid:  { fbm:5, seg:128, stars:5000, bright:200, simW:768, simH:384, simStep:1/22, bloom:4, prom:6, chromo:1024, granFreq:30.0, lic7:true  },
+    high: { fbm:5, seg:128, stars:7000, bright:240, simW:768, simH:384, simStep:1/26, bloom:4, prom:7, chromo:2048, granFreq:34.0, lic7:true  }
+  };
+  var TIER = TIER_PARAMS[urlQ.tier] ? urlQ.tier : (isLowPower ? 'low' : 'high');
+  var TP = TIER_PARAMS[TIER];
+  var FBM_OCTAVES = TP.fbm;
+  var SPHERE_SEG  = TP.seg;
+  var STAR_COUNT  = TP.stars;
+  var SIM_W = TP.simW;
+  var SIM_H = TP.simH;
+  var BLOOM_LEVELS = TP.bloom;
+  var PROMINENCE_COUNT = TP.prom;
   var hasTouch = coarsePointer || ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
 
   // ---------------------------------------------------------------
@@ -586,7 +610,7 @@ function init(){
     uDispScale: { value: SUN_RADIUS * 0.004 },
     uChromoTex: { value: null },
     uChromoFar: { value: null },
-    uGranFreq: { value: isLowPower ? 22.0 : 34.0 },
+    uGranFreq: { value: TP.granFreq },
     uCamDist: { value: 6.0 },
     uCharges: { value: charges },
     uFlare: { value: new THREE.Vector4(0, 0, 1, 0) },
@@ -602,7 +626,7 @@ function init(){
   // exige resolução plena (fibrilas LIC, manchas, limbo).
   //   R = calor de larga escala   G = filamento   B = plage
   // ---------------------------------------------------------------
-  var CHROMO_W = isLowPower ? 512 : 2048;
+  var CHROMO_W = TP.chromo;
   var CHROMO_H = CHROMO_W >> 1;
   var chromoRT = new THREE.WebGLRenderTarget(CHROMO_W, CHROMO_H, simRTOptions);
   chromoRT.texture.wrapS = THREE.RepeatWrapping;   // costura de longitude
@@ -610,7 +634,7 @@ function init(){
     uTime: { value: 0 },
     uSimTex: { value: simRTs[0].texture },
     uSimTexel: { value: simUniforms.uTexel.value },
-    uGranFreq: { value: isLowPower ? 22.0 : 34.0 },
+    uGranFreq: { value: TP.granFreq },
     uCharges: { value: charges }
   };
   var chromoFragment = NOISE_GLSL + '\n' + WORLEY_GLSL + '\n' + [
@@ -729,7 +753,7 @@ function init(){
     '  gl_FragColor = vec4(min(heatLS, 1.0), fil, min(plage, 1.0), 0.5 + 0.5*fibC);',
     '}'
   ].join('\n');
-  if (isLowPower) {
+  if (!TP.lic7) {
     chromoFragment = chromoFragment
       .replace(/int i=-6;i<=6/g, 'int i=-3;i<=3')
       .replace(/float\(i\)\/6\.0/g, 'float(i)/3.0');
@@ -1022,7 +1046,7 @@ function init(){
 
   // aparelhos fracos: LIC com 5 amostras em vez de 7 (mesma técnica do
   // ajuste de oitavas do fBm, feito por substituição de texto no GLSL)
-  if (isLowPower) {
+  if (!TP.lic7) {
     sunFragmentShader = sunFragmentShader
       .replace(/int i=-6;i<=6/g, 'int i=-3;i<=3')
       .replace(/float\(i\)\/6\.0/g, 'float(i)/3.0');
@@ -1527,7 +1551,7 @@ function init(){
   var stars = buildStars(STAR_COUNT, 700);
   scene.add(stars);
   // camada esparsa de estrelas maiores e mais vivas: profundidade no fundo
-  var brightStars = buildStars(isLowPower ? 130 : 240, 680);
+  var brightStars = buildStars(TP.bright, 680);
   brightStars.material.size = 3.0;
   brightStars.material.opacity = 0.7;
   scene.add(brightStars);
@@ -1556,7 +1580,7 @@ function init(){
   // (rtType/isHDR detectados no topo, antes dos targets da simulação)
   var BLOOM_THRESHOLD = isHDR ? 1.0 : 0.82;
   // diagnóstico acessível via console: window.__solInfo
-  try { window.__solInfo = { webgl2: !!(renderer.capabilities && renderer.capabilities.isWebGL2), hdr: isHDR }; } catch(e){}
+  try { window.__solInfo = { webgl2: !!(renderer.capabilities && renderer.capabilities.isWebGL2), hdr: isHDR, tier: TIER, scale: RENDER_SCALE }; } catch(e){}
 
   var sceneRT = new THREE.WebGLRenderTarget(2,2, {
     minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
@@ -1648,9 +1672,10 @@ function init(){
     }
   }
 
+  var BLOOM_STRENGTH_BASE = isHDR ? 0.42 : 0.55;
   var compUniforms = {
     tScene:{value:null}, tBloom:{value:null},
-    uBloomStrength:{value: isHDR ? 0.42 : 0.55},
+    uBloomStrength:{value: BLOOM_STRENGTH_BASE},
     uExposure:{value: isHDR ? 1.02 : 1.06}
   };
   var compFragment = [
@@ -1903,9 +1928,58 @@ function init(){
   renderer.domElement.addEventListener('dblclick', function(e){ e.preventDefault(); toggleFrame(); });
   renderer.domElement.addEventListener('contextmenu', function(e){ e.preventDefault(); });
   window.addEventListener('keydown', onKeyDown);
+
+  // ---------------------------------------------------------------
+  // Instrumentação de performance: ring de ~4s de intervalos frame-a-
+  // frame e de custo CPU do corpo do animate; draw calls acumulados
+  // por FRAME (autoReset off + reset manual — com bloom/bake/sim o
+  // frame tem vários render() e o autoReset só mostraria o último);
+  // bakes/s numa janela de 5s. Toggles de subsistema para o profiler
+  // medir custo por A/B sem recarregar.
+  // ---------------------------------------------------------------
+  renderer.info.autoReset = false;
+  var perfFrameMs = new Float32Array(240);
+  var perfBusyMs  = new Float32Array(240);
+  var perfIdx = 0, perfN = 0, perfLastT = 0, perfCalls = 0;
+  var perfBakes = [];
+  var subToggle = { sim:true, bake:true, bloom:true, spicules:true,
+                    corona:true, prominences:true, stars:true };
+
   // estado exposto para QA automatizado (leitura + posicionamento de câmera)
   try {
     if (window.__solInfo){
+      window.__solInfo.perf = function(){
+        function stats(buf, n){
+          if (!n) return { avg: 0, p95: 0 };
+          var a = Array.prototype.slice.call(buf, 0, n).sort(function(x,y){ return x-y; });
+          var s = 0; for (var i=0;i<n;i++) s += a[i];
+          return { avg: +(s/n).toFixed(2),
+                   p95: +a[Math.min(n-1, Math.floor(n*0.95))].toFixed(2) };
+        }
+        var now = performance.now();
+        while (perfBakes.length && now - perfBakes[0] > 5000) perfBakes.shift();
+        var f = stats(perfFrameMs, perfN);
+        return { tier: TIER, scale: RENDER_SCALE, dpr: pixelRatio,
+                 frames: perfN, ms: f, busy: stats(perfBusyMs, perfN),
+                 fps: f.avg > 0 ? +(1000/f.avg).toFixed(1) : 0,
+                 calls: perfCalls, bakesPerSec: +(perfBakes.length/5).toFixed(2),
+                 toggles: JSON.parse(JSON.stringify(subToggle)),
+                 size: [renderer.domElement.width, renderer.domElement.height] };
+      };
+      window.__solInfo.perfReset = function(){
+        perfN = 0; perfIdx = 0; perfLastT = 0; perfBakes.length = 0;
+      };
+      // liga/desliga um subsistema (A/B de custo); sem argumento inverte;
+      // nome desconhecido devolve a lista de nomes válidos
+      window.__solInfo.toggle = function(name, on){
+        if (!(name in subToggle)) return Object.keys(subToggle);
+        subToggle[name] = (on === undefined) ? !subToggle[name] : !!on;
+        spiculeMesh.visible = subToggle.spicules;
+        coronaRays.visible = coronaOuter.visible = subToggle.corona;
+        prominenceGroup.visible = subToggle.prominences;
+        stars.visible = brightStars.visible = subToggle.stars;
+        return subToggle[name];
+      };
       window.__solInfo.state = function(){
         return { camDist: camDist, targetCamDist: targetCamDist, theta: theta, phi: phi,
                  thetaVel: thetaVel, phiVel: phiVel,
@@ -2012,7 +2086,7 @@ function init(){
   var elapsed = 0;
   var simAccum = 0;
   var chromoAccum = 0;
-  var SIM_STEP_INTERVAL = isLowPower ? (1/16) : (1/26);
+  var SIM_STEP_INTERVAL = TP.simStep;
   var SIM_DT = 0.6;
   var ROT_SPEED = 0.042;
 
@@ -2059,23 +2133,27 @@ function init(){
 
   function animate(){
     requestAnimationFrame(animate);
+    var frameT0 = performance.now();
     var delta = Math.min(clock.getDelta(), 0.1);
     elapsed += delta;
     sunUniforms.uTime.value = elapsed;
 
     simAccum += delta;
-    var guard = 0;
-    while (simAccum >= SIM_STEP_INTERVAL && guard < 5){
-      simAccum -= SIM_STEP_INTERVAL;
-      stepSimulation(SIM_DT);
-      guard++;
-    }
+    if (subToggle.sim){
+      var guard = 0;
+      while (simAccum >= SIM_STEP_INTERVAL && guard < 5){
+        simAccum -= SIM_STEP_INTERVAL;
+        stepSimulation(SIM_DT);
+        guard++;
+      }
+    } else simAccum = 0;
 
     // bake estrutural a ~8Hz: as camadas lentas não pagam custo por frame
     chromoAccum += delta;
-    if (chromoAccum >= 0.12){
+    if (chromoAccum >= 0.12 && subToggle.bake){
       chromoAccum = 0;
       bakeChromo(elapsed);
+      perfBakes.push(frameT0);
     }
 
     sunMesh.rotation.y += ROT_SPEED * delta;
@@ -2185,12 +2263,23 @@ function init(){
     renderer.setRenderTarget(sceneRT);
     renderer.render(scene, camera);
 
-    renderBloom();
+    if (subToggle.bloom) renderBloom();
+    compUniforms.uBloomStrength.value = subToggle.bloom ? BLOOM_STRENGTH_BASE : 0.0;
 
     compUniforms.tScene.value = sceneRT.texture;
     compUniforms.tBloom.value = bloomMips[0].rt.texture;
     renderer.setRenderTarget(null);
     renderer.render(compScene, quadCamera);
+
+    // fecha a medição do frame: intervalo rAF->rAF + custo CPU do corpo
+    var frameT1 = performance.now();
+    perfBusyMs[perfIdx] = frameT1 - frameT0;
+    perfFrameMs[perfIdx] = (perfLastT > 0) ? (frameT0 - perfLastT) : (frameT1 - frameT0);
+    perfLastT = frameT0;
+    perfIdx = (perfIdx + 1) % 240;
+    if (perfN < 240) perfN++;
+    perfCalls = renderer.info.render.calls;
+    renderer.info.reset();
   }
 
   animate();

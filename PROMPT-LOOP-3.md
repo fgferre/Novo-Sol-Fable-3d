@@ -16,7 +16,7 @@ limitado por execução.
    já tem ref-06/ref-07 permanentes do GONG).
 3. Ferramentas prontas (NODE_PATH=/opt/node22/lib/node_modules;
    `pip install pillow` se faltar): `tools/shot.js`, `tools/qa-elements.js`
-   (aceita HTML alternativo), `tools/analyze.py` (8 gates A-H),
+   (aceita HTML alternativo), `tools/analyze.py` (9 gates A-I),
    `tools/qa-motion.js` + `tools/motion-check.py`, `tools/qa-controls.js`,
    `tools/sweep.js`, `tools/qa-prom-orbit.js`.
 

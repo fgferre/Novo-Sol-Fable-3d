@@ -156,6 +156,37 @@ for iy in range(gh):
 results.append(('H filamentos: >=1 canal escuro alongado no disco',
                 filaments >= 1, f'{filaments} canais'))
 
+# ---------- I. TAMANHO DE MANCHA (empírico ref-07 GONG: umbras reais têm
+# 3.5-60 Mm — na nossa captura, componente escuro COMPACTO (mancha) deve
+# ter span <= 16 células (~0.12 R com penumbra). Restrito ao interior do
+# disco: os cantos do crop caem no céu e não podem contaminar ----------
+def insideDisk(ix, iy):
+    return (ix-gw//2)**2 + (iy-gh//2)**2 < (gw*0.475)**2
+
+sI = sorted(Lg[iy][ix] for iy in range(gh) for ix in range(gw) if insideDisk(ix, iy))
+medI = sI[len(sI)//2]
+maskI = [[insideDisk(ix, iy) and Lg[iy][ix] < 0.55*medI for ix in range(gw)] for iy in range(gh)]
+seenI = [[False]*gw for _ in range(gh)]
+worstSpan = 0
+for iy in range(gh):
+    for ix in range(gw):
+        if maskI[iy][ix] and not seenI[iy][ix]:
+            q = deque([(ix, iy)]); seenI[iy][ix] = True
+            area = 0; mnx = mxx = ix; mny = mxy = iy
+            while q:
+                cx, cy = q.popleft(); area += 1
+                mnx = min(mnx, cx); mxx = max(mxx, cx)
+                mny = min(mny, cy); mxy = max(mxy, cy)
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    nx, ny = cx+dx, cy+dy
+                    if 0 <= nx < gw and 0 <= ny < gh and maskI[ny][nx] and not seenI[ny][nx]:
+                        seenI[ny][nx] = True; q.append((nx, ny))
+            bw, bh = mxx-mnx+1, mxy-mny+1
+            if area >= 8 and area/(bw*bh) > 0.42:   # compacto = mancha
+                worstSpan = max(worstSpan, max(bw, bh))
+results.append(('I manchas: span compacto <= 16 células (~0.12 R)',
+                worstSpan <= 16, f'maior span {worstSpan}'))
+
 fails = 0
 for name, ok, detail in results:
     print(('PASS' if ok else 'FAIL'), name, '->', detail)

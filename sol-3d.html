@@ -1778,9 +1778,16 @@ function init(){
       rotLast = { x: e.clientX, y: e.clientY };
       thetaVel = 0; phiVel = 0;
       flingSamples.length = 0;
+      // gesto do HUD: dispara se o dedo ficar parado até o timer vencer
+      hudDown = { x: e.clientX, y: e.clientY };
+      clearTimeout(hudTimer);
+      hudTimer = setTimeout(function(){
+        if (hudDown && pointers.size === 1) hudToggle();
+      }, 1000);
     } else if (pointers.size === 2){
       rotId = null; rotLast = null;
       pinchPrevDist = pointerDistance();
+      hudDown = null; clearTimeout(hudTimer);
     }
     lastInteraction = performance.now();
   }
@@ -1788,6 +1795,10 @@ function init(){
   function onPointerMove(e){
     if (!pointers.has(e.pointerId)) return;
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (hudDown && (Math.abs(e.clientX - hudDown.x) > 9 ||
+                    Math.abs(e.clientY - hudDown.y) > 9)){
+      hudDown = null; clearTimeout(hudTimer);
+    }
 
     if (pointers.size >= 2){
       var d = pointerDistance();
@@ -1828,6 +1839,7 @@ function init(){
 
   function endPointer(e){
     if (pointers.has(e.pointerId)) pointers.delete(e.pointerId);
+    hudDown = null; clearTimeout(hudTimer);
     try { renderer.domElement.releasePointerCapture(e.pointerId); } catch(_){}
     if (pointers.size === 1){
       var remaining = pointers.entries().next().value;
@@ -1944,6 +1956,20 @@ function init(){
   var perfBakes = [];
   var subToggle = { sim:true, bake:true, bloom:true, spicules:true,
                     corona:true, prominences:true, stars:true };
+
+  // HUD de perf on-device: ?hud=1 liga na carga; segurar um dedo PARADO
+  // ~1s alterna (o arquivo aberto localmente no iPhone não tem como
+  // receber query string nem abrir console — o gesto resolve os dois).
+  var hudEl = document.createElement('div');
+  hudEl.style.cssText = 'position:fixed;top:10px;right:10px;z-index:40;' +
+    'font:11px/1.5 ui-monospace,Menlo,monospace;color:#aef;' +
+    'background:rgba(0,10,20,0.55);padding:6px 9px;border-radius:8px;' +
+    'pointer-events:none;white-space:pre;display:none';
+  document.body.appendChild(hudEl);
+  var hudOn = urlQ.hud === '1';
+  if (hudOn) hudEl.style.display = 'block';
+  var hudTimer = 0, hudDown = null, hudAccum = 0;
+  function hudToggle(){ hudOn = !hudOn; hudEl.style.display = hudOn ? 'block' : 'none'; }
 
   // estado exposto para QA automatizado (leitura + posicionamento de câmera)
   try {
@@ -2270,6 +2296,16 @@ function init(){
     compUniforms.tBloom.value = bloomMips[0].rt.texture;
     renderer.setRenderTarget(null);
     renderer.render(compScene, quadCamera);
+
+    // HUD: atualiza a ~2Hz com as mesmas métricas do __solInfo.perf()
+    hudAccum += delta;
+    if (hudOn && hudAccum >= 0.5 && window.__solInfo && window.__solInfo.perf){
+      hudAccum = 0;
+      var P = window.__solInfo.perf();
+      hudEl.textContent = 'tier ' + P.tier + '  ' + P.fps + ' fps\n' +
+        'ms ' + P.ms.avg + ' avg  ' + P.ms.p95 + ' p95\n' +
+        'cpu ' + P.busy.avg + '  calls ' + P.calls + '  bake/s ' + P.bakesPerSec;
+    }
 
     // fecha a medição do frame: intervalo rAF->rAF + custo CPU do corpo
     var frameT1 = performance.now();

@@ -92,6 +92,20 @@ paralaxe 4.0 · limbo/atmosfera 6.0 · proeminências hero 6.5.
    SwiftShader chega a 1.8× entre rodadas); fps de device real só o
    dono confirma no aparelho.
 
+## Registro do loop (atualizado por iteração)
+
+- **T3.1 FEITO** (57c1863 + HUD): `__solInfo.perf()`, tiers nomeados
+  low/mid/high, `?tier=`/`?scale=`, toggles de 7 subsistemas, HUD
+  on-device (`?hud=1` ou segurar o dedo parado ~1s). QA 32/32 PASS,
+  zero pageerror; custo cai monotonicamente por tier (686→474→358 ms
+  no SwiftShader).
+- **ACHADO (pré-existente, não regressão)**: gate H (filamentos)
+  falha com 0 canais no crop central em 3/3 amostras TAMBÉM no
+  baseline 0bc92c1 — o canal existe visualmente mas não cruza o crop
+  no instante da captura. Tratar junto com T1.1 (mexe em filamentos).
+- Gate D-tufos oscila (limiar 1.7; amostras 1.72/1.64/4.95) — regra
+  das duas amostras aplicada, maioria PASS.
+
 ## Ordem sugerida de execução (intercalar trilhas)
 
 T3.1 (instrumentação) → T2.1 (bloom) → T1.1 (prom↔filamento) →

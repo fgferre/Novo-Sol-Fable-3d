@@ -1825,7 +1825,11 @@ function init(){
       var dx = e.clientX - rotLast.x;
       var dy = e.clientY - rotLast.y;
       rotLast.x = e.clientX; rotLast.y = e.clientY;
-      var dth = -dx*0.0055;
+      // semântica "agarrar o globo" (Google Earth/Maps): a superfície
+      // acompanha o dedo nos DOIS eixos. Antes o horizontal era invertido
+      // (câmera orbitava no sentido do dedo => superfície ia ao contrário)
+      // enquanto o vertical já acompanhava — eixos misturados.
+      var dth = dx*0.0055;
       var dph = -dy*0.0055;
       theta += dth;
       phi   += dph;

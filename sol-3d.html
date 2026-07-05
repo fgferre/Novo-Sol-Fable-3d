@@ -719,6 +719,10 @@ function init(){
     '    ? (Bt*cos(wig) + cross(sp, Bt)*sin(wig)) / BtL',
     '    : vec3(0.5773);',
     '  float fibC = licFibril(sp, fdir, uGranFreq*1.45, 0.14, t);',
+    // filamentos são FEIXES de fios escuros (fibrilas do canal), não
+    // faixas lisas: modular pela textura LIC quebra o contorno contínuo
+    // ("vinco de celofane") em fios — como nas ref-02/03 de perto
+    '  fil *= 0.55 + 0.75*(fibC*0.5+0.5);',
     '  gl_FragColor = vec4(min(heatLS, 1.0), fil, min(plage, 1.0), 0.5 + 0.5*fibC);',
     '}'
   ].join('\n');

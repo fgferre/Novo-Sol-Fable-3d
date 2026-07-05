@@ -906,8 +906,10 @@ function init(){
     '  float heat = st.r + vDisp*0.06;',
     // disciplina tonal H-alfa: o disco é quase plano em luminância; a
     // larga escala só sugere estrutura — a riqueza vem da textura fina.
-    // De perto os "blobs" acalmam ainda mais e as fibrilas dominam.
-    '  heat = 0.50 + (heat - 0.52)*mix(0.45, 0.10, close);',
+    // De perto acalma MENOS: nas fotos reais (ref-01) plage, rede e
+    // faixas escuras continuam bem visíveis no close-up — achatar a
+    // larga escala 4.5x deixava o zoom um "pelo" uniforme irreal.
+    '  heat = 0.50 + (heat - 0.52)*mix(0.45, 0.26, close);',
     // --- fibrilas grossas: baked (canal A). De perto, o claro/escuro é
     // FEITO de fibrilas: a larga escala modula o contraste dos fios ---
     '  float fibC = st.a*2.0 - 1.0;',

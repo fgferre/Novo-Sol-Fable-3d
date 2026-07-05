@@ -310,7 +310,29 @@ function init(){
   // magnetohidrodinâmica de primeiros princípios como as usadas em
   // física solar de verdade.
   // ---------------------------------------------------------------
-  var simRTOptions = { minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, format:THREE.RGBAFormat, depthBuffer:false, stencilBuffer:false };
+  // HDR: detecção de half-float ANTES dos render targets da simulação —
+  // o estado do transporte de fluxo precisa de precisão: em 8 bits os
+  // incrementos de ~3% por passo quantizam para zero e o campo evoluído
+  // congela/erode até virar uniforme.
+  var rtType = THREE.UnsignedByteType;
+  try {
+    var glCtx0 = renderer.getContext();
+    var isWebGL2Ctx = !!(renderer.capabilities && renderer.capabilities.isWebGL2);
+    if (isWebGL2Ctx) {
+      if (glCtx0.getExtension('EXT_color_buffer_float') || glCtx0.getExtension('EXT_color_buffer_half_float')) {
+        rtType = THREE.HalfFloatType;
+      }
+    } else {
+      if (glCtx0.getExtension('OES_texture_half_float') &&
+          glCtx0.getExtension('OES_texture_half_float_linear') &&
+          glCtx0.getExtension('EXT_color_buffer_half_float')) {
+        rtType = THREE.HalfFloatType;
+      }
+    }
+  } catch(e){}
+  var isHDR = (rtType === THREE.HalfFloatType);
+
+  var simRTOptions = { minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, format:THREE.RGBAFormat, type: rtType, depthBuffer:false, stencilBuffer:false };
   var simRTs = [
     new THREE.WebGLRenderTarget(SIM_W, SIM_H, simRTOptions),
     new THREE.WebGLRenderTarget(SIM_W, SIM_H, simRTOptions)
@@ -384,8 +406,19 @@ function init(){
     '    gl_FragColor = vec4(target, 0.5 + 0.5*tBr, target, 1.0);',
     '    return;',
     '  }',
-    '  vec2 vel = curlVel(uv, uTime) * 1.1;',
-    '  vel.x += diffRotDegPerDay(lat) * 0.00028;',
+    // CFL: o passo semi-Lagrangiano só transporta coerentemente se o
+    // deslocamento por passo for ~1-2 texels. O curl-noise cru tem
+    // gradiente O(10) em unidades de uv — sem este teto o estado era
+    // amostrado a dezenas de texels de distância por passo e o campo
+    // transportado se desintegrava em ruído uniforme (o Br evoluído
+    // morria e levava filamentos, plage e fibrilas junto).
+    '  vec2 cv = curlVel(uv, uTime);',
+    '  float cvm = length(cv);',
+    '  vec2 vel = cv * (0.005 / (cvm + 1.0));',
+    // rotação diferencial RELATIVA ao referencial da malha (taxa de
+    // Carrington ~14.18°/dia): a rotação média já é a própria esfera
+    // girando; na textura fica só o CISALHAMENTO diferencial
+    '  vel.x += (diffRotDegPerDay(lat) - 14.18) * 0.00028;',
     '  vec2 srcUV = vec2(fract(uv.x - vel.x*uDt), clamp(uv.y - vel.y*uDt, 0.0015, 0.9985));',
     '  vec4 prevC = texture2D(uPrevState, srcUV);',
     '  vec4 cR = texture2D(uPrevState, srcUV+vec2(uTexel.x,0.0));',
@@ -655,18 +688,21 @@ function init(){
     // filamentos: linha de INVERSÃO do fluxo transportado (|Br|~0 com
     // fluxo oposto em volta — é onde filamentos reais se sustentam)
     '  float nl = abs(brEv) / (abs(brEv) + gradM*1.1 + 0.01);',
-    '  float filW1 = 0.09*(0.55 + 0.9*(fbmLight(sp*3.2 + vec3(9.1, 2.2, 0.0))*0.5+0.5));',
-    '  float filW3 = 0.15*(0.50 + 0.9*(fbmLight(sp*2.1 + vec3(5.5, 0.9, 2.8))*0.5+0.5));',
+    // filamentos reais são CANAIS largos e difusos (ref-02/03), não
+    // traços de caneta: máscaras mais largas e rampa mais longa
+    '  float filW1 = 0.13*(0.55 + 0.9*(fbmLight(sp*3.2 + vec3(9.1, 2.2, 0.0))*0.5+0.5));',
+    '  float filW3 = 0.21*(0.50 + 0.9*(fbmLight(sp*2.1 + vec3(5.5, 0.9, 2.8))*0.5+0.5));',
     '  float nlw = nl * (0.70 + 0.55*(fbmLight(sp*6.5 + vec3(7.7, 4.1, 1.9))*0.5+0.5));',
-    '  float rib1 = 1.0 - smoothstep(filW1*0.18, filW1*1.25, nlw);',
-    '  float rib3 = 1.0 - smoothstep(filW3*0.18, filW3*1.25, nlw);',
+    '  float rib1 = 1.0 - smoothstep(filW1*0.10, filW1*1.6, nlw);',
+    '  float rib3 = 1.0 - smoothstep(filW3*0.10, filW3*1.6, nlw);',
     '  float filGate1 = smoothstep(0.10, 0.45, fbm(sp*1.05 + vec3(3.3, 7.7, 0.5)));',
     '  float filGate3 = smoothstep(0.28, 0.52, fbm(sp*0.85 + vec3(6.1, 3.9, 8.2)));',
     '  float filStr = smoothstep(0.05, 0.16, gradM) * (1.0 - smoothstep(1.6, 2.8, gradM));',
     '  float fil = max(rib1*filGate1, rib3*filGate3) * filStr;',
     // ganho: as máscaras multiplicadas raramente chegam a 1 — recupera a
-    // profundidade visível dos filamentos (posição continua vindo do Br)
-    '  fil = clamp(fil*2.4, 0.0, 1.0);',
+    // profundidade visível dos filamentos (posição continua vindo do Br).
+    // Ganho menor que antes: 2.4 saturava o clamp e binarizava a borda
+    '  fil = clamp(fil*1.7, 0.0, 1.0);',
     // plage: concentração forte do fluxo EVOLUÍDO
     '  float plage = smoothstep(0.26, 0.55, abs(brEv));',
     // plage real é MOSQUEADA: flocos brilhantes seguindo a rede, não um
@@ -683,6 +719,10 @@ function init(){
     '    ? (Bt*cos(wig) + cross(sp, Bt)*sin(wig)) / BtL',
     '    : vec3(0.5773);',
     '  float fibC = licFibril(sp, fdir, uGranFreq*1.45, 0.14, t);',
+    // filamentos são FEIXES de fios escuros (fibrilas do canal), não
+    // faixas lisas: modular pela textura LIC quebra o contorno contínuo
+    // ("vinco de celofane") em fios — como nas ref-02/03 de perto
+    '  fil *= 0.55 + 0.75*(fibC*0.5+0.5);',
     '  gl_FragColor = vec4(min(heatLS, 1.0), fil, min(plage, 1.0), 0.5 + 0.5*fibC);',
     '}'
   ].join('\n');
@@ -873,12 +913,16 @@ function init(){
     '  float heat = st.r + vDisp*0.06;',
     // disciplina tonal H-alfa: o disco é quase plano em luminância; a
     // larga escala só sugere estrutura — a riqueza vem da textura fina.
-    // De perto os "blobs" acalmam ainda mais e as fibrilas dominam.
-    '  heat = 0.50 + (heat - 0.52)*mix(0.45, 0.10, close);',
+    // De perto acalma MENOS: nas fotos reais (ref-01) plage, rede e
+    // faixas escuras continuam bem visíveis no close-up — achatar a
+    // larga escala 4.5x deixava o zoom um "pelo" uniforme irreal.
+    // de LONGE mais suave ainda: as refs 02/03 mostram sol calmo quase
+    // plano em enquadramento cheio (métrica G: spread 0.10-0.16)
+    '  heat = 0.50 + (heat - 0.52)*mix(0.34, 0.26, close);',
     // --- fibrilas grossas: baked (canal A). De perto, o claro/escuro é
     // FEITO de fibrilas: a larga escala modula o contraste dos fios ---
     '  float fibC = st.a*2.0 - 1.0;',
-    '  heat += fibC * mix(0.085, 0.12, close) * (0.65 + 0.70*st.r);',
+    '  heat += fibC * mix(0.055, 0.12, close) * (0.65 + 0.70*st.r);',
     // LOD: de perto, campo magnético + LIC ao vivo dão as camadas finas
     // (de longe o disco é praticamente só o sampler do bake)
     '  if (close > 0.003){',
@@ -1335,23 +1379,7 @@ function init(){
   //    EXT_color_buffer_half_float.
   // Consultamos gl.getExtension direto (silencioso), nunca
   // renderer.extensions.get (que loga warning quando não acha).
-  var rtType = THREE.UnsignedByteType;
-  try {
-    var glCtx = renderer.getContext();
-    var isWebGL2 = !!(renderer.capabilities && renderer.capabilities.isWebGL2);
-    if (isWebGL2) {
-      if (glCtx.getExtension('EXT_color_buffer_float') || glCtx.getExtension('EXT_color_buffer_half_float')) {
-        rtType = THREE.HalfFloatType;
-      }
-    } else {
-      if (glCtx.getExtension('OES_texture_half_float') &&
-          glCtx.getExtension('OES_texture_half_float_linear') &&
-          glCtx.getExtension('EXT_color_buffer_half_float')) {
-        rtType = THREE.HalfFloatType;
-      }
-    }
-  } catch(e){}
-  var isHDR = (rtType === THREE.HalfFloatType);
+  // (rtType/isHDR detectados no topo, antes dos targets da simulação)
   var BLOOM_THRESHOLD = isHDR ? 1.0 : 0.82;
   // diagnóstico acessível via console: window.__solInfo
   try { window.__solInfo = { webgl2: !!(renderer.capabilities && renderer.capabilities.isWebGL2), hdr: isHDR }; } catch(e){}
@@ -1850,7 +1878,13 @@ function init(){
       base *= (0.05 + 0.95*(1.0 - s));
       // folha opticamente fina: esmaece quando o plano fica de frente
       m.getWorldDirection(promNormal);
-      base *= 1.0 - 0.5*Math.abs(promNormal.dot(camDirN));
+      var nv = Math.abs(promNormal.dot(camDirN));
+      base *= 1.0 - 0.5*nv;
+      // ...e também de PERFIL: um cartão visto de lado degenera numa
+      // "agulha" de largura zero em brilho total — o gêmeo cruzado a 90°
+      // (que está de frente nessa hora) é quem carrega a forma
+      var edgeK = Math.min(1, Math.max(0, (nv - 0.03) / 0.13));
+      base *= edgeK*edgeK*(3 - 2*edgeK);
       m.material.uniforms.uIntensity.value = base;
       m.material.uniforms.uTime.value = elapsed;
     });

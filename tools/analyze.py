@@ -105,6 +105,51 @@ c_ours = mean_local_coherence(imf, imf.size[0]//2-240, imf.size[1]//2-240, 480)
 c_ref  = mean_local_coherence(imr, imr.size[0]//2-240, imr.size[1]//2-240, 480)
 results.append(('F fibrilas: coerência local >= 55% da ref-01', c_ours >= 0.55*c_ref, f'nossa {c_ours:.3f} vs ref {c_ref:.3f}'))
 
+# ---------- G. DISCIPLINA TONAL (empírico: refs 02/03 têm sol calmo
+# suave — spread (P90-P10)/mediana ~0.10-0.16 no disco em enquadramento
+# cheio; um "pelo" muito contrastado de longe é irreal) ----------
+def center_grid(img, half=300, step=3):
+    Wc, Hc = img.size
+    x0, y0 = Wc//2-half, Hc//2-half
+    return [[lum(img.getpixel((x0+ix*step, y0+iy*step)))
+             for ix in range(2*half//step)] for iy in range(2*half//step)]
+
+Lg = center_grid(im)
+flatL = sorted(v for row in Lg for v in row)
+nL = len(flatL)
+medL = flatL[nL//2]
+spread = (flatL[int(0.90*nL)] - flatL[int(0.10*nL)]) / max(medL, 1e-6)
+results.append(('G tom do disco: spread (P90-P10)/med em [0.08,0.36]',
+                0.08 <= spread <= 0.36, f'{spread:.3f}'))
+
+# ---------- H. FILAMENTOS (empírico: refs 02/03 mostram canais escuros
+# ALONGADOS serpenteando no disco — exige componente conexo escuro com
+# span grande e baixo preenchimento de bbox; manchas são compactas) ----------
+from collections import deque
+gw = gh = len(Lg)
+thrF = 0.84*medL
+maskF = [[Lg[iy][ix] < thrF for ix in range(gw)] for iy in range(gh)]
+seenF = [[False]*gw for _ in range(gh)]
+filaments = 0
+for iy in range(gh):
+    for ix in range(gw):
+        if maskF[iy][ix] and not seenF[iy][ix]:
+            q = deque([(ix, iy)]); seenF[iy][ix] = True
+            area = 0; mnx = mxx = ix; mny = mxy = iy
+            while q:
+                cx, cy = q.popleft(); area += 1
+                mnx = min(mnx, cx); mxx = max(mxx, cx)
+                mny = min(mny, cy); mxy = max(mxy, cy)
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    nx, ny = cx+dx, cy+dy
+                    if 0 <= nx < gw and 0 <= ny < gh and maskF[ny][nx] and not seenF[ny][nx]:
+                        seenF[ny][nx] = True; q.append((nx, ny))
+            bw, bh = mxx-mnx+1, mxy-mny+1
+            if max(bw, bh) >= 45 and area >= 300 and area/(bw*bh) <= 0.45:
+                filaments += 1
+results.append(('H filamentos: >=1 canal escuro alongado no disco',
+                filaments >= 1, f'{filaments} canais'))
+
 fails = 0
 for name, ok, detail in results:
     print(('PASS' if ok else 'FAIL'), name, '->', detail)

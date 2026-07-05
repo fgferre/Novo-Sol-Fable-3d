@@ -151,6 +151,21 @@ paralaxe 4.0 · limbo/atmosfera 6.0 · proeminências hero 6.5.
   canais têm área (377≥300) mas span 27-29 <45 e fill 0.46: é problema
   de CONTINUIDADE da máscara no bake, não de ganho (tarefa própria).
 
+- **T1.3 FEITO**: coroa reescrita no REFERENCIAL DO SOL (direção 3D do
+  plano do céu girada ao espaço do objeto — ancoragem PROVADA: correlação
+  de fase 0.083 entre frames girados 0.6 rad, picos coronais seguem a
+  plage com corr 0.743), streamers reforçados sobre as cargas (cray
+  0.90), halo largo 0.30 (respiro 3× o baseline em 1.02-1.05R, achado
+  do T2.1 resolvido) e amplitude ∝ atividade global (cact 0.50).
+  Gates m30: A 0.89 estável 4/4, G 0.303, zero anel/névoa.
+- **UPGRADE FUTURO anotado**: c2 (chalo=0.55) lê ainda melhor como DP,
+  mas o bloom do halo sangra ~30px p/ dentro do limbo e derruba o gate
+  A (0.91-0.92). Pré-requisito: qa-elements capturar A/D com
+  __solInfo.toggle('corona',false) (fix já validado: A=0.77, D=4.0px).
+- **ACHADO de harness**: gate D falha com QUALQUER halo>0 (o limiar L>9
+  até 1.15R conta o respiro como franja) — incompatibilidade da
+  ferramenta, não defeito visual.
+
 ## Ordem sugerida de execução (intercalar trilhas)
 
 T3.1 (instrumentação) → T2.1 (bloom) → T1.1 (prom↔filamento) →

@@ -916,11 +916,13 @@ function init(){
     // De perto acalma MENOS: nas fotos reais (ref-01) plage, rede e
     // faixas escuras continuam bem visíveis no close-up — achatar a
     // larga escala 4.5x deixava o zoom um "pelo" uniforme irreal.
-    '  heat = 0.50 + (heat - 0.52)*mix(0.45, 0.26, close);',
+    // de LONGE mais suave ainda: as refs 02/03 mostram sol calmo quase
+    // plano em enquadramento cheio (métrica G: spread 0.10-0.16)
+    '  heat = 0.50 + (heat - 0.52)*mix(0.34, 0.26, close);',
     // --- fibrilas grossas: baked (canal A). De perto, o claro/escuro é
     // FEITO de fibrilas: a larga escala modula o contraste dos fios ---
     '  float fibC = st.a*2.0 - 1.0;',
-    '  heat += fibC * mix(0.085, 0.12, close) * (0.65 + 0.70*st.r);',
+    '  heat += fibC * mix(0.055, 0.12, close) * (0.65 + 0.70*st.r);',
     // LOD: de perto, campo magnético + LIC ao vivo dão as camadas finas
     // (de longe o disco é praticamente só o sampler do bake)
     '  if (close > 0.003){',

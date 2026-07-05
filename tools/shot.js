@@ -20,6 +20,8 @@ const url = 'file://' + path.resolve(htmlFile);
   const consoleMsgs = [];
   async function shoot(name, viewport, opts = {}) {
     const page = await browser.newPage({ viewport, deviceScaleFactor: 1 });
+    // SwiftShader renderiza devagar; o default de 30s estoura em screenshot
+    page.setDefaultTimeout(120000);
     page.on('console', (m) => {
       if (m.type() === 'error' || m.type() === 'warning') {
         consoleMsgs.push(`[${name}] ${m.type()}: ${m.text()}`);

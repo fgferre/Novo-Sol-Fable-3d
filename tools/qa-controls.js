@@ -5,6 +5,8 @@ const url = 'file://' + path.resolve('sol-3d.html');
 (async () => {
   const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
+  // SwiftShader renderiza devagar; o default de 30s estoura em screenshot
+  page.setDefaultTimeout(120000);
   const msgs = [];
   page.on('console', (m) => { if (m.type() === 'error') msgs.push(m.text()); });
   page.on('pageerror', (e) => msgs.push('pageerror: ' + e.message));

@@ -15,3 +15,19 @@ Observações:
 
 - As imagens invertidas (`ref-04`, `ref-05`) são um estilo comum em astrofotografia H-alpha para realçar detalhes; ao usá-las como referência de cor, considerar a paleta invertida.
 - Estruturas a evoluir na simulação a partir dessas referências: fibrilas/textura direcional seguindo campo magnético, filamentos escuros sobre o disco, espículas no limbo e proeminências mais ramificadas.
+
+## Referências científicas full-disk (GONG/NSO)
+
+| Arquivo | Descrição |
+| --- | --- |
+| `ref-06-gong-fulldisk-recente.jpg` | Full-disk H-alfa NSO/GONG (El Teide, 2026-07-04). Sol calmo: disco tonalmente quase plano, filamentos finos esparsos, plage nas RAs do limbo leste, proeminências pequenas. |
+| `ref-07-gong-fulldisk-maximo.jpg` | Full-disk H-alfa NSO/GONG (Big Bear, 2024-10-09, máximo solar). Filamento gigante com barbs, grupos de manchas com umbras MINÚSCULAS na escala do disco (~0.005-0.01 R), plage extensa. |
+
+Atribuição: dados do GONG (Global Oscillation Network Group), programa do
+NSF/NSO operado pela AURA; cortesia NSO/AURA/NSF (halpha.nso.edu).
+
+Aprendizados-chave dessas refs (escala de disco inteiro):
+- Umbras reais são pontos: 3.5-60 Mm (0.005-0.086 R de diâmetro).
+- Filamentos grandes têm BARBS (pés laterais), não são cobras lisas.
+- O disco é tonalmente MUITO plano; a textura fina é sutil.
+- Proeminências do dia-a-dia são baixas (0.03-0.08 R); gigantes são raras.

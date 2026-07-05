@@ -1890,6 +1890,11 @@ function init(){
         var ps = promStates[i];
         ps.phase = ((x*ps.period - elapsed) % ps.period + ps.period) % ps.period;
       };
+      // QA: sob SwiftShader um screenshot leva 10-35s e o Sol giraria até
+      // ~84° entre a mira e o frame capturado (a proeminência mirada some
+      // p/ dentro do disco ou atrás do limbo). Congelar/ajustar a rotação
+      // torna a captura determinística sem tocar no resto da animação.
+      window.__solInfo.setRotSpeed = function(v){ ROT_SPEED = v; };
       window.__solInfo.setView = function(th, ph, dist){
         theta = th; phi = Math.max(0.18, Math.min(Math.PI-0.18, ph));
         targetCamDist = camDist = Math.max(minDist, Math.min(maxDist, dist));

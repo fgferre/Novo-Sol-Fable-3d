@@ -27,9 +27,30 @@ function worldDir(objDir, rotY, tiltZ) {
   await page.waitForFunction(() => window.__solInfo && window.__solInfo.state, null, { timeout: 20000 });
   await page.waitForTimeout(5000);
 
+  // congela a rotação: sob SwiftShader um screenshot leva 10-35s e o Sol
+  // giraria até ~84° entre a mira e o frame capturado — a proeminência
+  // mirada acabava dentro do disco (fade) ou atrás do limbo (oclusão),
+  // parecendo "invisível" sem estar. A evolução dos fios (uTime) continua.
+  const canFreeze = await page.evaluate(() => !!window.__solInfo.setRotSpeed);
+  if (canFreeze) await page.evaluate(() => window.__solInfo.setRotSpeed(0));
+
   const proms = await page.evaluate(() => window.__solInfo.prominences());
-  // a mais equatorial fica visível de mais ângulos
-  const anchor = proms.reduce((a, b) => (Math.abs(b[1]) < Math.abs(a[1]) ? b : a));
+  // a mais equatorial fica visível de mais ângulos; entre as equatoriais,
+  // prefira uma MADURA (env alto) se o build expõe o ciclo de vida
+  let anchor = proms.reduce((a, b) => (Math.abs(b[1]) < Math.abs(a[1]) ? b : a));
+  const life = await page.evaluate(() => window.__solInfo.promLife ? window.__solInfo.promLife() : null);
+  if (life) {
+    const best = life.filter((l) => Math.abs(l.dir[1]) < 0.6)
+      .sort((a, b) => (b.env - Math.abs(b.dir[1])*0.2) - (a.env - Math.abs(a.dir[1])*0.2))[0];
+    if (best) {
+      anchor = best.dir;
+      const idx = life.indexOf(best);
+      // fixa a fase na maturidade para a sessão de fotos não pegar o alvo
+      // nascendo/morrendo (os estágios têm QA dedicado via setPromLife)
+      await page.evaluate((i) => window.__solInfo.setPromLife(i, 0.3), idx);
+      await page.waitForTimeout(600);
+    }
+  }
 
   async function aim(offset) {
     const st = await page.evaluate(() => window.__solInfo.state());
@@ -53,6 +74,16 @@ function worldDir(objDir, rotY, tiltZ) {
     await aim(0);
     await page.screenshot({ path: `${out}/time-t${i}.png` });
     if (i < 3) await page.waitForTimeout(5000);
+  }
+  // prova de que a proeminência GIRA com o Sol: câmera fixa, rotação
+  // acelerada por 3s — a estrutura deve DESLOCAR-SE entre os dois frames
+  if (canFreeze) {
+    await aim(0);
+    await page.screenshot({ path: `${out}/rot-a.png` });
+    await page.evaluate(() => window.__solInfo.setRotSpeed(0.3));
+    await page.waitForTimeout(3000);
+    await page.evaluate(() => window.__solInfo.setRotSpeed(0));
+    await page.screenshot({ path: `${out}/rot-b.png` });
   }
   console.log('orbita ok');
   await browser.close();

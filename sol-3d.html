@@ -1196,28 +1196,49 @@ function init(){
   // ---------------------------------------------------------------
   var prominenceGroup = new THREE.Group();
   var prominenceMeshes = [];
+  var promStates = [];
+  // âncora preferencialmente numa LINHA NEUTRA do campo magnético (é onde
+  // proeminências reais se sustentam) — amostragem por rejeição. Usada no
+  // nascimento E em cada RENASCIMENTO: o campo evolui, a âncora nova
+  // segue o campo do momento.
+  function sampleProminenceAnchor(){
+    var anchor = null;
+    for (var tries=0; tries<48; tries++){
+      var th = Math.random()*Math.PI*2;
+      var ph = Math.acos(2*Math.random()-1);
+      var cand = new THREE.Vector3(
+        Math.sin(ph)*Math.cos(th),
+        Math.cos(ph),
+        Math.sin(ph)*Math.sin(th)
+      );
+      anchor = cand;
+      var Bv = bFieldJS(cand);
+      var bm = Bv.length() + 1e-6;
+      if (Math.abs(Bv.dot(cand))/bm < 0.22 && bm > 0.5) break;
+    }
+    return anchor;
+  }
+  // (re)posiciona o par de cartões cruzados numa âncora nova, com forma
+  // nova (uSeed): chamado no nascimento e a cada renascimento do ciclo de
+  // vida — a proeminência velha colapsa (env->0) e a slot renasce longe
+  function placeProminence(ps, anchor){
+    var baseQ = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), anchor);
+    var ang0 = Math.random()*Math.PI;
+    ps.meshes.forEach(function(mm, k){
+      var spin = new THREE.Quaternion().setFromAxisAngle(anchor, ang0 + k*Math.PI*0.5);
+      mm.quaternion.copy(spin.multiply(baseQ.clone()));
+      mm.position.copy(anchor).multiplyScalar(SUN_RADIUS*0.995);
+      mm.userData.dir = anchor.clone();
+      mm.material.uniforms.uSeed.value = Math.random()*100;
+    });
+  }
   (function buildProminences(){
     for(var i=0;i<PROMINENCE_COUNT;i++){
       // âncora na superfície + plano vertical (local +Y = radial para fora).
       // O leque de fios é desenhado no shader em coordenadas polares a
       // partir da base — como as proeminências reais: fios finos que
       // sobem, curvam e se ramificam (ver ref-04).
-      // âncora preferencialmente numa LINHA NEUTRA do campo magnético
-      // (é onde proeminências reais se sustentam) — amostragem por rejeição
-      var anchor = null;
-      for (var tries=0; tries<48; tries++){
-        var th = Math.random()*Math.PI*2;
-        var ph = Math.acos(2*Math.random()-1);
-        var cand = new THREE.Vector3(
-          Math.sin(ph)*Math.cos(th),
-          Math.cos(ph),
-          Math.sin(ph)*Math.sin(th)
-        );
-        anchor = cand;
-        var Bv = bFieldJS(cand);
-        var bm = Bv.length() + 1e-6;
-        if (Math.abs(Bv.dot(cand))/bm < 0.22 && bm > 0.5) break;
-      }
+      var anchor = sampleProminenceAnchor();
       // três tipos: leque plumoso (ref-04), "hedgerow" — cortina de fios
       // verticais com topo em arco irregular, o tipo mais comum no limbo —
       // e ARCO/LAÇO: ponte de plasma com dois pés ancorados e vão escuro
@@ -1261,7 +1282,10 @@ function init(){
         uAspect: { value: w/h },
         // cartão curvado: a base já segue a esfera; o termo uSag vira só
         // um fade suave de emersão logo abaixo da superfície (valor 0)
-        uSag: { value: 0.0 }
+        uSag: { value: 0.0 },
+        // ciclo de vida (0..1): a ESTRUTURA cresce da superfície no
+        // nascimento e recolhe no colapso — nunca pop-in
+        uLife: { value: 0.0 }
       };
       var hedgerowFragment = NOISE_GLSL + '\n' + [
         'uniform float uTime;',
@@ -1269,6 +1293,7 @@ function init(){
         'uniform float uIntensity;',
         'uniform float uAspect;',
         'uniform float uSag;',
+        'uniform float uLife;',
         'varying vec2 vUv;',
         'void main(){',
         '  float xn = vUv.x*2.0 - 1.0;',
@@ -1277,6 +1302,8 @@ function init(){
         // em duas escalas — os montículos da ref-05 são bem denteados)
         '  float yTop = (0.60 + 0.28*snoise(vec3(xn*2.3, uSeed, 0.0))',
         '             + 0.12*snoise(vec3(xn*6.1, uSeed*1.7, 2.0))) * (1.0 - xn*xn*0.62);',
+        // ciclo de vida: a cortina CRESCE da superfície e recolhe no fim
+        '  yTop *= 0.10 + 0.90*uLife;',
         // cortina: fios VERTICAIS finos, drenando devagar
         '  float th1 = snoise(vec3(vUv.x*uAspect*24.0, y*3.0 - uTime*0.05, uSeed));',
         '  float th2 = snoise(vec3(vUv.x*uAspect*55.0, y*6.0 - uTime*0.08, uSeed+7.7));',
@@ -1286,6 +1313,7 @@ function init(){
         '  a *= 1.0 - smoothstep(0.72, 1.0, abs(xn));',
         // corta abaixo da superfície curva (sem borda reta flutuante)
         '  a *= smoothstep(0.0, 0.07, y - uSag*xn*xn);',
+        '  a *= smoothstep(0.0, 0.08, uLife);',
         '  vec3 col = mix(vec3(0.45,0.06,0.02), vec3(1.30,0.42,0.12), wisp*(1.0-y*0.8));',
         '  gl_FragColor = vec4(col, a*1.05);',
         '}'
@@ -1300,6 +1328,7 @@ function init(){
           'uniform float uIntensity;',
           'uniform float uAspect;',
           'uniform float uSag;',
+          'uniform float uLife;',
           'varying vec2 vUv;',
           'void main(){',
           '  float xn = vUv.x*2.0 - 1.0;',
@@ -1320,11 +1349,14 @@ function init(){
           '  float wisp = smoothstep(0.12, 0.80, (th1*0.60 + th2*0.50)*0.5+0.5);',
           // cada feixe tem comprimento próprio; a ponta é DESFIADA
           '  float blen = 0.62 + 0.34*snoise(vec3(bundle*2.7, uSeed*1.3, 2.2));',
+          // ciclo de vida: os feixes ALONGAM a partir da superfície
+          '  blen *= 0.10 + 0.90*uLife;',
           '  float fray = 0.12*snoise(vec3(aa*13.0, r*6.0, uSeed*3.1));',
           '  float tip = 1.0 - smoothstep(blen*0.52, blen + fray, r);',
           '  float a = wisp * bgate * tip * uIntensity;',
           '  a *= 1.0 - smoothstep(1.05, 1.45, abs(ang));',
           '  a *= smoothstep(0.0, 0.05, vUv.y - uSag*xn*xn);',
+          '  a *= smoothstep(0.0, 0.08, uLife);',
           // H-alfa contra céu escuro: vermelho profundo, pontas mais frias
           '  vec3 col = mix(vec3(0.48,0.07,0.02), vec3(1.30,0.45,0.13), wisp*tip);',
           '  gl_FragColor = vec4(col, a*1.15);',
@@ -1340,6 +1372,7 @@ function init(){
         'uniform float uIntensity;',
         'uniform float uAspect;',
         'uniform float uSag;',
+        'uniform float uLife;',
         'varying vec2 vUv;',
         'void main(){',
         '  float xn = vUv.x*2.0 - 1.0;',
@@ -1353,6 +1386,9 @@ function init(){
         // o vão sob o laço se erguer claramente do limbo
         '  float R0 = 0.78 + 0.05*snoise(vec3(uSeed, 2.1, 0.0))',
         '           + 0.030*snoise(vec3(ang*0.8 + uSeed, 5.3, uTime*0.02));',
+        // ciclo de vida: o laço ERGUE-SE de sob a superfície (R0 pequeno
+        // fica todo abaixo do limbo) e afunda de volta no colapso
+        '  R0 *= 0.15 + 0.85*uLife;',
         '  float d = r - R0;',
         // fios ao longo do arco (dreno lento de matéria pelos pés: o
         // padrão angular desliza para baixo dos dois lados)
@@ -1368,6 +1404,7 @@ function init(){
         '  float feet = 1.0 - smoothstep(1.08, 1.38, abs(ang));',
         '  float a = wisp * tube * feet * uIntensity;',
         '  a *= smoothstep(0.0, 0.06, y - uSag*xn*xn);',
+        '  a *= smoothstep(0.0, 0.08, uLife);',
         '  vec3 col = mix(vec3(0.45,0.06,0.02), vec3(1.28,0.42,0.12), wisp*tube);',
         '  gl_FragColor = vec4(col, a*0.9);',
         '}'
@@ -1392,22 +1429,24 @@ function init(){
       // que cada plano possa esmaecer conforme fica de FRENTE à câmera —
       // proeminências são folhas opticamente finas: brilham de perfil.
       var mat2 = mat.clone();
-      var baseQ = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0), anchor);
-      var ang0 = Math.random()*Math.PI;
       var mesh = new THREE.Mesh(geo, mat);
       var mesh2 = new THREE.Mesh(geo, mat2);
       var phase = Math.random()*Math.PI*2;
       var speed = 0.6+Math.random()*0.8;
-      [mesh, mesh2].forEach(function(mm, k){
-        var spin = new THREE.Quaternion().setFromAxisAngle(anchor, ang0 + k*Math.PI*0.5);
-        mm.quaternion.copy(spin.multiply(baseQ.clone()));
-        mm.position.copy(anchor).multiplyScalar(SUN_RADIUS*0.995);
+      // ciclo de vida como o das regiões ativas: períodos individuais e
+      // fases ESCALONADAS (o limbo nunca fica vazio nem lotado de uma vez)
+      var ps = { meshes: [mesh, mesh2], period: 70 + Math.random()*50,
+                 phase: 0, reborn: false };
+      ps.phase = (i/PROMINENCE_COUNT + Math.random()*0.08) * ps.period;
+      [mesh, mesh2].forEach(function(mm){
         mm.userData.phase = phase;
         mm.userData.speed = speed;
-        mm.userData.dir = anchor.clone();   // direção radial da base
+        mm.userData.state = ps;
         prominenceMeshes.push(mm);
         prominenceGroup.add(mm);
       });
+      placeProminence(ps, anchor);
+      promStates.push(ps);
     }
   })();
   scene.add(prominenceGroup);
@@ -1837,6 +1876,20 @@ function init(){
           return [d.x, d.y, d.z];
         });
       };
+      // QA do ciclo de vida: ler fase (x em 0..1) e envelope de cada
+      // proeminência, e SALTAR uma proeminência para um ponto do ciclo
+      // (fotografar nascimento/maturidade/colapso sem esperar minutos)
+      window.__solInfo.promLife = function(){
+        return promStates.map(function(ps){
+          var lx = ((elapsed + ps.phase) % ps.period) / ps.period;
+          var d = ps.meshes[0].userData.dir;
+          return { x: lx, env: lifeEnvelope(lx), dir: [d.x, d.y, d.z] };
+        });
+      };
+      window.__solInfo.setPromLife = function(i, x){
+        var ps = promStates[i];
+        ps.phase = ((x*ps.period - elapsed) % ps.period + ps.period) % ps.period;
+      };
       window.__solInfo.setView = function(th, ph, dist){
         theta = th; phi = Math.max(0.18, Math.min(Math.PI-0.18, ph));
         targetCamDist = camDist = Math.max(minDist, Math.min(maxDist, dist));
@@ -1955,9 +2008,19 @@ function init(){
     var camDirN = camera.position.clone().normalize();
     var promNormal = new THREE.Vector3();
     prominenceMeshes.forEach(function(m){
+      // ciclo de vida: nasce crescendo da superfície, vive, colapsa e a
+      // slot RENASCE noutra linha neutra (mesmo padrão das regiões ativas)
+      var ps = m.userData.state;
+      var lx = ((elapsed + ps.phase) % ps.period) / ps.period;
+      var env = lifeEnvelope(lx);
+      if (lx >= 0.90){
+        if (!ps.reborn){ placeProminence(ps, sampleProminenceAnchor()); ps.reborn = true; }
+      } else ps.reborn = false;
+      m.material.uniforms.uLife.value = env;
       var f = 0.65 + 0.25*Math.sin(elapsed*m.userData.speed + m.userData.phase)
                  + 0.15*Math.sin(elapsed*m.userData.speed*2.7 + m.userData.phase*1.7);
       var base = Math.max(0.55, Math.min(1.15, f + 0.2));
+      base *= 0.30 + 0.70*env;   // jovem/moribunda é mais tênue que madura
       if (m === flareTarget) base += 2.6 * flareEnvelope(flareT);
       // física do limbo: proeminências só brilham na borda; contra o disco, somem
       var wd = m.userData.dir.clone().applyQuaternion(prominenceGroup.quaternion);

@@ -9,6 +9,8 @@ const out = process.argv[2];
   fs.mkdirSync(out, { recursive: true });
   const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   const page = await browser.newPage({ viewport: { width: 1100, height: 800 } });
+  // SwiftShader renderiza devagar; o default de 30s estoura em screenshot
+  page.setDefaultTimeout(120000);
   page.on('pageerror', (e) => console.log('pageerror: ' + e.message));
   const errs = [];
   page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });

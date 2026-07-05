@@ -2121,8 +2121,10 @@ function init(){
   var TIER_ORDER = ['low', 'mid', 'high'];
   function autoTune(delta, frameMs){
     // aba em background/stall: rAF é estrangulado a ~1fps e o p95 iria
-    // rebaixar (e persistir!) um tier por culpa do navegador, não da GPU
-    if (frameMs > 250 || document.hidden) return;
+    // rebaixar (e persistir!) um tier por culpa do navegador, não da GPU.
+    // ?tune=1 (opt-in de QA) relaxa a guarda: sob SwiftShader TODO frame
+    // passa de 250ms e o teste do auto-tune ficava inerte.
+    if ((frameMs > 250 || document.hidden) && urlQ.tune !== '1') return;
     tuneWin.push(frameMs);
     if (tuneWin.length > 150) tuneWin.shift();
     tuneCooldown -= delta;

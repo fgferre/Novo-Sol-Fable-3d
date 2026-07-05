@@ -123,6 +123,18 @@ paralaxe 4.0 · limbo/atmosfera 6.0 · proeminências hero 6.5.
   neutra). Fallback analítico mantido. QA 5/5: 20/20 âncoras válidas,
   16 bem distribuídas, morfologia normal, custo desprezível.
 
+- **T3.2 FEITO** (d24577c + fix da guarda): detectTier por hardware
+  (URL > localStorage > SwiftShader→high/tune off > Apple GPU+toque→MID
+  > móvel c/ <4GB→LOW > desktop HIGH) e auto-tune de ESCALA em runtime
+  (p95>18ms desce 1.0→0.85→0.7; <9ms/10s sobe; extremos persistem
+  recomendação de tier no localStorage p/ a próxima carga). Guarda de
+  aba-background (frame>250ms ou hidden) relaxada sob ?tune=1 (opt-in
+  de QA — sob SwiftShader todo frame passa de 250ms e o teste ficava
+  inerte). QA: 18 checks, cascata end-to-end provada no arquivo final
+  (events=2, autoScale 0.7, solTier='mid', zero pageerror).
+- Ruído conhecido: warning "GPU stall due to ReadPixels" no console em
+  shots (readback das PILs da T1.1, 1× por renascimento) — não é erro.
+
 ## Ordem sugerida de execução (intercalar trilhas)
 
 T3.1 (instrumentação) → T2.1 (bloom) → T1.1 (prom↔filamento) →

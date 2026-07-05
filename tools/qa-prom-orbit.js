@@ -41,9 +41,14 @@ function worldDir(objDir, rotY, tiltZ) {
   let lifeIdx = -1;
   const life = await page.evaluate(() => window.__solInfo.promLife ? window.__solInfo.promLife() : null);
   if (life) {
-    const best = life.filter((l) => Math.abs(l.dir[1]) < 0.6)
-      .sort((a, b) => (b.env - Math.abs(b.dir[1])*0.2) - (a.env - Math.abs(a.dir[1])*0.2))[0];
-    if (best) { anchor = best.dir; lifeIdx = life.indexOf(best); }
+    // prefere um ARCO (slots i%3==2): é o tipo alto e fotogênico validado
+    // no QA isolado — leques/cortinas são baixos (30-100Mm) e legitimamente
+    // tênues no enquadramento da órbita, o que virava FAIL falso
+    const cand = life.map((l, i) => ({ l, i }))
+      .filter((c) => Math.abs(c.l.dir[1]) < 0.6)
+      .sort((a, b) => ((b.i % 3 === 2 ? 1 : 0) - (a.i % 3 === 2 ? 1 : 0))
+                   || (Math.abs(a.l.dir[1]) - Math.abs(b.l.dir[1])))[0];
+    if (cand) { anchor = cand.l.dir; lifeIdx = cand.i; }
   }
 
   async function aim(offset) {
@@ -59,8 +64,11 @@ function worldDir(objDir, rotY, tiltZ) {
     const st = await page.evaluate(() => window.__solInfo.state());
     const dw = worldDir(anchor, st.rotY, 0.1265);
     const th = Math.atan2(dw[2], dw[0]) - Math.PI / 2 + offset;
+    // phi da âncora REAL (não pi/2): âncora fora do equador fica no limbo
+    // à altura certa da tela, em perfil exato
+    const ph = Math.acos(Math.max(-1, Math.min(1, dw[1])));
     await page.evaluate(([t, p, d]) => window.__solInfo.setView(t, p, d),
-      [th, Math.PI / 2, st.fitDist * 0.8]);
+      [th, ph, st.fitDist * 0.8]);
     await page.waitForTimeout(500);
   }
 

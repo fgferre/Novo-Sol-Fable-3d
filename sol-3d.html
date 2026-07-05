@@ -696,8 +696,11 @@ function init(){
     '  float rib1 = 1.0 - smoothstep(filW1*0.10, filW1*1.6, nlw);',
     '  float rib3 = 1.0 - smoothstep(filW3*0.10, filW3*1.6, nlw);',
     '  float filGate1 = smoothstep(0.10, 0.45, fbm(sp*1.05 + vec3(3.3, 7.7, 0.5)));',
-    '  float filGate3 = smoothstep(0.28, 0.52, fbm(sp*0.85 + vec3(6.1, 3.9, 8.2)));',
-    '  float filStr = smoothstep(0.05, 0.16, gradM) * (1.0 - smoothstep(1.6, 2.8, gradM));',
+    '  float filGate3 = smoothstep(0.22, 0.48, fbm(sp*0.85 + vec3(6.1, 3.9, 8.2)));',
+    // piso de gradiente mais baixo: filamentos QUIESCENTES longos vivem
+    // em linhas neutras de campo FRACO (refs 02/03) — o piso alto cortava
+    // o canal em fragmentos curtos ("ameba" em vez de serpente)
+    '  float filStr = smoothstep(0.03, 0.10, gradM) * (1.0 - smoothstep(1.6, 2.8, gradM));',
     '  float fil = max(rib1*filGate1, rib3*filGate3) * filStr;',
     // ganho: as máscaras multiplicadas raramente chegam a 1 — recupera a
     // profundidade visível dos filamentos (posição continua vindo do Br).

@@ -166,6 +166,16 @@ paralaxe 4.0 · limbo/atmosfera 6.0 · proeminências hero 6.5.
   até 1.15R conta o respiro como franja) — incompatibilidade da
   ferramenta, não defeito visual.
 
+- **T3.3 FEITO** (3aa4fc8, item b — o de maior impacto medido): bake
+  fatiado em 8 fatias via scissor (4 chromo + 4 smear, mesmo timestamp,
+  smear lê chromo completo do mesmo ciclo). A/B vs baseline: pior frame
+  −59% (3321→1366ms), p95/avg 1.80→1.21, fps +73%, zero costura, gates
+  no estado conhecido. Itens c/d/e (coroa 1D, manchas no bake, LIC
+  meia-res) ficam como oportunidades futuras — o gargalo dominante era b.
+- **Harness A/D isolado da coroa** + halo pleno 0.55 (c2): qa-elements
+  desliga a coroa só no element-limb (gates de superfície); o achado de
+  que D-franja falhava com qualquer halo>0 fica resolvido na raiz.
+
 ## Ordem sugerida de execução (intercalar trilhas)
 
 T3.1 (instrumentação) → T2.1 (bloom) → T1.1 (prom↔filamento) →

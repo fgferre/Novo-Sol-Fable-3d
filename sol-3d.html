@@ -1240,11 +1240,11 @@ function init(){
   // eclipse): plano orientado à câmera, com falloff exponencial a partir
   // do limbo e raias moduladas por ruído angular que evoluem devagar.
   var CORONA_SIZE = SUN_RADIUS*7.0;
-  // T1.3 (sweep m30): halo 0.30 dá o respiro disco->céu sem contaminar o
-  // gate A (0.89 estável); cray 0.90 é o mínimo que torna os streamers
-  // legíveis; cact 0.50 faz a coroa respirar com o ciclo de atividade.
-  // (chalo=0.55 lê ainda melhor, mas exige isolar a coroa nas capturas
-  // A/D do harness antes — anotado no backlog.)
+  // T1.3: halo 0.55 = variante c2 do sweep, a melhor leitura de DP
+  // (transição disco->céu suave, decaimento monotônico, sem anel); os
+  // gates A/D agora capturam com a coroa isolada (qa-elements), então o
+  // halo pleno não os contamina. cray 0.90 é o mínimo que torna os
+  // streamers legíveis; cact 0.50 faz a coroa respirar com o ciclo.
   var coronaRaysUniforms = {
     uTime: { value: 0 },
     uRight: { value: new THREE.Vector3(1,0,0) },
@@ -1252,7 +1252,7 @@ function init(){
     uRotY: { value: 0 },
     uCharges: { value: charges },
     uActivity: { value: 0.5 },
-    uHalo: { value: 0.30 },
+    uHalo: { value: 0.55 },
     uActGain: { value: 0.50 },
     uRayBoost: { value: 0.90 }
   };

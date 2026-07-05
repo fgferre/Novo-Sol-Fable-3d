@@ -1941,6 +1941,24 @@ function init(){
       // p/ dentro do disco ou atrás do limbo). Congelar/ajustar a rotação
       // torna a captura determinística sem tocar no resto da animação.
       window.__solInfo.setRotSpeed = function(v){ ROT_SPEED = v; };
+      // QA: posição de TELA da âncora da proeminência i (px) + fatores de
+      // intensidade correntes dos dois cartões — tira a ambiguidade de
+      // "qual mancha na foto é o alvo" nas sessões de órbita
+      window.__solInfo.projectProm = function(i){
+        var ps = promStates[i];
+        var w = ps.meshes[0].userData.dir.clone()
+          .applyQuaternion(prominenceGroup.quaternion).multiplyScalar(SUN_RADIUS);
+        // matrizes frescas: sob SwiftShader (~1fps) a leitura logo após
+        // setView pegava matrixWorldInverse do frame ANTERIOR
+        camera.updateMatrixWorld(true);
+        camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
+        var v = w.project(camera);
+        return { x: (v.x*0.5 + 0.5) * window.innerWidth,
+                 y: (1.0 - (v.y*0.5 + 0.5)) * window.innerHeight,
+                 inFront: v.z < 1.0,
+                 env: ps.env, fieldK: ps.fieldK,
+                 uInt: ps.meshes.map(function(m){ return m.material.uniforms.uIntensity.value; }) };
+      };
       // QA (calibração): força do campo e fatores aplicados por proeminência
       window.__solInfo.promField = function(){
         return promStates.map(function(ps){

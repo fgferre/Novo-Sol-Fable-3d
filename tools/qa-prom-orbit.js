@@ -51,6 +51,7 @@ function worldDir(objDir, rotY, tiltZ) {
     if (cand) { anchor = cand.l.dir; lifeIdx = cand.i; }
   }
 
+  let solvedTh = null;
   async function aim(offset) {
     // re-fixa a MATURIDADE e relê a âncora a CADA mira: a sessão inteira
     // leva minutos (SwiftShader) e o ciclo de vida é de 70-120s — sem
@@ -62,14 +63,42 @@ function worldDir(objDir, rotY, tiltZ) {
       anchor = (await page.evaluate(() => window.__solInfo.promLife()))[lifeIdx].dir;
     }
     const st = await page.evaluate(() => window.__solInfo.state());
-    const dw = worldDir(anchor, st.rotY, 0.1265);
-    const th = Math.atan2(dw[2], dw[0]) - Math.PI / 2 + offset;
-    // phi da âncora REAL (não pi/2): âncora fora do equador fica no limbo
-    // à altura certa da tela, em perfil exato
-    const ph = Math.acos(Math.max(-1, Math.min(1, dw[1])));
+    // MIRA EM MALHA FECHADA: em vez de derivar theta por convenção (Euler/
+    // azimute divergiam e o alvo caía FORA do quadro), varre theta e MEDE
+    // com projectProm onde a âncora cai na tela; escolhe o perfil que a
+    // põe no limbo esquerdo, dentro do quadro. offset gira a partir daí.
+    if (solvedTh === null && lifeIdx >= 0) {
+      let best = null;
+      for (let k = 0; k < 24; k++) {
+        const cand = (2 * Math.PI * k) / 24;
+        await page.evaluate(([t, p, d]) => window.__solInfo.setView(t, p, d),
+          [cand, Math.PI / 2, st.fitDist]);
+        await page.waitForTimeout(250);
+        const pr = await page.evaluate((i) => window.__solInfo.projectProm(i), lifeIdx);
+        if (!pr.inFront) continue;
+        // alvo ideal: x ~ 18% da largura (limbo esquerdo), em quadro
+        const score = Math.abs(pr.x - 180) + Math.abs(pr.y - 375) * 0.3
+          + (pr.x < 5 || pr.x > 995 || pr.y < 5 || pr.y > 745 ? 1e6 : 0);
+        if (!best || score < best.score) best = { th: cand, score, x: pr.x, y: pr.y };
+      }
+      if (best) {
+        solvedTh = best.th;
+        console.log(`mira resolvida: theta=${solvedTh.toFixed(3)} alvo na tela=(${best.x.toFixed(0)},${best.y.toFixed(0)})`);
+      }
+    }
+    if (solvedTh === null) {
+      // fallback (builds sem projectProm): fórmula analítica antiga
+      const dw = worldDir(anchor, st.rotY, 0.1265);
+      solvedTh = Math.atan2(dw[2], dw[0]) - Math.PI / 2;
+    }
     await page.evaluate(([t, p, d]) => window.__solInfo.setView(t, p, d),
-      [th, ph, st.fitDist * 0.8]);
+      [solvedTh + offset, Math.PI / 2, st.fitDist]);
     await page.waitForTimeout(500);
+    // loga a posição de TELA do alvo: o inspetor sabe ONDE olhar
+    if (lifeIdx >= 0) {
+      const pr = await page.evaluate((i) => window.__solInfo.projectProm ? window.__solInfo.projectProm(i) : null, lifeIdx);
+      if (pr) console.log(`alvo idx=${lifeIdx} off=${offset} tela=(${pr.x.toFixed(0)},${pr.y.toFixed(0)}) env=${pr.env.toFixed(2)} uInt=${pr.uInt.map((v) => v.toFixed(2)).join('/')}`);
+    }
   }
 
   // 5 ângulos: perfil perfeito, ±20°, ±40° (a proeminência gira p/ dentro

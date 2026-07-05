@@ -1321,19 +1321,23 @@ function init(){
         '  vec2 p = vec2(xn*uAspect*0.5, y + 0.18);',
         '  float r = length(p);',
         '  float ang = atan(p.x, p.y);',
-        // raio do laço, irregular e respirando devagar
-        '  float R0 = 0.62 + 0.09*snoise(vec3(ang*1.6, uSeed, uTime*0.02));',
+        // raio do laço: UM arco só por proeminência (o raio não pode
+        // ondular com o ângulo, senão vira renda de arquinhos) — apenas
+        // uma assimetria suave e respiração lenta
+        '  float R0 = 0.60 + 0.06*snoise(vec3(uSeed, 2.1, 0.0))',
+        '           + 0.035*snoise(vec3(ang*0.8 + uSeed, 5.3, uTime*0.02));',
         '  float d = r - R0;',
         // fios ao longo do arco (dreno lento de matéria pelos pés: o
         // padrão angular desliza para baixo dos dois lados)
         '  float drift = uTime*0.045;',
-        '  float th1 = snoise(vec3(ang*9.0 + uSeed + sign(ang)*drift, d*26.0, uSeed*1.3));',
-        '  float th2 = snoise(vec3(ang*21.0 - uSeed + sign(ang)*drift*1.6, d*44.0, uSeed*2.1));',
-        '  float wisp = smoothstep(0.05, 0.85, (th1*0.62 + th2*0.5)*0.5+0.5);',
+        '  float th1 = snoise(vec3(ang*8.0 + uSeed + sign(ang)*drift, d*16.0, uSeed*1.3));',
+        '  float th2 = snoise(vec3(ang*19.0 - uSeed + sign(ang)*drift*1.6, d*30.0, uSeed*2.1));',
+        // DENSO: tubo de plasma contínuo com estrias, não arame esparso
+        '  float wisp = smoothstep(-0.25, 0.70, (th1*0.62 + th2*0.5)*0.5+0.5);',
         // tubo mais grosso e denso nos pés (como nos laços reais)
-        '  float thick = 0.085 + 0.055*smoothstep(0.35, 1.15, abs(ang))',
+        '  float thick = 0.125 + 0.065*smoothstep(0.35, 1.15, abs(ang))',
         '              + 0.030*snoise(vec3(ang*3.1, uSeed*0.7, 0.0));',
-        '  float tube = 1.0 - smoothstep(thick*0.35, thick, abs(d));',
+        '  float tube = 1.0 - smoothstep(thick*0.30, thick, abs(d));',
         '  float feet = 1.0 - smoothstep(1.08, 1.38, abs(ang));',
         '  float a = wisp * tube * feet * uIntensity;',
         '  a *= smoothstep(0.0, 0.06, y - uSag*xn*xn);',

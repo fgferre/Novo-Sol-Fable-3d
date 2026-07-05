@@ -1235,16 +1235,33 @@ function init(){
             : isHedgerow ? SUN_RADIUS*(0.60 + Math.random()*0.32) : SUN_RADIUS*(0.55 + Math.random()*0.5);
       var h = isArch ? SUN_RADIUS*(0.22 + Math.random()*0.10)
             : isHedgerow ? SUN_RADIUS*(0.09 + Math.random()*0.06) : SUN_RADIUS*(0.18 + Math.random()*0.14);
-      var geo = new THREE.PlaneGeometry(w, h);
-      geo.translate(0, h*0.5 - SUN_RADIUS*0.015, 0);   // base levemente dentro do disco
+      var geo = new THREE.PlaneGeometry(w, h, 48, 1);
+      geo.translate(0, h*0.5 - SUN_RADIUS*0.02, 0);   // base levemente dentro do disco
+      // CONEXÃO FÍSICA: um cartão reto não abraça a esfera — nas pontas a
+      // base flutuava até ~0.14R acima do limbo (o corte parabólico uSag
+      // só disfarçava, deixando vão sob os pés dos arcos). Curvamos o
+      // cartão em torno do centro do Sol: cada coluna de vértices vira um
+      // raio, a base fica a raio constante 0.975R em QUALQUER x e vUv.y
+      // passa a medir altura radial verdadeira acima da base.
+      (function bendOverSphere(){
+        var pos = geo.attributes.position;
+        var cDist = SUN_RADIUS*0.995;   // centro do Sol no espaço local
+        for (var vi=0; vi<pos.count; vi++){
+          var vx = pos.getX(vi), vy = pos.getY(vi);
+          var aBend = vx / SUN_RADIUS;
+          var rho = cDist + vy;
+          pos.setXYZ(vi, rho*Math.sin(aBend), rho*Math.cos(aBend) - cDist, pos.getZ(vi));
+        }
+        geo.computeBoundingSphere();
+      })();
       var promUniforms = {
         uTime: { value: 0 },
         uSeed: { value: Math.random()*100 },
         uIntensity: { value: 1.0 },
         uAspect: { value: w/h },
-        // sagitta: o plano é reto, a esfera curva — nas pontas a base do
-        // plano flutua acima do limbo; os fios devem nascer mais alto lá
-        uSag: { value: ((w*0.5)*(w*0.5)/(2*SUN_RADIUS)) / h }
+        // cartão curvado: a base já segue a esfera; o termo uSag vira só
+        // um fade suave de emersão logo abaixo da superfície (valor 0)
+        uSag: { value: 0.0 }
       };
       var hedgerowFragment = NOISE_GLSL + '\n' + [
         'uniform float uTime;',

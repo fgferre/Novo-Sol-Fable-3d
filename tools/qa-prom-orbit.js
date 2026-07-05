@@ -20,6 +20,8 @@ function worldDir(objDir, rotY, tiltZ) {
   fs.mkdirSync(out, { recursive: true });
   const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   const page = await browser.newPage({ viewport: { width: 1000, height: 750 } });
+  // SwiftShader renderiza devagar; o default de 30s estoura em screenshot
+  page.setDefaultTimeout(120000);
   page.on('pageerror', (e) => console.log('pageerror: ' + e.message));
   await page.goto(url);
   await page.waitForFunction(() => window.__solInfo && window.__solInfo.state, null, { timeout: 20000 });

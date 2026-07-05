@@ -3,7 +3,8 @@
 // no limbo), fibril (zoom máximo no centro do disco)
 const path = require('path');
 const { chromium } = require('playwright');
-const url = 'file://' + path.resolve('sol-3d.html');
+// 2º argumento opcional: HTML alternativo (cópias instrumentadas de debug)
+const url = 'file://' + path.resolve(process.argv[3] || 'sol-3d.html');
 const out = process.argv[2];
 
 function worldDir(objDir, rotY, tiltZ) {

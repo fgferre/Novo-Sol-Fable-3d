@@ -1221,12 +1221,16 @@ function init(){
       var promType = i % 3;   // 0 leque, 1 hedgerow, 2 arco
       var isHedgerow = (promType === 1);
       var isArch = (promType === 2);
+      // DIMENSÕES calibradas pela observação (R☉ ≈ 696 Mm):
+      //  - laços/arcos: ápice típico 50-150 Mm; sistemas gigantes ~200 Mm
+      //    (limite histórico, ex. "Granddaddy" 1946). Com R0=0.78 e centro
+      //    -0.22, o ápice fica ~0.56·h => h 0.22-0.32R dá ápice 86-125 Mm ✓
+      //  - quiescentes/hedgerow: 30-100 Mm de altura => h 0.09-0.15R ✓
+      //  - plumas/surges eruptivos: 100-250 Mm => h 0.18-0.32R ✓
       var w = isArch ? SUN_RADIUS*(0.80 + Math.random()*0.35)
             : isHedgerow ? SUN_RADIUS*(0.60 + Math.random()*0.32) : SUN_RADIUS*(0.55 + Math.random()*0.5);
-      // ref-05: os montículos do limbo são BAIXOS (~0.05-0.12 R), não paredes;
-      // o arco precisa de ALTURA para o laço e o vão se erguerem do limbo
-      var h = isArch ? SUN_RADIUS*(0.36 + Math.random()*0.14)
-            : isHedgerow ? SUN_RADIUS*(0.09 + Math.random()*0.06) : SUN_RADIUS*(0.22 + Math.random()*0.20);
+      var h = isArch ? SUN_RADIUS*(0.22 + Math.random()*0.10)
+            : isHedgerow ? SUN_RADIUS*(0.09 + Math.random()*0.06) : SUN_RADIUS*(0.18 + Math.random()*0.14);
       var geo = new THREE.PlaneGeometry(w, h);
       geo.translate(0, h*0.5 - SUN_RADIUS*0.015, 0);   // base levemente dentro do disco
       var promUniforms = {

@@ -108,22 +108,44 @@ function init(){
   var scene = new THREE.Scene();
   var camera = new THREE.PerspectiveCamera(42, window.innerWidth/window.innerHeight, 0.1, 3000);
 
-  // Qualidade adaptativa: telas pequenas / ponteiro grosso (toque) usam
-  // menos oitavas de ruído, malha mais leve, textura de simulação menor
-  // e bloom com menos níveis, para manter fluidez em aparelhos fracos.
+  // Qualidade adaptativa: o tier controla oitavas de ruído, malha,
+  // textura de simulação, bake, bloom e contagem de proeminências.
   var coarsePointer = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
   var smallScreen = Math.max(window.innerWidth, window.innerHeight) < 820;
-  var isLowPower = coarsePointer || smallScreen;
-  // Tiers NOMEADOS (low/mid/high) em vez do booleano isLowPower: a
-  // partida ainda usa a heurística antiga (toque/tela pequena => low),
-  // mas o profiler pode forçar qualquer tier por URL. MID é o alvo do
-  // iPhone 15 Pro: bake 1024, SIM 768x384, LIC 7 taps, 4 níveis de bloom.
+  // Tiers NOMEADOS (low/mid/high); MID é o alvo do iPhone 15 Pro:
+  // bake 1024, SIM 768x384, LIC 7 taps, 4 níveis de bloom.
   var TIER_PARAMS = {
     low:  { fbm:4, seg:96,  stars:3500, bright:130, simW:384, simH:192, simStep:1/16, bloom:3, prom:4, chromo:512,  granFreq:22.0, lic7:false },
     mid:  { fbm:5, seg:128, stars:5000, bright:200, simW:768, simH:384, simStep:1/22, bloom:4, prom:6, chromo:1024, granFreq:30.0, lic7:true  },
     high: { fbm:5, seg:128, stars:7000, bright:240, simW:768, simH:384, simStep:1/26, bloom:4, prom:7, chromo:2048, granFreq:34.0, lic7:true  }
   };
-  var TIER = TIER_PARAMS[urlQ.tier] ? urlQ.tier : (isLowPower ? 'low' : 'high');
+  // T3.2: partida por HARDWARE + memória de sessões anteriores. A
+  // heurística antiga (toque/tela pequena => low) rebaixava iPhones Pro;
+  // agora o renderer decide: Apple GPU com toque parte em MID, desktop em
+  // HIGH, móvel genérico com pouca RAM em LOW. SwiftShader/llvmpipe (QA
+  // headless) fica em HIGH: os gates visuais são calibrados no tier alto —
+  // e o auto-tune é desligado lá, senão o p95 do render por software
+  // rebaixaria a resolução e mudaria as capturas.
+  var glStr = '';
+  try {
+    var glc = renderer.getContext();
+    var dbgInfo = glc.getExtension('WEBGL_debug_renderer_info');
+    glStr = String(glc.getParameter(dbgInfo ? dbgInfo.UNMASKED_RENDERER_WEBGL : glc.RENDERER)).toLowerCase();
+  } catch(e){}
+  var isSoftwareGL = /swiftshader|llvmpipe|softpipe|software/.test(glStr);
+  function detectTier(){
+    if (TIER_PARAMS[urlQ.tier]) return urlQ.tier;
+    try {
+      var saved = localStorage.getItem('solTier');   // auto-tune passado
+      if (TIER_PARAMS[saved]) return saved;
+    } catch(e){}
+    if (isSoftwareGL) return 'high';
+    if (/apple gpu|apple a[0-9]|apple m[0-9]/.test(glStr)) return coarsePointer ? 'mid' : 'high';
+    var mem = navigator.deviceMemory || 0;
+    if (coarsePointer || smallScreen) return (mem > 0 && mem < 4) ? 'low' : 'mid';
+    return 'high';
+  }
+  var TIER = detectTier();
   var TP = TIER_PARAMS[TIER];
   var FBM_OCTAVES = TP.fbm;
   var SPHERE_SEG  = TP.seg;
@@ -2070,6 +2092,65 @@ function init(){
   var hudTimer = 0, hudDown = null, hudAccum = 0;
   function hudToggle(){ hudOn = !hudOn; hudEl.style.display = hudOn ? 'block' : 'none'; }
 
+  // ---------------------------------------------------------------
+  // T3.2: auto-tune em runtime. Trocar o TIER ao vivo exigiria
+  // reconstruir shaders e render targets; o que é barato mudar é a
+  // ESCALA de render (pixelRatio -> canvas + sceneRT + bloom; sim e
+  // bake têm tamanho fixo e não mudam de cara). Então: p95 do frame
+  // acima de 18ms desce a escala 1.0 -> 0.85 -> 0.7; p95 < 9ms
+  // sustentado por 10s sobe de volta (histerese pelos degraus + janela
+  // limpa a cada troca). Nos EXTREMOS, persiste uma recomendação de
+  // tier no localStorage para a PRÓXIMA carga — assim um aparelho que
+  // não segura nem 0.7 abre direto num tier menor, e um que sobra
+  // fôlego por 30s no teto abre num maior.
+  // ---------------------------------------------------------------
+  var SCALE_STEPS = [1.0, 0.85, 0.7];
+  var baseDpr = pixelRatio;
+  var scaleIdx = 0, tuneWin = [], tuneGoodT = 0, tuneCooldown = 0, tuneEvents = 0;
+  var autoTuneOn = (urlQ.tune === '1') ||
+                   (!urlQ.tier && !(parseFloat(urlQ.scale) > 0) && !isSoftwareGL);
+  function applyRenderScale(i){
+    scaleIdx = Math.max(0, Math.min(SCALE_STEPS.length-1, i));
+    pixelRatio = baseDpr * SCALE_STEPS[scaleIdx];
+    renderer.setPixelRatio(pixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    resizeTargets();
+    tuneEvents++;
+  }
+  function persistTier(t){ try { localStorage.setItem('solTier', t); } catch(e){} }
+  var TIER_ORDER = ['low', 'mid', 'high'];
+  function autoTune(delta, frameMs){
+    // aba em background/stall: rAF é estrangulado a ~1fps e o p95 iria
+    // rebaixar (e persistir!) um tier por culpa do navegador, não da GPU
+    if (frameMs > 250 || document.hidden) return;
+    tuneWin.push(frameMs);
+    if (tuneWin.length > 150) tuneWin.shift();
+    tuneCooldown -= delta;
+    if (tuneWin.length < 30 || tuneCooldown > 0) return;
+    var a = tuneWin.slice().sort(function(x, y){ return x - y; });
+    var p95 = a[Math.floor(a.length*0.95)];
+    if (p95 > 18){
+      tuneGoodT = 0;
+      if (scaleIdx < SCALE_STEPS.length-1){
+        applyRenderScale(scaleIdx+1);
+        tuneCooldown = 4; tuneWin.length = 0;
+      } else {
+        var k = TIER_ORDER.indexOf(TIER);
+        if (k > 0){ persistTier(TIER_ORDER[k-1]); tuneCooldown = 1e9; }
+      }
+    } else if (p95 < 9){
+      tuneGoodT += delta;
+      if (scaleIdx > 0 && tuneGoodT > 10){
+        applyRenderScale(scaleIdx-1);
+        tuneGoodT = 0; tuneCooldown = 6; tuneWin.length = 0;
+      } else if (scaleIdx === 0 && tuneGoodT > 30){
+        var k2 = TIER_ORDER.indexOf(TIER);
+        if (k2 < 2 && !urlQ.tier){ persistTier(TIER_ORDER[k2+1]); }
+        tuneGoodT = -1e9;   // uma recomendação por sessão
+      }
+    } else tuneGoodT = 0;
+  }
+
   // estado exposto para QA automatizado (leitura + posicionamento de câmera)
   try {
     if (window.__solInfo){
@@ -2085,6 +2166,8 @@ function init(){
         while (perfBakes.length && now - perfBakes[0] > 5000) perfBakes.shift();
         var f = stats(perfFrameMs, perfN);
         return { tier: TIER, scale: RENDER_SCALE, dpr: pixelRatio,
+                 autoScale: SCALE_STEPS[scaleIdx],
+                 tune: { on: autoTuneOn, events: tuneEvents },
                  frames: perfN, ms: f, busy: stats(perfBusyMs, perfN),
                  fps: f.avg > 0 ? +(1000/f.avg).toFixed(1) : 0,
                  calls: perfCalls, bakesPerSec: +(perfBakes.length/5).toFixed(2),
@@ -2422,16 +2505,18 @@ function init(){
     if (hudOn && hudAccum >= 0.5 && window.__solInfo && window.__solInfo.perf){
       hudAccum = 0;
       var P = window.__solInfo.perf();
-      hudEl.textContent = 'tier ' + P.tier + '  ' + P.fps + ' fps\n' +
+      hudEl.textContent = 'tier ' + P.tier + ' x' + P.autoScale + '  ' + P.fps + ' fps\n' +
         'ms ' + P.ms.avg + ' avg  ' + P.ms.p95 + ' p95\n' +
         'cpu ' + P.busy.avg + '  calls ' + P.calls + '  bake/s ' + P.bakesPerSec;
     }
 
     // fecha a medição do frame: intervalo rAF->rAF + custo CPU do corpo
     var frameT1 = performance.now();
+    var fMs = (perfLastT > 0) ? (frameT0 - perfLastT) : (frameT1 - frameT0);
     perfBusyMs[perfIdx] = frameT1 - frameT0;
-    perfFrameMs[perfIdx] = (perfLastT > 0) ? (frameT0 - perfLastT) : (frameT1 - frameT0);
+    perfFrameMs[perfIdx] = fMs;
     perfLastT = frameT0;
+    if (autoTuneOn) autoTune(delta, fMs);
     perfIdx = (perfIdx + 1) % 240;
     if (perfN < 240) perfN++;
     perfCalls = renderer.info.render.calls;

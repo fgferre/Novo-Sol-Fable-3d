@@ -105,6 +105,23 @@ paralaxe 4.0 · limbo/atmosfera 6.0 · proeminências hero 6.5.
   no instante da captura. Tratar junto com T1.1 (mexe em filamentos).
 - Gate D-tufos oscila (limiar 1.7; amostras 1.72/1.64/4.95) — regra
   das duas amostras aplicada, maioria PASS.
+- **T2.1 FEITO** (d737008): threshold HDR 1.0→0.72, strength 0.42→0.62,
+  rim do limbo 0.4→1.15, plage emissiva HDR +0.35. Sweep de 5 variantes
+  julgado vs refs (v4 7.0/10 vs baseline 3.5); disciplina H-alfa intacta
+  (p50 +2%, 0% clipado). Gates: 2 amostras pós-mudança OK exceto H
+  (pré-existente) e D-tufos (flake estocástico: 1 de 3 amostras passa
+  com 3.97 — o gate depende de haver tufo proeminente no instante).
+  Halo coronal além do limbo NÃO sai do bloom → movido para T1.3.
+- **UX FEITO** (b3c3031, pedido do dono): arrasto horizontal era
+  invertido (vertical já acompanhava o dedo) — agora "agarrar o globo"
+  nos dois eixos, como Google Earth. qa-controls 6/6 + teste de sinal.
+- **T1.1 FEITO**: âncoras de proeminência amostradas das PILs do Br
+  EVOLUÍDO (canal G do simRT → RT 128×64 RGBA8 → readRenderTargetPixels
+  1× por renascimento) com o MESMO critério dos filamentos do bake
+  (|Br| pequeno + inversão de polaridade + gradiente vivo); cartão
+  nasce ALINHADO à tangente da PIL (hedgerow corre ao longo da linha
+  neutra). Fallback analítico mantido. QA 5/5: 20/20 âncoras válidas,
+  16 bem distribuídas, morfologia normal, custo desprezível.
 
 ## Ordem sugerida de execução (intercalar trilhas)
 

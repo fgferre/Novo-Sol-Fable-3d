@@ -141,6 +141,16 @@ paralaxe 4.0 · limbo/atmosfera 6.0 · proeminências hero 6.5.
   (D-tufos 2.50/1.72 — melhorou vs as oscilações 1.46/1.57), zero
   pageerror, aparência ref-05 preservada.
 
+- **T2.2 FEITO**: peso da plage no heat 0.22→0.34, canais de filamento
+  0.30→0.55, desvio de matiz da plage p/ creme (0.55, gate duplo
+  plage>0.55 & heat>0.72). Sweep de 5 variantes: vencedora d4 7.5/10
+  (plage creme mosqueada máx 172 sem clip) + fdark da d3; gates nos
+  params exatos: G=0.291 (pw=0.34 não moveu o spread — contraste
+  localizado), 0% clip, B/F/I ok.
+- **ACHADO do sweep**: gate H não se resolve com escurecimento — os
+  canais têm área (377≥300) mas span 27-29 <45 e fill 0.46: é problema
+  de CONTINUIDADE da máscara no bake, não de ganho (tarefa própria).
+
 ## Ordem sugerida de execução (intercalar trilhas)
 
 T3.1 (instrumentação) → T2.1 (bloom) → T1.1 (prom↔filamento) →

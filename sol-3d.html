@@ -1107,7 +1107,9 @@ function init(){
     // --- plage: onde o campo é forte (em volta das regiões ativas),
     // mas fora das manchas — brilha sem nunca chegar ao branco ---
     '  float plage = st.b * (1.0 - umbra - pen*0.7);',
-    '  heat = heat*(1.0 - umbra*0.96 - pen*0.38) + clamp(plage, 0.0, 1.0)*0.22;',
+    // 0.34 (era 0.22): sweep T2.2 — plage mais quente SEM mover o spread
+    // do sol calmo (gate G ficou em 0.29, contraste localizado)
+    '  heat = heat*(1.0 - umbra*0.96 - pen*0.38) + clamp(plage, 0.0, 1.0)*0.34;',
     // --- flare: laço brilhante efêmero perto do pé de uma carga forte;
     // o pico vai direto na cor (HDR) para o bloom capturar ---
     '  float flareGlow = 0.0;',
@@ -1119,13 +1121,18 @@ function init(){
     '  }',
     // --- filamentos (linhas neutras) vêm do bake; exclusão de manchas aqui ---
     '  float fil = st.g * clamp(1.0 - umbra - pen, 0.0, 1.0);',
-    '  heat *= 1.0 - fil*0.30;',
+    // 0.55 (era 0.30): canais de filamento "tinta serpenteando" (ref-03);
+    // de graça para o gate G — o falloff do fil é local
+    '  heat *= 1.0 - fil*0.55;',
     '  heat = clamp(heat, 0.0, 1.24);',
     // --- paleta H-alfa: emissão em banda estreita (656nm) exibida em
     // falsa-cor laranja, como em astrofotografia real. Não é corpo negro:
     // a matiz é quase constante; heat modula LUMINÂNCIA e desloca a matiz
     // só um pouco para o amarelo nas áreas quentes (plage).
     '  vec3 color = mix(vec3(1.0, 0.34, 0.06), vec3(1.0, 0.62, 0.24), smoothstep(0.15, 1.05, heat));',
+    // plage quase branca (refs 01/03, sweep T2.2): desvio de matiz para
+    // creme SÓ onde plage E heat são altos — mosqueado preservado, 0% clip
+    '  color = mix(color, vec3(1.0, 0.86, 0.62), 0.55 * smoothstep(0.55, 1.0, clamp(plage, 0.0, 1.0)) * smoothstep(0.72, 1.12, heat));',
     '  color *= mix(0.16, 1.42, smoothstep(0.04, 1.08, heat));',
     '  color += vec3(1.0, 0.55, 0.22) * flareGlow * 0.9;',   // pico HDR do flare
     // --- escurecimento + avermelhamento de limbo (lei linear, u=0.72) ---

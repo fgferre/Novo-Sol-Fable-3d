@@ -946,6 +946,37 @@ function init(){
   }
   bakeChromo(0.0);   // primeira passada: o disco nunca vê textura vazia
 
+  // T3.3: bake FATIADO. O par chromo+smear dominava o frame (medição da
+  // auditoria: frames com bake 3.4x mais lentos — pico bimodal). Cada
+  // ciclo agora são 8 fatias de 1/4 de altura via scissor, uma por
+  // frame: passos 0-3 = faixas do chromo, 4-7 = faixas do smear (o
+  // smear sempre lê um chromoRT completo do MESMO ciclo — sem costura
+  // temporal entre as camadas). Todas as fatias usam o MESMO timestamp,
+  // então não há emenda de fase entre faixas; a cadência por texel fica
+  // ~igual (8 frames a 60fps ≈ os 0.12s antigos).
+  var bakeStep = -1, bakeTime = 0;
+  function bakeChromoSlice(step, timeNow){
+    var band = step % 4;
+    var bandH = CHROMO_H >> 2;
+    var isChromo = step < 4;
+    var rt = isChromo ? chromoRT : chromoRT2;
+    rt.scissor.set(0, band*bandH, CHROMO_W, bandH);
+    rt.scissorTest = true;
+    if (isChromo){
+      chromoUniforms.uTime.value = timeNow;
+      renderer.setRenderTarget(chromoRT);
+      renderer.render(chromoScene, quadCamera);
+    } else {
+      smearUniforms.uTime.value = timeNow;
+      renderer.setRenderTarget(chromoRT2);
+      renderer.render(smearScene, quadCamera);
+    }
+    rt.scissorTest = false;
+    renderer.setRenderTarget(null);
+    sunUniforms.uChromoTex.value = chromoRT2.texture;
+    sunUniforms.uChromoFar.value = chromoRT.texture;
+  }
+
   var sunVertexShader = NOISE_GLSL + '\n' + [
     'uniform float uTime;',
     'uniform float uDispScale;',
@@ -2442,12 +2473,19 @@ function init(){
       }
     } else simAccum = 0;
 
-    // bake estrutural a ~8Hz: as camadas lentas não pagam custo por frame
+    // bake estrutural a ~8Hz, FATIADO (T3.3): um ciclo = 8 fatias, uma
+    // por frame — o custo do par chromo+smear se dilui e o pior frame
+    // deixa de ser 3.4x o frame típico
     chromoAccum += delta;
-    if (chromoAccum >= 0.12 && subToggle.bake){
+    if (bakeStep < 0 && chromoAccum >= 0.12 && subToggle.bake){
       chromoAccum = 0;
-      bakeChromo(elapsed);
-      perfBakes.push(frameT0);
+      bakeStep = 0;
+      bakeTime = elapsed;
+    }
+    if (bakeStep >= 0){
+      bakeChromoSlice(bakeStep, bakeTime);
+      bakeStep++;
+      if (bakeStep >= 8){ bakeStep = -1; perfBakes.push(frameT0); }
     }
 
     sunMesh.rotation.y += ROT_SPEED * delta;

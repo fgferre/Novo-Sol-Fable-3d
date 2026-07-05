@@ -917,8 +917,9 @@ function init(){
     // faixas escuras continuam bem visíveis no close-up — achatar a
     // larga escala 4.5x deixava o zoom um "pelo" uniforme irreal.
     // de LONGE mais suave ainda: as refs 02/03 mostram sol calmo quase
-    // plano em enquadramento cheio (métrica G: spread 0.10-0.16)
-    '  heat = 0.50 + (heat - 0.52)*mix(0.34, 0.26, close);',
+    // plano em enquadramento cheio (métrica G: spread 0.10-0.16).
+    // 0.31 dá margem ao gate mesmo com região ativa no centro do disco
+    '  heat = 0.50 + (heat - 0.52)*mix(0.31, 0.26, close);',
     // --- fibrilas grossas: baked (canal A). De perto, o claro/escuro é
     // FEITO de fibrilas: a larga escala modula o contraste dos fios ---
     '  float fibC = st.a*2.0 - 1.0;',

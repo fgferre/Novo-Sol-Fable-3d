@@ -1173,7 +1173,12 @@ function init(){
       '  float fringe = 1.0 - smoothstep(len*0.25, len, max(h, 0.0));',
       // some suavemente por cima do disco (h<0) para fundir com a borda
       '  fringe *= smoothstep(-0.35, -0.05, h);',
-      '  float a = fringe * (0.22 + 0.42*smoothstep(0.35, 0.85, threads)) * 0.55;',
+      // DENSIDADE também varia ao longo do limbo (ref-05): a altura já
+      // tinha moitas, mas o alfa constante virava veludo uniforme —
+      // grama real tem trechos ralos quase carecas entre tufos densos
+      '  float bald = smoothstep(-0.55, 0.20, snoise(sil*3.7 + vec3(4.2, 0.0, uTime*0.02)));',
+      '  float dens = (0.35 + 0.65*bald) * (0.80 + 0.45*clump);',
+      '  float a = fringe * (0.22 + 0.42*smoothstep(0.35, 0.85, threads)) * 0.55 * dens;',
       // pontas mais escuras: a franja derrete no céu, não brilha mais que o disco
       '  vec3 col = mix(vec3(0.85,0.24,0.07), vec3(0.38,0.06,0.02), smoothstep(0.0, 1.0, max(h,0.0)));',
       '  gl_FragColor = vec4(col, a);',

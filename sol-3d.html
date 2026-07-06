@@ -1881,6 +1881,43 @@ function init(){
   stars.material.opacity = Math.min(1, STARS_OP0*starK);
   brightStars.material.opacity = Math.min(1, BRIGHT_OP0*starK);
   scene.add(milkyWay);
+  // Via Láctea opção B (astrofoto): véu DIFUSO de gás por trás da camada
+  // estelar — faixa gaussiana no mesmo plano, manchas de fBm, veio de
+  // poeira escura no meio, bojo galáctico dourado e bordas azuladas.
+  // Aditivo e fora do disco: não toca nos gates.
+  var mwNebUniforms = { uMW: { value: 0.0 }, uN: { value: new THREE.Vector3(0.35,0.85,0.40).normalize() } };
+  var mwNeb = new THREE.Mesh(new THREE.SphereGeometry(710, 32, 32), new THREE.ShaderMaterial({
+    uniforms: mwNebUniforms,
+    vertexShader: [
+      'varying vec3 vD;',
+      'void main(){ vD = position;',
+      '  gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }'
+    ].join('\n'),
+    fragmentShader: NOISE_GLSL + '\n' + [
+      'uniform float uMW;',
+      'uniform vec3 uN;',
+      'varying vec3 vD;',
+      'void main(){',
+      '  vec3 d = normalize(vD);',
+      '  float b = dot(d, uN);',
+      '  float band = exp(-b*b*38.0);',
+      '  if (band < 0.004){ gl_FragColor = vec4(0.0); return; }',
+      '  float cloud = fbmLight(d*7.0)*0.5+0.5;',
+      '  cloud = 0.35 + 0.9*cloud*cloud;',
+      '  float dust = exp(-b*b*260.0) * (0.45+0.55*(fbmLight(d*11.0+vec3(4.7))*0.5+0.5));',
+      '  vec3 core = normalize(cross(uN, vec3(0.2,0.0,1.0)));',
+      '  float ck = pow(max(dot(d, core), 0.0), 4.0);',   // 4: braço anti-bojo visível
+      '  vec3 col = mix(vec3(0.42,0.52,0.85), vec3(1.0,0.82,0.55), clamp(ck*1.6,0.0,1.0));',
+      '  float I = band*cloud*(1.0-0.75*dust)*(0.5+1.4*ck);',
+      '  gl_FragColor = vec4(col * I * uMW * 0.16, 1.0);',
+      '}'
+    ].join('\n'),
+    side: THREE.BackSide, transparent: true,
+    blending: THREE.AdditiveBlending, depthWrite: false
+  }));
+  mwNebUniforms.uMW.value = milkyWay.material.opacity;
+  scene.add(mwNeb);
+
   // (Tentativa de faixa da Via Láctea removida: sem QA visual funcionando,
   // calibrar estética por estatística de pixels se provou má ideia.)
 
@@ -2420,7 +2457,7 @@ function init(){
         spiculeMesh.visible = subToggle.spicules;
         coronaRays.visible = coronaOuter.visible = subToggle.corona;
         prominenceGroup.visible = subToggle.prominences;
-        stars.visible = brightStars.visible = milkyWay.visible = subToggle.stars;
+        stars.visible = brightStars.visible = milkyWay.visible = mwNeb.visible = subToggle.stars;
         return subToggle[name];
       };
       window.__solInfo.state = function(){
@@ -2635,7 +2672,7 @@ function init(){
                          brightStars.material.opacity = Math.min(1, BRIGHT_OP0*v); } },
       { k:'mw', label:'Via Láctea', lo:0, hi:1, step:0.02, dflt:0.62,
         get:function(){ return milkyWay.material.opacity; },
-        set:function(v){ milkyWay.material.opacity = v; } },
+        set:function(v){ milkyWay.material.opacity = v; mwNebUniforms.uMW.value = v; } },
       { sec: 'câmera' }
     ];
 

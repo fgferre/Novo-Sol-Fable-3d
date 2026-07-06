@@ -130,6 +130,21 @@ Achado para a iter 2: a speed=3 o clamp bakeCycleDt 1.5 < 0.85×ciclo
 (~2.4s) congelava as camadas baked 3 de 8 frames por ciclo → clamp
 elevado a 4.5 na iteração 2.
 
+### Iteração 2 — [BUG] Coerência temporal do sim (commit 698b058)
+
+(a) Dreno do guard-5: simAccum clampado a 1 passo pendente — sem
+dessincronia cumulativa a fps baixa; (b) snapshot de simTex+charges no
+início de cada ciclo de bake (chromo/smear leem só o snapshot) —
+tearing intra-bake eliminado (zero emendas horizontais nos diffs);
+(c) regDt cap 0.2→0.35 — cargas em sincronia com a plage a speed=3;
+(d) clamp bakeCycleDt 1.5→4.5 — a speed=3 o fade cobre o ciclo todo
+(A/B contra 80ff485: antes congelava 3 de 8 frames; agora mix linear
+0.147/frame nas DUAS velocidades, satura exatamente no swap). Disco
+0.60-0.76 no fade com dip só no swap (0.080 ≈ piso sem-bake 0.075);
+razão max/min 8.5 (4.2 a speed=3). Gates 8/9-9/9-9/9 (só flake I);
+controles 6/6; neutralidade limpa. Nota 6.8: "correção de ritmo real,
+mas 7.5 só vem com fervura contínua + coroa viva".
+
 ## Métrica de progresso
 
 Re-rodar o M2 (mesmo protocolo: 12+ frames rAF-consecutivos,

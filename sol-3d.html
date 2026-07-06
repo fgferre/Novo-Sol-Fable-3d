@@ -1170,11 +1170,24 @@ function init(){
     // o passe com LIC iterado, onde tudo é feito de fios varridos ---
     '  float close = smoothstep(6.2, 3.4, uCamDist);',
     '  float kNear = clamp(close*1.2 + 0.15, 0.0, 1.0);',
+    // FERVURA contínua (feature nº1 da auditoria de movimento): o bake
+    // dá a EVOLUÇÃO do conteúdo (~8Hz + crossfade), mas entre poses nada
+    // se movia (diff do disco 0.075 sem bake = só grão). Domain-warp do
+    // domínio do bake por uTime, em espaço do OBJETO (gira rígido com a
+    // textura): células na escala da granulação empurram filamentos,
+    // rede e plage continuamente, fração de px por frame — o disco FERVE
+    // em vez de dissolver entre stills.
+    '  float bfq = uGranFreq*0.45;',
+    '  vec2 boil = vec2(snoise(sp*bfq + vec3(0.0, 0.0, t*0.9)),',
+    '                   snoise(sp*bfq + vec3(5.1, 1.7, t*0.9)))',
+    '      + 0.5*vec2(snoise(sp*bfq*2.6 + vec3(2.3, 8.6, t*1.7)),',
+    '                 snoise(sp*bfq*2.6 + vec3(7.7, 3.9, t*1.7)));',
+    '  vec2 buv = vec2(fract(vUvV.x + boil.x*0.0035), clamp(vUvV.y + boil.y*0.0035, 0.0, 1.0));',
     // crossfade temporal do bake: o plasma evolui contínuo entre o ciclo
     // anterior e o atual, em vez de saltar em degraus de ~8Hz (a rotação
     // é por frame; sem isto o conteúdo parecia stop-motion desalinhado)
-    '  vec4 st = mix(mix(texture2D(uChromoFarP, vUvV), texture2D(uChromoTexP, vUvV), kNear),',
-    '                mix(texture2D(uChromoFar,  vUvV), texture2D(uChromoTex,  vUvV), kNear), uBakeMix);',
+    '  vec4 st = mix(mix(texture2D(uChromoFarP, buv), texture2D(uChromoTexP, buv), kNear),',
+    '                mix(texture2D(uChromoFar,  buv), texture2D(uChromoTex,  buv), kNear), uBakeMix);',
     '  float heat = st.r + vDisp*0.06;',
     // disciplina tonal H-alfa: o disco é quase plano em luminância; a
     // larga escala só sugere estrutura — a riqueza vem da textura fina.

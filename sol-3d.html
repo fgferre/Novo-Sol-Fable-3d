@@ -3007,15 +3007,19 @@ function init(){
         bakeStep = -1; perfBakes.push(frameT0);
         bakePrev = bakeCur; bakeCur = bakeWrite;
         bakeWrite = (bakeCur === bakePrev) ? (bakeCur+1)%3 : 3 - bakeCur - bakePrev;
-        bakeCycleDt = Math.max(0.05, Math.min(1.5, elapsed - bakeSwapT));
+        bakeCycleDt = Math.max(0.05, Math.min(1.5, (elapsed - bakeSwapT)*0.85));
         bakeSwapT = elapsed;
         sunUniforms.uChromoTex.value  = bakeSets[bakeCur].s.texture;
         sunUniforms.uChromoFar.value  = bakeSets[bakeCur].c.texture;
         sunUniforms.uChromoTexP.value = bakeSets[bakePrev].s.texture;
         sunUniforms.uChromoFarP.value = bakeSets[bakePrev].c.texture;
       }
-      sunUniforms.uBakeMix.value = Math.min(1, (elapsed - bakeSwapT)/bakeCycleDt);
     }
+    // crossfade avança TODO frame, fora do gate de fatias: sem congelar
+    // nos frames de espera (fps>67) nem truncar em ~0.875. O fade dura
+    // 85% do ciclo medido, então o mix SATURA em 1.0 antes do swap — e
+    // no swap (prev:=cur, mix:=0) a imagem exibida é a MESMA, sem pop.
+    sunUniforms.uBakeMix.value = Math.min(1, (elapsed - bakeSwapT)/bakeCycleDt);
 
     sunMesh.rotation.y += ROT_SPEED * delta;
     prominenceGroup.rotation.y = sunMesh.rotation.y;

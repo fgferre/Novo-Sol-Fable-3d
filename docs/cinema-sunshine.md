@@ -91,3 +91,14 @@ Tudo converge no composite (L~2053-2086) + 1 cadeia nova de RTs:
   zoom 6× confirmados sem clip. ACHADO: fringe ≥0.5 gera rebordo
   verde no limbo e ghosting RGB nas proeminências — teto do preset
   fixado em 0.35 (knob manual continua indo a 1.5).
+- **I4 FEITO (bateria final verde)**: gates 9/9·9/9·8/9 (única falha
+  = flake conhecido do gate I, span 23); qa-controls 6/6; neutralidade
+  exata do default (12 knobs antigos + 6 cinema a 0, adaptMul=1);
+  preset íntegro (knobs batem h2, halação+split-tone presentes, sem
+  artefato novo, franja R/B da proeminência só visível em zoom 2×);
+  painel 18 sliders (ao vivo, persistência, restaurar padrão, drag não
+  gira o Sol, 390px com scroll); custo do preset ~0 (ms.avg razão
+  0.962, +2 draw calls do streak); zero pageerror em ~15 cargas.
+  Nota estética documentada: grain 1.7 do preset deixa speckles
+  visíveis no portrait — escolha calibrada do juiz, ajustável no
+  slider.

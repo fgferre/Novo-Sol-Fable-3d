@@ -2121,10 +2121,12 @@ function init(){
     '    }',
     '  }',
     '  vec3 sceneCol = texture2D(tScene, uv).rgb;',
-    // franja cromática da lente nos estouros (offsets RGB radiais)
+    // aberração cromática lateral da lente: cresce com o ângulo de
+    // campo (zero no centro), como vidro real — franja no limbo e nas
+    // estrelas sem depender de máscara de luminância
     '  if (uFringe > 0.001){',
-    '    float lum0 = dot(sceneCol, vec3(0.299,0.587,0.114));',
-    '    vec2 off = (uv - 0.5) * (0.0035 * uFringe * smoothstep(0.85, 1.8, lum0));',
+    '    vec2 rc = uv - 0.5;',
+    '    vec2 off = rc * ((0.006 + 0.020*dot(rc, rc)) * uFringe);',
     '    sceneCol.r = texture2D(tScene, uv + off).r;',
     '    sceneCol.b = texture2D(tScene, uv - off).b;',
     '  }',

@@ -2516,6 +2516,7 @@ function init(){
       ' display:flex;align-items:center;justify-content:center;cursor:pointer;',
       ' transition:transform .5s cubic-bezier(.22,1,.36,1),background .3s;user-select:none;-webkit-user-select:none}',
       '#knobBtn:hover{background:rgba(40,28,16,.72)}',
+      '#hint{margin-right:64px}',
       '#knobBtn.open{transform:rotate(120deg)}',
       '#knobPanel{position:fixed;top:0;right:0;height:100%;width:min(330px,86vw);z-index:44;',
       ' background:linear-gradient(165deg,rgba(15,18,28,.82),rgba(7,9,15,.90));',
@@ -2631,7 +2632,7 @@ function init(){
       inp.type = 'range'; inp.className = 'kn';
       inp.min = d.lo; inp.max = d.hi; inp.step = d.step;
       function paint(v){
-        val.textContent = (+v).toFixed(2).replace(/\.00$/, '.0');
+        val.textContent = (+v).toFixed(2);
         inp.style.setProperty('--f', (100*(v - d.lo)/(d.hi - d.lo)) + '%');
       }
       inp.value = d.get(); paint(inp.value);
@@ -2673,7 +2674,15 @@ function init(){
     btn.addEventListener('click', function(){
       var open = panel.classList.toggle('open');
       btn.classList.toggle('open', open);
+      // o ⚙ acompanha a borda do painel (não flutua sobre os controles)
+      // e o HUD desliza para fora da área coberta — quem mexe em knobs
+      // de custo é exatamente quem quer ver o fps
+      var edge = 'calc(min(330px, 86vw) + 14px)';
+      btn.style.right = open ? edge : '14px';
+      hudEl.style.right = open ? 'calc(min(330px, 86vw) + 18px)' : '10px';
     });
+    btn.style.transition += ', right .55s cubic-bezier(.22,1,.36,1)';
+    hudEl.style.transition = 'right .55s cubic-bezier(.22,1,.36,1)';
     document.body.appendChild(btn);
   })();
 

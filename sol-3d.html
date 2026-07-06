@@ -1410,11 +1410,21 @@ function init(){
       '  vec3 dirW = normalize(uRight*cos(ang) + uUp*sin(ang));',
       '  float cy = cos(-uRotY); float sy = sin(-uRotY);',
       '  vec3 dirO = vec3(dirW.x*cy - dirW.z*sy, dirW.y, dirW.x*sy + dirW.z*cy);',
-      '  vec3 ap = dirO*2.6;',
-      '  float rays = fbmLight(ap + vec3(0.0, 0.0, uTime*0.006));',
+      // coroa VIVA (backlog M2 nº4): os raios evoluíam a uTime*0.006 —
+      // diff 0.00 em qualquer clipe, a camada morta que quebrava a
+      // ilusão por contraste com as vivas. Três tempos: deriva angular
+      // própria LENTA do padrão (a coroa não é rígida com a fotosfera),
+      // evolução do fbm ~5x mais rápida e flicker 1/f por direção —
+      // a luz treme como em filme de eclipse. Streamers (act) seguem
+      // ancorados às cargas: a física não muda, só o padrão respira.
+      '  float ca = cos(uTime*0.010); float sa = sin(uTime*0.010);',
+      '  vec3 ap = vec3(dirO.x*ca - dirO.z*sa, dirO.y, dirO.x*sa + dirO.z*ca)*2.6;',
+      '  float rays = fbmLight(ap + vec3(0.0, 0.0, uTime*0.030));',
       '  rays = 0.68 + 0.36*rays;',
-      '  float rays2 = fbmLight(ap*2.7 + vec3(7.3, 0.0, uTime*0.009));',
+      '  float rays2 = fbmLight(ap*2.7 + vec3(7.3, 0.0, uTime*0.045));',
       '  rays *= 0.85 + 0.25*rays2;',
+      '  float flick = fbmLight(dirO*1.9 + vec3(3.7, 8.2, uTime*0.55));',
+      '  rays *= 0.90 + 0.20*flick;',
       // streamers nascem SOBRE as regiões ativas: reforço por carga
       '  float act = 0.0;',
       '  for(int i=0;i<10;i++){',
@@ -1934,6 +1944,32 @@ function init(){
   stars.material.opacity = Math.min(1, STARS_OP0*starK);
   brightStars.material.opacity = Math.min(1, BRIGHT_OP0*starK);
   scene.add(milkyWay);
+  // twinkle SUTIL (backlog M2 nº4: estrelas eram a única camada 100%
+  // morta). Cada estrela pisca com fase e cadência próprias (hash da
+  // posição), modulando a OPACIDADE — astrofoto tem pouco, cinema tem
+  // algum; a cruz de glint das vivas é a que mais cintila.
+  var twinkleUniform = { value: 0 };
+  function addTwinkle(mat, amp){
+    mat.onBeforeCompile = function(shader){
+      shader.uniforms.uTwT = twinkleUniform;
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', '#include <common>\nuniform float uTwT;\nvarying float vTw;')
+        .replace('#include <color_vertex>', '#include <color_vertex>\n'
+          + 'float twPh = fract(sin(dot(position, vec3(12.9898,78.233,37.719)))*43758.5453)*6.2832;\n'
+          + 'float twSp = 2.0 + 4.0*fract(sin(dot(position, vec3(39.3468,11.135,83.155)))*24634.6345);\n'
+          + 'vTw = 1.0 - ' + amp.toFixed(2) + '*(0.5 + 0.5*sin(uTwT*twSp + twPh));\n');
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying float vTw;')
+        .replace('vec4 diffuseColor = vec4( diffuse, opacity );',
+                 'vec4 diffuseColor = vec4( diffuse, opacity * vTw );');
+    };
+    // sem isto o three reusa o MESMO programa para amps diferentes
+    // (onBeforeCompile.toString() é igual — o amp vive num closure)
+    mat.customProgramCacheKey = function(){ return 'twinkle' + amp; };
+  }
+  addTwinkle(stars.material, 0.30);
+  addTwinkle(brightStars.material, 0.45);
+  addTwinkle(milkyWay.material, 0.18);
   // Via Láctea opção B (astrofoto): véu DIFUSO de gás por trás da camada
   // estelar — faixa gaussiana no mesmo plano, manchas de fBm, veio de
   // poeira escura no meio, bojo galáctico dourado e bordas azuladas.
@@ -3163,6 +3199,7 @@ function init(){
 
     coronaRays.quaternion.copy(camera.quaternion);
     coronaRaysUniforms.uTime.value = elapsed;
+    twinkleUniform.value = elapsed;
     // T1.3: base da câmera + rotação do Sol + atividade global p/ a coroa
     camRightTmp.set(1,0,0).applyQuaternion(camera.quaternion);
     camUpTmp.set(0,1,0).applyQuaternion(camera.quaternion);

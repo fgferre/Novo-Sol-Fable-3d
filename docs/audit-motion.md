@@ -145,6 +145,21 @@ razão max/min 8.5 (4.2 a speed=3). Gates 8/9-9/9-9/9 (só flake I);
 controles 6/6; neutralidade limpa. Nota 6.8: "correção de ritmo real,
 mas 7.5 só vem com fervura contínua + coroa viva".
 
+### Iteração 3 — [FEATURE nº1] Fervura contínua do disco (commit 0109356)
+
+Domain-warp do domínio do bake por uTime no fragment shader: 2
+oitavas de snoise em espaço do OBJETO (uGranFreq*0.45 e *2.6, fases
+t*0.9/t*1.7), amplitude 0.0035 UV. QA M2: **platô do disco sem bake
+0.075 → 3.245** (speed=1; 5.505 a speed=3) — ~43x o alvo 0.3; razão
+max/min com bake 1.1; swap invisível. Caráter julgado: "diffs nas
+bordas de filamentos na escala das células, estrutura conservada e
+empurrada — não nada como água nem vibra como ruído"; fios nítidos.
+Rotação×textura rígida (warp gira junto, resíduo pós-compensação =
+platô congelado). Perf: +0.7% no pior tier (low), high sem sinal de
+regressão. Gates 9/9 ×3 (sem nem disparar flakes); controles 6/6;
+neutralidade limpa. Nota 7.2 — falta coroa viva + estrelas (iter 4)
+para ≥7.5.
+
 ## Métrica de progresso
 
 Re-rodar o M2 (mesmo protocolo: 12+ frames rAF-consecutivos,

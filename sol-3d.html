@@ -107,6 +107,16 @@ function init(){
   // forma coerente (rotação, deriva, ciclos, flares, sim) sem tocar na
   // resposta dos controles de câmera.
   var TIME_SCALE = knob('speed', 1.0, 0.05, 3.0);
+  // ?look=sunshine: preset da camada cinematográfica (Sunshine 2007 —
+  // halação, íris, lente); semeia DEFAULTS, então knob individual na
+  // URL/painel continua tendo precedência. Sem o preset, tudo em 0.
+  var LOOK = (urlQ.look === 'sunshine') ? {
+    // calibrado por sweep de 7 variantes + juiz visual (h2, 8.5/10;
+    // fringe>=0.5 gera rebordo verde no limbo — manter <=0.35)
+    veil:0.85, adapt:0.55, fringe:0.35, shimmer:0.45, tone:0.65,
+    streak:0.65, bloom:1.15, grain:1.7, vig:0.85, exposure:1.08
+  } : null;
+  function lk(n, base){ return (LOOK && LOOK[n] !== undefined) ? LOOK[n] : base; }
   var IDLE_CINE = urlQ.idle === '1' || (urlQ.idle === undefined && savedKnobs.idle == 1);
   var RENDER_SCALE = (parseFloat(urlQ.scale) > 0)
     ? Math.min(2.0, Math.max(0.3, parseFloat(urlQ.scale))) : 1.0;
@@ -2018,6 +2028,47 @@ function init(){
   });
   var upsampleScene = makeFullscreenScene(upsampleMaterial);
 
+  // streak anamórfico (camada cinema): blur horizontal longo em RT
+  // pequeno (w/4 × h/16), 2 passadas com alcance crescente; só roda
+  // quando o knob streak > 0 — custo zero no default
+  var streakRTa = new THREE.WebGLRenderTarget(2,2, {
+    minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter,
+    format:THREE.RGBAFormat, type: rtType, depthBuffer:false, stencilBuffer:false
+  });
+  var streakRTb = streakRTa.clone();
+  var streakW = 2, streakH = 2;
+  var streakUniforms = { tDiffuse:{value:null}, uTexelX:{value:1}, uStride:{value:2} };
+  var streakFragment = [
+    'uniform sampler2D tDiffuse;',
+    'uniform float uTexelX;',
+    'uniform float uStride;',
+    'varying vec2 vUv;',
+    'void main(){',
+    '  vec3 acc = vec3(0.0); float wsum = 0.0;',
+    '  for (int i = -8; i <= 8; i++){',
+    '    float w = exp(-0.35*abs(float(i)));',
+    '    acc += texture2D(tDiffuse, vUv + vec2(float(i)*uTexelX*uStride, 0.0)).rgb * w;',
+    '    wsum += w;',
+    '  }',
+    '  gl_FragColor = vec4(acc/wsum, 1.0);',
+    '}'
+  ].join('\n');
+  var streakMaterial = new THREE.ShaderMaterial({ uniforms: streakUniforms, vertexShader: quadVertex, fragmentShader: streakFragment });
+  var streakScene = makeFullscreenScene(streakMaterial);
+  function renderStreak(){
+    var src = bloomMips[Math.min(1, bloomMips.length-1)];
+    streakUniforms.tDiffuse.value = src.rt.texture;
+    streakUniforms.uTexelX.value = 1/src.w;
+    streakUniforms.uStride.value = 2.0;
+    renderer.setRenderTarget(streakRTa);
+    renderer.render(streakScene, quadCamera);
+    streakUniforms.tDiffuse.value = streakRTa.texture;
+    streakUniforms.uTexelX.value = 1/streakW;
+    streakUniforms.uStride.value = 8.0;
+    renderer.setRenderTarget(streakRTb);
+    renderer.render(streakScene, quadCamera);
+  }
+
   function renderBloom(){
     thresholdUniforms.tDiffuse.value = sceneRT.texture;
     thresholdUniforms.uTexel.value.set(1/sceneRT.width, 1/sceneRT.height);
@@ -2041,23 +2092,52 @@ function init(){
   }
 
   var BLOOM_BASE0 = isHDR ? 0.62 : 0.55;
-  var BLOOM_STRENGTH_BASE = BLOOM_BASE0 * knob('bloom', 1.0, 0.0, 3.0);
+  var BLOOM_STRENGTH_BASE = BLOOM_BASE0 * knob('bloom', lk('bloom', 1.0), 0.0, 3.0);
+  // camada cinema (ver docs/cinema-sunshine.md): defaults 0 = frame
+  // pixel-idêntico ao calibrado; valores em JS p/ gating por toggle
+  var VEIL_BASE = knob('veil', lk('veil', 0), 0.0, 1.5);
+  var STREAK_K = knob('streak', lk('streak', 0), 0.0, 1.5);
+  var ADAPT_K = knob('adapt', lk('adapt', 0), 0.0, 1.0);
+  var adaptCur = 1.0;
+  var cineProj = new THREE.Vector3();
   var compUniforms = {
-    tScene:{value:null}, tBloom:{value:null},
+    tScene:{value:null}, tBloom:{value:null}, tVeil:{value:null}, tStreak:{value:null},
+    uStreak:{value: 0.0},
     uBloomStrength:{value: BLOOM_STRENGTH_BASE},
-    uExposure:{value: EXP0 * knob('exposure', 1.0, 0.3, 2.5)},
+    uExposure:{value: EXP0 * knob('exposure', lk('exposure', 1.0), 0.3, 2.5)},
     uSat:{value: knob('sat', 1.0, 0.0, 2.0)},
-    uVig:{value: knob('vig', 0.55, 0.0, 1.5)},
-    uGrain:{value: knob('grain', 1.0, 0.0, 5.0)}
+    uVig:{value: knob('vig', lk('vig', 0.55), 0.0, 1.5)},
+    uGrain:{value: knob('grain', lk('grain', 1.0), 0.0, 5.0)},
+    uVeil:{value: 0.0},
+    uAdapt:{value: 1.0},
+    uFringe:{value: knob('fringe', lk('fringe', 0), 0.0, 1.5)},
+    uShimmer:{value: knob('shimmer', lk('shimmer', 0), 0.0, 1.5)},
+    uTone:{value: knob('tone', lk('tone', 0), 0.0, 1.2)},
+    uCTime:{value: 0.0},
+    uSunC:{value: new THREE.Vector2(0.5, 0.5)},
+    uSunR:{value: 0.33},
+    uAspect:{value: 1.0}
   };
   var compFragment = [
     'uniform sampler2D tScene;',
     'uniform sampler2D tBloom;',
+    'uniform sampler2D tVeil;',
+    'uniform sampler2D tStreak;',
+    'uniform float uStreak;',
     'uniform float uBloomStrength;',
     'uniform float uExposure;',
     'uniform float uSat;',
     'uniform float uVig;',
     'uniform float uGrain;',
+    'uniform float uVeil;',
+    'uniform float uAdapt;',
+    'uniform float uFringe;',
+    'uniform float uShimmer;',
+    'uniform float uTone;',
+    'uniform float uCTime;',
+    'uniform vec2 uSunC;',
+    'uniform float uSunR;',
+    'uniform float uAspect;',
     'varying vec2 vUv;',
     'vec3 ACESFilm(vec3 x){',
     '  float a=2.51; float b=0.03; float c=2.43; float d=0.59; float e=0.14;',
@@ -2068,12 +2148,56 @@ function init(){
     '  p3 += dot(p3, p3.yzx + 33.33);',
     '  return fract((p3.x + p3.y) * p3.z);',
     '}',
+    'float vnoise(vec2 p){',
+    '  vec2 i = floor(p); vec2 f = fract(p); f = f*f*(3.0-2.0*f);',
+    '  return mix(mix(hash12(i), hash12(i+vec2(1.0,0.0)), f.x),',
+    '             mix(hash12(i+vec2(0.0,1.0)), hash12(i+vec2(1.0,1.0)), f.x), f.y);',
+    '}',
     'void main(){',
-    '  vec3 sceneCol = texture2D(tScene, vUv).rgb;',
-    '  vec3 bloomCol = texture2D(tBloom, vUv).rgb;',
-    '  vec3 color = (sceneCol + bloomCol*uBloomStrength) * uExposure;',
+    '  vec2 uv = vUv;',
+    // heat-haze: anel logo além do limbo, noise subindo (ar quente);
+    // nunca toca o interior do disco (fibrilas ficam estáveis)
+    '  if (uShimmer > 0.001){',
+    '    vec2 rel = (uv - uSunC) * vec2(uAspect, 1.0);',
+    '    float rr = length(rel) / max(uSunR, 1e-4);',
+    '    float band = smoothstep(1.0, 1.06, rr) * (1.0 - smoothstep(1.10, 1.45, rr));',
+    '    if (band > 0.001){',
+    '      vec2 np = uv * vec2(90.0, 60.0) + vec2(0.0, -uCTime*1.6);',
+    '      vec2 wob = vec2(vnoise(np) - 0.5, vnoise(np + 17.7) - 0.5);',
+    '      uv += wob * (band * uShimmer * 0.006);',
+    '    }',
+    '  }',
+    '  vec3 sceneCol = texture2D(tScene, uv).rgb;',
+    // aberração cromática lateral da lente: cresce com o ângulo de
+    // campo (zero no centro), como vidro real — franja no limbo e nas
+    // estrelas sem depender de máscara de luminância
+    '  if (uFringe > 0.001){',
+    '    vec2 rc = uv - 0.5;',
+    '    vec2 off = rc * ((0.006 + 0.020*dot(rc, rc)) * uFringe);',
+    '    sceneCol.r = texture2D(tScene, uv + off).r;',
+    '    sceneCol.b = texture2D(tScene, uv - off).b;',
+    '  }',
+    '  vec3 bloomCol = texture2D(tBloom, uv).rgb;',
+    '  vec3 color = (sceneCol + bloomCol*uBloomStrength) * (uExposure * uAdapt);',
+    // halação/veiling glare: o mip mais largo do dual-Kawase lava as
+    // sombras ao redor do disco ("knife edge" do Sunshine)
+    '  if (uVeil > 0.001){',
+    '    color += texture2D(tVeil, uv).rgb * (uVeil * 0.55) * uExposure * uAdapt;',
+    '  }',
+    // streak anamórfico: risco horizontal frio (assinatura de lente
+    // anamórfica; os flares do Sunshine eram de lente REAL)
+    '  if (uStreak > 0.001){',
+    '    color += texture2D(tStreak, uv).rgb * (uStreak * 0.70) * vec3(0.80,0.88,1.12) * uExposure * uAdapt;',
+    '  }',
     '  color = ACESFilm(color);',
     '  color = mix(vec3(dot(color, vec3(0.299,0.587,0.114))), color, uSat);',
+    // split-tone Sunshine: sombras frias, altas douradas (contraste
+    // ouro-vs-frio de Boyle/Küchler dentro do mesmo frame)
+    '  if (uTone > 0.001){',
+    '    float tl = dot(color, vec3(0.299,0.587,0.114));',
+    '    vec3 tint = mix(vec3(0.82,0.90,1.10), vec3(1.08,1.00,0.86), smoothstep(0.10, 0.65, tl));',
+    '    color *= mix(vec3(1.0), tint, uTone);',
+    '  }',
     // vinheta cinematográfica sutil
     '  vec2 vc = vUv - 0.5;',
     '  color *= 1.0 - dot(vc, vc)*uVig;',
@@ -2099,6 +2223,10 @@ function init(){
       bw = Math.max(2, Math.floor(bw/2));
       bh = Math.max(2, Math.floor(bh/2));
     }
+    streakW = Math.max(2, Math.floor(w/4));
+    streakH = Math.max(2, Math.floor(h/16));
+    streakRTa.setSize(streakW, streakH);
+    streakRTb.setSize(streakW, streakH);
   }
 
   // ---------------------------------------------------------------
@@ -2444,7 +2572,13 @@ function init(){
                  plageglow: sunUniforms.uPlageEm.value,
                  halo: coronaRaysUniforms.uHalo.value, ray: coronaRaysUniforms.uRayBoost.value,
                  cact: coronaRaysUniforms.uActGain.value,
-                 mw: milkyWay.material.opacity, stars: stars.material.opacity };
+                 mw: milkyWay.material.opacity, stars: stars.material.opacity,
+                 veil: VEIL_BASE, streak: STREAK_K, adapt: ADAPT_K,
+                 fringe: compUniforms.uFringe.value,
+                 shimmer: compUniforms.uShimmer.value,
+                 tone: compUniforms.uTone.value,
+                 adaptMul: compUniforms.uAdapt.value,
+                 look: LOOK ? 'sunshine' : '' };
       };
       window.__solInfo.perfReset = function(){
         perfN = 0; perfIdx = 0; perfLastT = 0; perfBakes.length = 0;
@@ -2655,6 +2789,22 @@ function init(){
       { k:'grain', label:'Grão de filme', lo:0, hi:4, step:0.1, dflt:1,
         get:function(){ return compUniforms.uGrain.value; },
         set:function(v){ compUniforms.uGrain.value = v; } },
+      { sec: 'cinema' },
+      { k:'veil', label:'Halação (glare)', lo:0, hi:1.5, step:0.05, dflt:0,
+        get:function(){ return VEIL_BASE; }, set:function(v){ VEIL_BASE = v; } },
+      { k:'streak', label:'Flare anamórfico', lo:0, hi:1.5, step:0.05, dflt:0,
+        get:function(){ return STREAK_K; }, set:function(v){ STREAK_K = v; } },
+      { k:'adapt', label:'Olho (adaptação)', lo:0, hi:1, step:0.05, dflt:0,
+        get:function(){ return ADAPT_K; }, set:function(v){ ADAPT_K = v; } },
+      { k:'fringe', label:'Franja da lente', lo:0, hi:1.5, step:0.05, dflt:0,
+        get:function(){ return compUniforms.uFringe.value; },
+        set:function(v){ compUniforms.uFringe.value = v; } },
+      { k:'shimmer', label:'Calor no limbo', lo:0, hi:1.5, step:0.05, dflt:0,
+        get:function(){ return compUniforms.uShimmer.value; },
+        set:function(v){ compUniforms.uShimmer.value = v; } },
+      { k:'tone', label:'Grade Sunshine', lo:0, hi:1.2, step:0.05, dflt:0,
+        get:function(){ return compUniforms.uTone.value; },
+        set:function(v){ compUniforms.uTone.value = v; } },
       { sec: 'coroa' },
       { k:'halo', label:'Halo coronal', lo:0, hi:1.6, step:0.05, dflt:0.55,
         get:function(){ return coronaRaysUniforms.uHalo.value; },
@@ -2996,6 +3146,33 @@ function init(){
 
     if (subToggle.bloom) renderBloom();
     compUniforms.uBloomStrength.value = subToggle.bloom ? BLOOM_STRENGTH_BASE : 0.0;
+
+    // --- camada cinema (Sunshine) ---------------------------------
+    // halação usa o mip mais largo do bloom; zera junto com o toggle
+    compUniforms.uVeil.value = subToggle.bloom ? VEIL_BASE : 0.0;
+    compUniforms.tVeil.value = bloomMips[bloomMips.length-1].rt.texture;
+    if (STREAK_K > 0.001 && subToggle.bloom) renderStreak();
+    compUniforms.uStreak.value = subToggle.bloom ? STREAK_K : 0.0;
+    compUniforms.tStreak.value = streakRTb.texture;
+    compUniforms.uCTime.value = elapsed;
+    // centro/raio do disco em UV de tela (p/ o anel de heat-haze)
+    cineProj.set(0,0,0).project(camera);
+    compUniforms.uSunC.value.set(cineProj.x*0.5+0.5, cineProj.y*0.5+0.5);
+    var cineHalf = camera.fov * Math.PI / 360;
+    var cineAng = Math.asin(Math.min(1, SUN_RADIUS / Math.max(camDist, SUN_RADIUS*1.001)));
+    compUniforms.uSunR.value = 0.5 * Math.tan(cineAng) / Math.tan(cineHalf);
+    compUniforms.uAspect.value = renderer.domElement.width / Math.max(1, renderer.domElement.height);
+    // adaptação de exposição (olho/íris): fecha rápido no claro, reabre
+    // devagar; flare estoura o quadro ANTES de a íris correr atrás
+    if (ADAPT_K > 0.001){
+      var cover = cineAng / cineHalf; cover = Math.min(2.0, cover*cover);
+      var aTarget = 1.0 / (1.0 + ADAPT_K*(0.42*cover
+        + 0.20*coronaRaysUniforms.uActivity.value*cover + 0.60*sfEnv));
+      var aTau = (aTarget < adaptCur) ? 0.5 : 3.0;
+      adaptCur += (aTarget - adaptCur) * (1.0 - Math.exp(-rawDelta/aTau));
+      compUniforms.uAdapt.value = adaptCur * (1.0 + ADAPT_K*0.85*sfEnv);
+    } else { adaptCur = 1.0; compUniforms.uAdapt.value = 1.0; }
+    // ----------------------------------------------------------------
 
     compUniforms.tScene.value = sceneRT.texture;
     compUniforms.tBloom.value = bloomMips[0].rt.texture;

@@ -197,6 +197,15 @@ paralaxe 4.0 · limbo/atmosfera 6.0 · proeminências hero 6.5.
   ?idle=1 (câmera idle), __solInfo.knobs(). Defaults = visual calibrado
   (neutralidade validada por gates). QA 4/4.
 
+- **ESTUDO ref-08** (flare EUV no limbo): morfologia atual de flare
+  nota 4/10 — kernel isotrópico exp(-d²·700) "pisca" e some (~3s sim,
+  sem cauda). Backlog concreto: (1) fitas anisotrópicas na tangente da
+  PIL (bloco uFlare do fragment do sol); (2) arcada de laços pós-flare
+  no decaimento (reusar shader de proeminência, spawn em surfFlareDir);
+  (3) envelope 2 fases (+cauda e^-0.3t) + core saturado com halo largo
+  que transborda o limbo. Bug corrigido: forceFlareAt não setava
+  surfFlareAmp (flares de QA saíam com amplitude indefinida).
+
 ## PENDÊNCIAS HONESTAS para um próximo loop
 
 - gamma pós-ACES (invalidaria as calibrações desta sessão — requer

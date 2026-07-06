@@ -2466,6 +2466,7 @@ function init(){
       window.__solInfo.forceFlareAt = function(i){
         surfFlareDir.copy(promStates[i].meshes[0].userData.dir).normalize();
         surfFlareT = 0;
+        surfFlareAmp = 1.2;   // QA: o gatilho natural seta via |w|; o forçado usa amp fixa
         return !!agitateNearestProm(surfFlareDir);
       };
       // QA T1.1: modo/candidatos da última amostragem de PIL, leitura do

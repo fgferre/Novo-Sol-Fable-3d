@@ -113,6 +113,23 @@ MORTAS que quebram a ilusão por contraste com as vivas.
    atacada.
 6. **[POLISH] Extinção de proeminência**: alargar o smoothstep final.
 
+## Registro do LOOP-7
+
+### Iteração 1 — [BUG] Crossfade do bake (commit 80ff485)
+
+uBakeMix avança TODO frame (fora do gate de fatias) e o fade dura 85%
+do ciclo medido, saturando em 1.0 antes do swap — no swap (prev:=cur,
+mix:=0) a imagem é a mesma. QA M2: pop no swap ELIMINADO (diff do
+disco no frame do swap = 0.076, igual ao piso sem-bake), sem
+stall+jump, mix linear 0.147/frame a speed=1, **razão max/min do disco
+133 → 7.8** (alvo <10 ✅). Gates 8/9 ×3 (I span 18/19 falha também no
+HEAD anterior — complexo grande pré-existente, não regressão);
+controles 6/6; neutralidade cinema limpa. Nota de cineasta 5.5 → 6.5:
+"o slideshow virou dissolve contínuo e limpo, mas ainda é dissolve".
+Achado para a iter 2: a speed=3 o clamp bakeCycleDt 1.5 < 0.85×ciclo
+(~2.4s) congelava as camadas baked 3 de 8 frames por ciclo → clamp
+elevado a 4.5 na iteração 2.
+
 ## Métrica de progresso
 
 Re-rodar o M2 (mesmo protocolo: 12+ frames rAF-consecutivos,

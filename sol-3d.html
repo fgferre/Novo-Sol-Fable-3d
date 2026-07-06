@@ -1906,7 +1906,7 @@ function init(){
       '  cloud = 0.35 + 0.9*cloud*cloud;',
       '  float dust = exp(-b*b*260.0) * (0.45+0.55*(fbmLight(d*11.0+vec3(4.7))*0.5+0.5));',
       '  vec3 core = normalize(cross(uN, vec3(0.2,0.0,1.0)));',
-      '  float ck = pow(max(dot(d, core), 0.0), 6.0);',
+      '  float ck = pow(max(dot(d, core), 0.0), 4.0);',   // 4: braço anti-bojo visível
       '  vec3 col = mix(vec3(0.42,0.52,0.85), vec3(1.0,0.82,0.55), clamp(ck*1.6,0.0,1.0));',
       '  float I = band*cloud*(1.0-0.75*dust)*(0.5+1.4*ck);',
       '  gl_FragColor = vec4(col * I * uMW * 0.16, 1.0);',

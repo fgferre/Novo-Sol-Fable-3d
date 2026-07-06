@@ -68,4 +68,19 @@ Tudo converge no composite (L~2053-2086) + 1 cadeia nova de RTs:
 
 ## Registro por iteração
 
-(preenchido conforme avança)
+- **I1 FEITO** (79348d7): veil/adapt/fringe/shimmer/tone no composite,
+  preset ?look=sunshine, seção 'cinema' no painel, knobs() estendido.
+  QA-I1: 9/10 PASS — veil +17-47% de céu sem artefatos; íris com
+  assinatura flash→fecha comprovada (adaptMul 0.88→1.32 no pico do
+  flare→0.78 fechada); shimmer +23% só no anel (interior do disco
+  intacto); tone esfria o céu +15% mantendo o disco dourado; preset
+  7/10 do juiz; gates 9/9 e 8/9 (flake conhecido do gate I); controles
+  6/6; zero pageerror em ~12 cargas.
+- **I1.1 FEITO** (dd77d21): fringe estava inerte (máscara de luma
+  H-alfa nunca abria) → aberração cromática lateral real de lente
+  (offset radial ∝ 0.006+0.020·r², zero no centro). A/B: separação
+  R-B no limbo 0→7px com fringe=1.3.
+- **I2 FEITO** (a58051d): streak anamórfico — RTs w/4×h/16, 2 passadas
+  horizontais 17-taps (strides 2/8), tint frio, só renderiza com
+  knob>0. Smoke: +58% na faixa equatorial, risco suave sem serrilhado.
+- **I3**: sweep de 5 variantes do preset + juiz (em andamento).

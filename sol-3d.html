@@ -95,8 +95,11 @@ function init(){
       urlQ[p[0]] = decodeURIComponent(p[1] || '');
     });
   } catch(e){}
+  var savedKnobs = {};
+  try { savedKnobs = JSON.parse(localStorage.getItem('solKnobs') || '{}') || {}; } catch(e){}
   function knob(name, dflt, lo, hi){
     var v = parseFloat(urlQ[name]);
+    if (v !== v && savedKnobs[name] !== undefined) v = parseFloat(savedKnobs[name]);
     return (v === v) ? Math.min(hi, Math.max(lo, v)) : dflt;
   }
   // Knobs cinematográficos (defaults = visual calibrado do LOOP-5; sem
@@ -104,7 +107,7 @@ function init(){
   // forma coerente (rotação, deriva, ciclos, flares, sim) sem tocar na
   // resposta dos controles de câmera.
   var TIME_SCALE = knob('speed', 1.0, 0.05, 3.0);
-  var IDLE_CINE = urlQ.idle === '1';
+  var IDLE_CINE = urlQ.idle === '1' || (urlQ.idle === undefined && savedKnobs.idle == 1);
   var RENDER_SCALE = (parseFloat(urlQ.scale) > 0)
     ? Math.min(2.0, Math.max(0.3, parseFloat(urlQ.scale))) : 1.0;
 
@@ -1845,9 +1848,10 @@ function init(){
   })();
   milkyWay.material.size = 1.4;
   milkyWay.material.opacity = knob('mw', 0.45, 0.0, 1.0);
+  var STARS_OP0 = stars.material.opacity, BRIGHT_OP0 = brightStars.material.opacity;
   var starK = knob('stars', 1.0, 0.0, 3.0);
-  stars.material.opacity = Math.min(1, stars.material.opacity*starK);
-  brightStars.material.opacity = Math.min(1, brightStars.material.opacity*starK);
+  stars.material.opacity = Math.min(1, STARS_OP0*starK);
+  brightStars.material.opacity = Math.min(1, BRIGHT_OP0*starK);
   scene.add(milkyWay);
   // (Tentativa de faixa da Via Láctea removida: sem QA visual funcionando,
   // calibrar estética por estatística de pixels se provou má ideia.)
@@ -1876,6 +1880,7 @@ function init(){
   // H-alfa pico ~0.98 de luminância, threshold 1.0 nunca florescia — só
   // flare raro. 0.72 + emissivos HDR de plage/limbo (no shader do sol)
   // fazem o bloom LER sem lavar o disco (p50 +2%, 0% de pixels clipados).
+  var EXP0 = isHDR ? 1.02 : 1.06;
   var BLOOM_THRESHOLD = knob('bloomth', isHDR ? 0.72 : 0.82, 0.2, 2.0);
   // diagnóstico acessível via console: window.__solInfo
   try { window.__solInfo = { webgl2: !!(renderer.capabilities && renderer.capabilities.isWebGL2), hdr: isHDR, tier: TIER, scale: RENDER_SCALE }; } catch(e){}
@@ -1970,11 +1975,12 @@ function init(){
     }
   }
 
-  var BLOOM_STRENGTH_BASE = (isHDR ? 0.62 : 0.55) * knob('bloom', 1.0, 0.0, 3.0);
+  var BLOOM_BASE0 = isHDR ? 0.62 : 0.55;
+  var BLOOM_STRENGTH_BASE = BLOOM_BASE0 * knob('bloom', 1.0, 0.0, 3.0);
   var compUniforms = {
     tScene:{value:null}, tBloom:{value:null},
     uBloomStrength:{value: BLOOM_STRENGTH_BASE},
-    uExposure:{value: (isHDR ? 1.02 : 1.06) * knob('exposure', 1.0, 0.3, 2.5)},
+    uExposure:{value: EXP0 * knob('exposure', 1.0, 0.3, 2.5)},
     uSat:{value: knob('sat', 1.0, 0.0, 2.0)},
     uVig:{value: knob('vig', 0.55, 0.0, 1.5)},
     uGrain:{value: knob('grain', 1.0, 0.0, 5.0)}
@@ -2492,6 +2498,184 @@ function init(){
       };
     }
   } catch(_){}
+
+
+  // ---------------------------------------------------------------
+  // PAINEL DE AJUSTES (drawer): sliders para os knobs cinematográficos,
+  // com persistência em localStorage — no iPhone via arquivo local não
+  // há query string, então o painel é o caminho principal de ajuste.
+  // Prioridade: URL > painel salvo > default. Design: vidro fosco com
+  // acento solar, coerente com a estética da cena.
+  // ---------------------------------------------------------------
+  (function buildKnobPanel(){
+    var css = document.createElement('style');
+    css.textContent = [
+      '#knobBtn{position:fixed;right:14px;bottom:14px;z-index:45;width:44px;height:44px;',
+      ' border-radius:50%;border:1px solid rgba(255,170,90,.28);color:#ffb877;font-size:18px;',
+      ' background:rgba(12,16,26,.55);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);',
+      ' display:flex;align-items:center;justify-content:center;cursor:pointer;',
+      ' transition:transform .5s cubic-bezier(.22,1,.36,1),background .3s;user-select:none;-webkit-user-select:none}',
+      '#knobBtn:hover{background:rgba(40,28,16,.72)}',
+      '#knobBtn.open{transform:rotate(120deg)}',
+      '#knobPanel{position:fixed;top:0;right:0;height:100%;width:min(330px,86vw);z-index:44;',
+      ' background:linear-gradient(165deg,rgba(15,18,28,.82),rgba(7,9,15,.90));',
+      ' backdrop-filter:blur(22px) saturate(1.25);-webkit-backdrop-filter:blur(22px) saturate(1.25);',
+      ' border-left:1px solid rgba(255,165,80,.14);box-shadow:-28px 0 70px rgba(0,0,0,.5);',
+      ' transform:translateX(106%);transition:transform .55s cubic-bezier(.22,1,.36,1);',
+      ' overflow-y:auto;overscroll-behavior:contain;padding:24px 22px 96px;box-sizing:border-box;',
+      ' color:#e9e4da;touch-action:pan-y;font-family:inherit}',
+      '#knobPanel.open{transform:translateX(0)}',
+      '#knobPanel h2{margin:0 0 2px;font-size:15px;font-weight:600;letter-spacing:.04em;color:#ffd9a8}',
+      '#knobPanel .sub{font-size:10.5px;color:rgba(233,228,218,.42);margin:0 0 14px}',
+      '#knobPanel .sec{margin:20px 0 6px;font-size:9.5px;font-weight:600;letter-spacing:.22em;',
+      ' text-transform:uppercase;color:rgba(255,160,80,.55)}',
+      '#knobPanel .row{margin:10px 0 2px}',
+      '#knobPanel .lab{display:flex;justify-content:space-between;font-size:12px;color:rgba(233,228,218,.85)}',
+      '#knobPanel .val{font-variant-numeric:tabular-nums;color:rgba(255,190,130,.9);font-size:11.5px}',
+      'input[type=range].kn{-webkit-appearance:none;appearance:none;width:100%;height:24px;',
+      ' background:transparent;margin:0;display:block}',
+      'input[type=range].kn::-webkit-slider-runnable-track{height:3px;border-radius:2px;',
+      ' background:linear-gradient(90deg,#ff9a3c var(--f,50%),rgba(255,255,255,.13) var(--f,50%))}',
+      'input[type=range].kn::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;',
+      ' border-radius:50%;margin-top:-6px;border:none;',
+      ' background:radial-gradient(circle at 35% 35%,#ffdcae,#ff8a2a);',
+      ' box-shadow:0 0 10px rgba(255,140,50,.55),0 1px 3px rgba(0,0,0,.6)}',
+      'input[type=range].kn::-moz-range-track{height:3px;border-radius:2px;background:rgba(255,255,255,.13)}',
+      'input[type=range].kn::-moz-range-progress{height:3px;border-radius:2px;background:#ff9a3c}',
+      'input[type=range].kn::-moz-range-thumb{width:15px;height:15px;border-radius:50%;border:none;',
+      ' background:radial-gradient(circle at 35% 35%,#ffdcae,#ff8a2a);box-shadow:0 0 10px rgba(255,140,50,.55)}',
+      '#knobPanel .switch{display:flex;justify-content:space-between;align-items:center;margin:12px 0;font-size:12px}',
+      '#knobPanel .sw{position:relative;width:40px;height:22px;border-radius:12px;cursor:pointer;',
+      ' background:rgba(255,255,255,.14);transition:background .25s}',
+      '#knobPanel .sw.on{background:rgba(255,140,50,.75)}',
+      '#knobPanel .sw::after{content:"";position:absolute;top:2.5px;left:3px;width:17px;height:17px;',
+      ' border-radius:50%;background:#f5efe6;transition:transform .25s cubic-bezier(.22,1,.36,1);',
+      ' box-shadow:0 1px 3px rgba(0,0,0,.4)}',
+      '#knobPanel .sw.on::after{transform:translateX(17px)}',
+      '#knobReset{margin-top:22px;width:100%;padding:9px 0;border-radius:9px;cursor:pointer;',
+      ' border:1px solid rgba(255,170,90,.3);background:transparent;color:#ffb877;font-size:12px;',
+      ' letter-spacing:.05em;transition:background .25s}',
+      '#knobReset:hover{background:rgba(255,140,50,.12)}'
+    ].join('\n');
+    document.head.appendChild(css);
+
+    function saveKnob(k, v){
+      try {
+        savedKnobs[k] = v;
+        localStorage.setItem('solKnobs', JSON.stringify(savedKnobs));
+      } catch(e){}
+    }
+    var DEFS = [
+      { sec: 'tempo' },
+      { k:'speed', label:'Ritmo do tempo', lo:0.05, hi:2, step:0.05, dflt:1,
+        get:function(){ return TIME_SCALE; }, set:function(v){ TIME_SCALE = v; } },
+      { sec: 'luz & cor' },
+      { k:'bloom', label:'Bloom', lo:0, hi:2.5, step:0.05, dflt:1,
+        get:function(){ return BLOOM_STRENGTH_BASE/BLOOM_BASE0; },
+        set:function(v){ BLOOM_STRENGTH_BASE = BLOOM_BASE0*v; } },
+      { k:'exposure', label:'Exposição', lo:0.5, hi:1.8, step:0.02, dflt:1,
+        get:function(){ return compUniforms.uExposure.value/EXP0; },
+        set:function(v){ compUniforms.uExposure.value = EXP0*v; } },
+      { k:'plageglow', label:'Brilho das plages', lo:0, hi:1.2, step:0.05, dflt:0.35,
+        get:function(){ return sunUniforms.uPlageEm.value; },
+        set:function(v){ sunUniforms.uPlageEm.value = v; } },
+      { k:'sat', label:'Saturação', lo:0, hi:1.6, step:0.05, dflt:1,
+        get:function(){ return compUniforms.uSat.value; },
+        set:function(v){ compUniforms.uSat.value = v; } },
+      { k:'vig', label:'Vinheta', lo:0, hi:1.2, step:0.05, dflt:0.55,
+        get:function(){ return compUniforms.uVig.value; },
+        set:function(v){ compUniforms.uVig.value = v; } },
+      { k:'grain', label:'Grão de filme', lo:0, hi:4, step:0.1, dflt:1,
+        get:function(){ return compUniforms.uGrain.value; },
+        set:function(v){ compUniforms.uGrain.value = v; } },
+      { sec: 'coroa' },
+      { k:'halo', label:'Halo coronal', lo:0, hi:1.6, step:0.05, dflt:0.55,
+        get:function(){ return coronaRaysUniforms.uHalo.value; },
+        set:function(v){ coronaRaysUniforms.uHalo.value = v; } },
+      { k:'ray', label:'Streamers', lo:0, hi:2.5, step:0.05, dflt:0.9,
+        get:function(){ return coronaRaysUniforms.uRayBoost.value; },
+        set:function(v){ coronaRaysUniforms.uRayBoost.value = v; } },
+      { k:'cact', label:'Resposta à atividade', lo:0, hi:1.5, step:0.05, dflt:0.5,
+        get:function(){ return coronaRaysUniforms.uActGain.value; },
+        set:function(v){ coronaRaysUniforms.uActGain.value = v; } },
+      { sec: 'céu' },
+      { k:'stars', label:'Estrelas', lo:0, hi:2, step:0.05, dflt:1,
+        get:function(){ return stars.material.opacity/STARS_OP0; },
+        set:function(v){ stars.material.opacity = Math.min(1, STARS_OP0*v);
+                         brightStars.material.opacity = Math.min(1, BRIGHT_OP0*v); } },
+      { k:'mw', label:'Via Láctea', lo:0, hi:1, step:0.02, dflt:0.45,
+        get:function(){ return milkyWay.material.opacity; },
+        set:function(v){ milkyWay.material.opacity = v; } },
+      { sec: 'câmera' }
+    ];
+
+    var panel = document.createElement('div');
+    panel.id = 'knobPanel';
+    var head = document.createElement('h2'); head.textContent = 'Ajustes';
+    var sub = document.createElement('p'); sub.className = 'sub';
+    sub.textContent = 'cena, luz e câmera · salvo neste aparelho';
+    panel.appendChild(head); panel.appendChild(sub);
+
+    var sliders = [];
+    DEFS.forEach(function(d){
+      if (d.sec){
+        var s = document.createElement('div'); s.className = 'sec';
+        s.textContent = d.sec; panel.appendChild(s); return;
+      }
+      var row = document.createElement('div'); row.className = 'row';
+      var lab = document.createElement('div'); lab.className = 'lab';
+      var name = document.createElement('span'); name.textContent = d.label;
+      var val = document.createElement('span'); val.className = 'val';
+      lab.appendChild(name); lab.appendChild(val);
+      var inp = document.createElement('input');
+      inp.type = 'range'; inp.className = 'kn';
+      inp.min = d.lo; inp.max = d.hi; inp.step = d.step;
+      function paint(v){
+        val.textContent = (+v).toFixed(2).replace(/\.00$/, '.0');
+        inp.style.setProperty('--f', (100*(v - d.lo)/(d.hi - d.lo)) + '%');
+      }
+      inp.value = d.get(); paint(inp.value);
+      inp.addEventListener('input', function(){
+        var v = parseFloat(inp.value);
+        d.set(v); paint(v); saveKnob(d.k, v);
+      });
+      row.appendChild(lab); row.appendChild(inp);
+      panel.appendChild(row);
+      sliders.push({ d: d, inp: inp, paint: paint });
+    });
+
+    // switch da câmera idle cinematográfica
+    var swRow = document.createElement('div'); swRow.className = 'switch';
+    var swLab = document.createElement('span'); swLab.textContent = 'Câmera contemplativa';
+    var sw = document.createElement('div'); sw.className = 'sw' + (IDLE_CINE ? ' on' : '');
+    sw.addEventListener('click', function(){
+      IDLE_CINE = !IDLE_CINE;
+      sw.classList.toggle('on', IDLE_CINE);
+      saveKnob('idle', IDLE_CINE ? 1 : 0);
+    });
+    swRow.appendChild(swLab); swRow.appendChild(sw);
+    panel.appendChild(swRow);
+
+    var reset = document.createElement('button');
+    reset.id = 'knobReset'; reset.textContent = 'restaurar padrão';
+    reset.addEventListener('click', function(){
+      try { localStorage.removeItem('solKnobs'); } catch(e){}
+      savedKnobs = {};
+      sliders.forEach(function(s){ s.d.set(s.d.dflt); s.inp.value = s.d.dflt; s.paint(s.d.dflt); });
+      if (IDLE_CINE){ IDLE_CINE = false; sw.classList.remove('on'); }
+    });
+    panel.appendChild(reset);
+    document.body.appendChild(panel);
+
+    var btn = document.createElement('div');
+    btn.id = 'knobBtn'; btn.title = 'ajustes';
+    btn.textContent = '⚙';
+    btn.addEventListener('click', function(){
+      var open = panel.classList.toggle('open');
+      btn.classList.toggle('open', open);
+    });
+    document.body.appendChild(btn);
+  })();
 
   function onResize(){
     camera.aspect = window.innerWidth/window.innerHeight;

@@ -83,4 +83,11 @@ Tudo converge no composite (L~2053-2086) + 1 cadeia nova de RTs:
 - **I2 FEITO** (a58051d): streak anamórfico — RTs w/4×h/16, 2 passadas
   horizontais 17-taps (strides 2/8), tint frio, só renderiza com
   knob>0. Smoke: +58% na faixa equatorial, risco suave sem serrilhado.
-- **I3**: sweep de 5 variantes do preset + juiz (em andamento).
+- **I3 FEITO**: sweep de 7 variantes (5 + 2 híbridas) com juiz visual.
+  Vencedora h2 (8.5/10 vs 7.0 do chute inicial): veil 0.85,
+  streak 0.65, adapt 0.55, fringe 0.35, shimmer 0.45, tone 0.65,
+  bloom 1.15, grain 1.7, vig 0.85, exposure 1.08. Clip 0.07% ≪ 0.5%,
+  contraste frio/ouro 1.22, fibrilas nítidas (grad 2.44); portrait e
+  zoom 6× confirmados sem clip. ACHADO: fringe ≥0.5 gera rebordo
+  verde no limbo e ghosting RGB nas proeminências — teto do preset
+  fixado em 0.35 (knob manual continua indo a 1.5).

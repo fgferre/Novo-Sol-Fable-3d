@@ -111,8 +111,10 @@ function init(){
   // halação, íris, lente); semeia DEFAULTS, então knob individual na
   // URL/painel continua tendo precedência. Sem o preset, tudo em 0.
   var LOOK = (urlQ.look === 'sunshine') ? {
-    veil:0.65, adapt:0.60, fringe:0.50, shimmer:0.45, tone:0.55,
-    streak:0.50, bloom:1.15, grain:1.6, vig:0.80, exposure:1.05
+    // calibrado por sweep de 7 variantes + juiz visual (h2, 8.5/10;
+    // fringe>=0.5 gera rebordo verde no limbo — manter <=0.35)
+    veil:0.85, adapt:0.55, fringe:0.35, shimmer:0.45, tone:0.65,
+    streak:0.65, bloom:1.15, grain:1.7, vig:0.85, exposure:1.08
   } : null;
   function lk(n, base){ return (LOOK && LOOK[n] !== undefined) ? LOOK[n] : base; }
   var IDLE_CINE = urlQ.idle === '1' || (urlQ.idle === undefined && savedKnobs.idle == 1);

@@ -1270,7 +1270,11 @@ function init(){
     '    float fdist = acos(clamp(dot(sp, uFlare.xyz), -1.0, 1.0));',
     '    float frib = 0.55 + 0.45*(fbmLight(sp*26.0 + vec3(3.9))*0.5+0.5);',
     '    flareGlow = uFlare.w * exp(-fdist*fdist*700.0) * frib;',
-    '    heat += flareGlow*0.5;',
+    // laço ~4x mais forte (backlog M2 nº5): o flash local era +3% por
+    // 1 frame — "lâmpada" que perdia para o escurecimento da íris e o
+    // evento lia INVERTIDO (o mundo escurecia mais do que o flare
+    // brilhava). O pico agora domina a leitura; a íris responde menos.
+    '    heat += flareGlow*0.9;',
     '  }',
     // --- filamentos (linhas neutras) vêm do bake; exclusão de manchas aqui ---
     '  float fil = st.g * clamp(1.0 - umbra - pen, 0.0, 1.0);',
@@ -1287,7 +1291,7 @@ function init(){
     // creme SÓ onde plage E heat são altos — mosqueado preservado, 0% clip
     '  color = mix(color, vec3(1.0, 0.86, 0.62), 0.55 * smoothstep(0.55, 1.0, clamp(plage, 0.0, 1.0)) * smoothstep(0.72, 1.12, heat));',
     '  color *= mix(0.16, 1.42, smoothstep(0.04, 1.08, heat));',
-    '  color += vec3(1.0, 0.55, 0.22) * flareGlow * 0.9;',   // pico HDR do flare
+    '  color += vec3(1.0, 0.55, 0.22) * flareGlow * 3.6;',   // pico HDR do flare (~4x, backlog M2 nº5)
     // --- escurecimento + avermelhamento de limbo (lei linear, u=0.72) ---
     '  float limbU = 0.30;',   // núcleo H-alfa: u≈0.25-0.30 na literatura (bem mais suave que contínuo)
     '  color *= (1.0-limbU) + limbU*mu;',
@@ -3260,8 +3264,11 @@ function init(){
     // devagar; flare estoura o quadro ANTES de a íris correr atrás
     if (ADAPT_K > 0.001){
       var cover = cineAng / cineHalf; cover = Math.min(2.0, cover*cover);
+      // termo do flare 0.60→0.25 (backlog M2 nº5): a íris escurecia o
+      // quadro TODO -26% enquanto o flash local era +3% — o evento lia
+      // invertido; com o laço 4x mais forte, o flare ganha a leitura
       var aTarget = 1.0 / (1.0 + ADAPT_K*(0.42*cover
-        + 0.20*coronaRaysUniforms.uActivity.value*cover + 0.60*sfEnv));
+        + 0.20*coronaRaysUniforms.uActivity.value*cover + 0.25*sfEnv));
       var aTau = (aTarget < adaptCur) ? 0.5 : 3.0;
       adaptCur += (aTarget - adaptCur) * (1.0 - Math.exp(-rawDelta/aTau));
       compUniforms.uAdapt.value = adaptCur * (1.0 + ADAPT_K*0.85*sfEnv);

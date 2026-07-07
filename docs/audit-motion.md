@@ -160,6 +160,21 @@ regressão. Gates 9/9 ×3 (sem nem disparar flakes); controles 6/6;
 neutralidade limpa. Nota 7.2 — falta coroa viva + estrelas (iter 4)
 para ≥7.5.
 
+### Iteração 4 — [FEATURE] Coroa viva + twinkle das estrelas (commit da99a73)
+
+Coroa: deriva angular própria (uTime*0.010), fbm ~5x mais rápido
+(0.030/0.045) e flicker 1/f por direção; streamers seguem ancorados
+às cargas. **Diff da coroa 0.008 → 0.180** (speed=1; 0.379 a speed=3)
+— "raios derivam/tremem como luz de eclipse", halo estável (sem
+strobo/pulso). Estrelas: twinkle por estrela via onBeforeCompile
+(amplitudes 0.30/0.45/0.18) — fases independentes (corr média −0.03),
+"sutil-cinematográfico". Regressões limpas (fervura 3.10, swap
+invisível, ratio 1.15). Perf: high +6.8% / low −7.4% (≤10%, ruído
+±15pp). Gates OK (flake I 3/4 amostras, spans 19-20 — sem caminho
+causal com coroa/estrelas; MONITORAR). **Nota 7.6 — alvo ≥7.5 do
+loop ATINGIDO.** Caveats de protocolo do M2: medir com ?grain=0 e
+gatear a auto-órbita (theta+=0.066*rawDelta) nas cópias debug.
+
 ## Métrica de progresso
 
 Re-rodar o M2 (mesmo protocolo: 12+ frames rAF-consecutivos,

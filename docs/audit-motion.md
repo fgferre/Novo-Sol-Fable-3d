@@ -189,6 +189,29 @@ coroa 0.155/0.340, swap invisível). Gates 9/9-8/9-9/9 (flake I 1/3);
 controles 6/6. Nota 7.8. O que separa de 8.5 é a morfologia ref-08
 (ataque 1-frame + bola gaussiana) — fora desta missão.
 
+### Iteração 6 — [POLISH] Extinção de proeminência (commit f0747a9)
+
+smoothstep(0,0.08,uLife) → 0.22 nas 3 camadas (corpo, fitas, arcada).
+QA M2: fade distribuído por ~25 frames a speed=3 (166→140 monotônico,
+queda máx ~3%/frame) e 90+ a speed=1 — sem o corte de ~1 frame; A/B
+contra o gate 0.08 confirma o mecanismo. Renascimento limpo (env=0 no
+teleporte, sem spike). Gates 9/9-9/9-8/9 (flake I); controles 6/6.
+
+## VEREDITO FINAL DO LOOP-7 (2026-07-07)
+
+**Nota de cineasta para "vida do Sol em movimento": 7.9/10** (era
+5.5) — alvo ≥7.5 SUPERADO. Métricas finais vs alvos: platô do disco
+sem bake 3.90 (alvo >0.3); razão max/min do disco 1.14 (alvo <10);
+coroa 1.12 (alvo >0); uBakeMix linear todo frame, satura antes do
+swap, sem stall+jump (alvo). Preset ?look=sunshine re-julgado 1×:
+íntegro sobre a base viva, ~8.5 mantido. Invariantes preservados:
+zero pageerror, física intacta, gates A-I, controles 6/6, rotação×
+textura rígida, renascimento sem pop, neutralidade cinema (a mudança
+de default por fervura/coroa/twinkle é o visual base, como previsto).
+O que separa 7.9 de 8.5+ ficou fora da missão (pendências do PROMPT):
+morfologia de flare ref-08 (fitas+arcada), movimento interno das
+proeminências, kernel LIC físico, Worley advectada.
+
 ## Métrica de progresso
 
 Re-rodar o M2 (mesmo protocolo: 12+ frames rAF-consecutivos,

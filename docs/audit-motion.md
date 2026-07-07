@@ -175,6 +175,20 @@ causal com coroa/estrelas; MONITORAR). **Nota 7.6 — alvo ≥7.5 do
 loop ATINGIDO.** Caveats de protocolo do M2: medir com ?grain=0 e
 gatear a auto-órbita (theta+=0.066*rawDelta) nas cópias debug.
 
+### Iteração 5 — [TUNE] Flare×íris (commit 24ea975)
+
+Laço visual do uFlare ~4x (heat += flareGlow*0.9; pico HDR 0.9→3.6) e
+termo do flare na aTarget 0.60→0.25. QA M2 (forceFlareAt, sequência
+completa): **evento lê CORRETO** — pico local +213.9% vs íris −0.9%
+abaixo do baseline (antes: +3% vs −26% = invertido); surround brilha
++49.5% junto (boost 0.85·sfEnv) e assenta em ~2s. Pico segura como
+filme: 0% de pixels quase-brancos (núcleo creme, halo âmbar, streak
+anamórfico), granulação legível através do glow. Íris viva mas sutil
+(fecha −6.6%, reabre tau 3s). Regressões limpas (fervura 2.86/4.47,
+coroa 0.155/0.340, swap invisível). Gates 9/9-8/9-9/9 (flake I 1/3);
+controles 6/6. Nota 7.8. O que separa de 8.5 é a morfologia ref-08
+(ataque 1-frame + bola gaussiana) — fora desta missão.
+
 ## Métrica de progresso
 
 Re-rodar o M2 (mesmo protocolo: 12+ frames rAF-consecutivos,

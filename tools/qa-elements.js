@@ -27,15 +27,20 @@ function worldDir(objDir, rotY, tiltZ) {
   await page.waitForTimeout(6000);
 
   // A+D: disco frontal no enquadramento padrão (limbo + espículas + filamentos).
-  // A COROA é desligada só nesta captura: os gates A (escurecimento de
-  // limbo) e D (franja de espículas) medem a superfície, e o halo coronal
-  // legítimo (T1.3) contamina ambos — o brilho além do limbo vira "franja"
-  // e o bloom do halo apaga o escurecimento (validado: com coroa off,
-  // A=0.77 e D=4.0px nos mesmos frames em que falhavam com halo).
+  // COROA e ESTRELAS são desligadas só nesta captura: os gates A
+  // (escurecimento de limbo) e D (franja de espículas) medem a
+  // superfície, e tanto o halo coronal legítimo (T1.3) quanto o véu da
+  // Via Láctea cinematográfica contaminam a métrica — o brilho além do
+  // limbo (fundo com L>9 em ~22% das direções a 1.13R com o véu novo)
+  // vira "franja" e o bloom do halo apaga o escurecimento (validado:
+  // com coroa+stars off, A=0.77 e D=3.7px nos mesmos frames em que
+  // falhavam com halo/véu).
   await page.evaluate(() => window.__solInfo.toggle && window.__solInfo.toggle('corona', false));
+  await page.evaluate(() => window.__solInfo.toggle && window.__solInfo.toggle('stars', false));
   await page.waitForTimeout(300);
   await page.screenshot({ path: out + '/element-limb.png' });
   await page.evaluate(() => window.__solInfo.toggle && window.__solInfo.toggle('corona', true));
+  await page.evaluate(() => window.__solInfo.toggle && window.__solInfo.toggle('stars', true));
 
   // B: região ativa mais forte, centrada, close
   let st = await page.evaluate(() => window.__solInfo.state());

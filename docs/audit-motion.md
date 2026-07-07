@@ -113,6 +113,105 @@ MORTAS que quebram a ilusão por contraste com as vivas.
    atacada.
 6. **[POLISH] Extinção de proeminência**: alargar o smoothstep final.
 
+## Registro do LOOP-7
+
+### Iteração 1 — [BUG] Crossfade do bake (commit 80ff485)
+
+uBakeMix avança TODO frame (fora do gate de fatias) e o fade dura 85%
+do ciclo medido, saturando em 1.0 antes do swap — no swap (prev:=cur,
+mix:=0) a imagem é a mesma. QA M2: pop no swap ELIMINADO (diff do
+disco no frame do swap = 0.076, igual ao piso sem-bake), sem
+stall+jump, mix linear 0.147/frame a speed=1, **razão max/min do disco
+133 → 7.8** (alvo <10 ✅). Gates 8/9 ×3 (I span 18/19 falha também no
+HEAD anterior — complexo grande pré-existente, não regressão);
+controles 6/6; neutralidade cinema limpa. Nota de cineasta 5.5 → 6.5:
+"o slideshow virou dissolve contínuo e limpo, mas ainda é dissolve".
+Achado para a iter 2: a speed=3 o clamp bakeCycleDt 1.5 < 0.85×ciclo
+(~2.4s) congelava as camadas baked 3 de 8 frames por ciclo → clamp
+elevado a 4.5 na iteração 2.
+
+### Iteração 2 — [BUG] Coerência temporal do sim (commit 698b058)
+
+(a) Dreno do guard-5: simAccum clampado a 1 passo pendente — sem
+dessincronia cumulativa a fps baixa; (b) snapshot de simTex+charges no
+início de cada ciclo de bake (chromo/smear leem só o snapshot) —
+tearing intra-bake eliminado (zero emendas horizontais nos diffs);
+(c) regDt cap 0.2→0.35 — cargas em sincronia com a plage a speed=3;
+(d) clamp bakeCycleDt 1.5→4.5 — a speed=3 o fade cobre o ciclo todo
+(A/B contra 80ff485: antes congelava 3 de 8 frames; agora mix linear
+0.147/frame nas DUAS velocidades, satura exatamente no swap). Disco
+0.60-0.76 no fade com dip só no swap (0.080 ≈ piso sem-bake 0.075);
+razão max/min 8.5 (4.2 a speed=3). Gates 8/9-9/9-9/9 (só flake I);
+controles 6/6; neutralidade limpa. Nota 6.8: "correção de ritmo real,
+mas 7.5 só vem com fervura contínua + coroa viva".
+
+### Iteração 3 — [FEATURE nº1] Fervura contínua do disco (commit 0109356)
+
+Domain-warp do domínio do bake por uTime no fragment shader: 2
+oitavas de snoise em espaço do OBJETO (uGranFreq*0.45 e *2.6, fases
+t*0.9/t*1.7), amplitude 0.0035 UV. QA M2: **platô do disco sem bake
+0.075 → 3.245** (speed=1; 5.505 a speed=3) — ~43x o alvo 0.3; razão
+max/min com bake 1.1; swap invisível. Caráter julgado: "diffs nas
+bordas de filamentos na escala das células, estrutura conservada e
+empurrada — não nada como água nem vibra como ruído"; fios nítidos.
+Rotação×textura rígida (warp gira junto, resíduo pós-compensação =
+platô congelado). Perf: +0.7% no pior tier (low), high sem sinal de
+regressão. Gates 9/9 ×3 (sem nem disparar flakes); controles 6/6;
+neutralidade limpa. Nota 7.2 — falta coroa viva + estrelas (iter 4)
+para ≥7.5.
+
+### Iteração 4 — [FEATURE] Coroa viva + twinkle das estrelas (commit da99a73)
+
+Coroa: deriva angular própria (uTime*0.010), fbm ~5x mais rápido
+(0.030/0.045) e flicker 1/f por direção; streamers seguem ancorados
+às cargas. **Diff da coroa 0.008 → 0.180** (speed=1; 0.379 a speed=3)
+— "raios derivam/tremem como luz de eclipse", halo estável (sem
+strobo/pulso). Estrelas: twinkle por estrela via onBeforeCompile
+(amplitudes 0.30/0.45/0.18) — fases independentes (corr média −0.03),
+"sutil-cinematográfico". Regressões limpas (fervura 3.10, swap
+invisível, ratio 1.15). Perf: high +6.8% / low −7.4% (≤10%, ruído
+±15pp). Gates OK (flake I 3/4 amostras, spans 19-20 — sem caminho
+causal com coroa/estrelas; MONITORAR). **Nota 7.6 — alvo ≥7.5 do
+loop ATINGIDO.** Caveats de protocolo do M2: medir com ?grain=0 e
+gatear a auto-órbita (theta+=0.066*rawDelta) nas cópias debug.
+
+### Iteração 5 — [TUNE] Flare×íris (commit 24ea975)
+
+Laço visual do uFlare ~4x (heat += flareGlow*0.9; pico HDR 0.9→3.6) e
+termo do flare na aTarget 0.60→0.25. QA M2 (forceFlareAt, sequência
+completa): **evento lê CORRETO** — pico local +213.9% vs íris −0.9%
+abaixo do baseline (antes: +3% vs −26% = invertido); surround brilha
++49.5% junto (boost 0.85·sfEnv) e assenta em ~2s. Pico segura como
+filme: 0% de pixels quase-brancos (núcleo creme, halo âmbar, streak
+anamórfico), granulação legível através do glow. Íris viva mas sutil
+(fecha −6.6%, reabre tau 3s). Regressões limpas (fervura 2.86/4.47,
+coroa 0.155/0.340, swap invisível). Gates 9/9-8/9-9/9 (flake I 1/3);
+controles 6/6. Nota 7.8. O que separa de 8.5 é a morfologia ref-08
+(ataque 1-frame + bola gaussiana) — fora desta missão.
+
+### Iteração 6 — [POLISH] Extinção de proeminência (commit f0747a9)
+
+smoothstep(0,0.08,uLife) → 0.22 nas 3 camadas (corpo, fitas, arcada).
+QA M2: fade distribuído por ~25 frames a speed=3 (166→140 monotônico,
+queda máx ~3%/frame) e 90+ a speed=1 — sem o corte de ~1 frame; A/B
+contra o gate 0.08 confirma o mecanismo. Renascimento limpo (env=0 no
+teleporte, sem spike). Gates 9/9-9/9-8/9 (flake I); controles 6/6.
+
+## VEREDITO FINAL DO LOOP-7 (2026-07-07)
+
+**Nota de cineasta para "vida do Sol em movimento": 7.9/10** (era
+5.5) — alvo ≥7.5 SUPERADO. Métricas finais vs alvos: platô do disco
+sem bake 3.90 (alvo >0.3); razão max/min do disco 1.14 (alvo <10);
+coroa 1.12 (alvo >0); uBakeMix linear todo frame, satura antes do
+swap, sem stall+jump (alvo). Preset ?look=sunshine re-julgado 1×:
+íntegro sobre a base viva, ~8.5 mantido. Invariantes preservados:
+zero pageerror, física intacta, gates A-I, controles 6/6, rotação×
+textura rígida, renascimento sem pop, neutralidade cinema (a mudança
+de default por fervura/coroa/twinkle é o visual base, como previsto).
+O que separa 7.9 de 8.5+ ficou fora da missão (pendências do PROMPT):
+morfologia de flare ref-08 (fitas+arcada), movimento interno das
+proeminências, kernel LIC físico, Worley advectada.
+
 ## Métrica de progresso
 
 Re-rodar o M2 (mesmo protocolo: 12+ frames rAF-consecutivos,

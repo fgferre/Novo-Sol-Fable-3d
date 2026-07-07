@@ -1227,24 +1227,41 @@ function init(){
     '    }',
     '  }',
     // --- manchas: nos PÉS das cargas magnéticas (regiões ativas) ---
+    // A umbra é desenhada AO VIVO, mas o colar de plage/penumbra vem da
+    // textura warpada pela fervura — avaliar o campo da mancha no MESMO
+    // domínio warpado (spW = sp deslocado pelo boil via tangentes da
+    // esfera) faz a umbra ferver junto com o entorno, em vez de ficar
+    // rígida enquanto o colar balança (diagnóstico pós-LOOP-7).
+    '  float bst = max(sqrt(max(1.0 - sp.y*sp.y, 0.0)), 0.1);',
+    '  vec3 spW = normalize(sp + (vec3(sp.z, 0.0, -sp.x)*(6.2832*boil.x)',
+    '      + vec3(-sp.x*sp.y, 1.0 - sp.y*sp.y, -sp.z*sp.y)*(3.1416*boil.y/bst))*0.0035);',
     '  float umbra = 0.0; float pen = 0.0; vec3 dirRad = vec3(0.5773);',
     '  for(int i=0;i<8;i++){',
     '    vec3 f = normalize(uCharges[i].xyz);',
     '    float aw = abs(uCharges[i].w);',
-    '    float d = acos(clamp(dot(sp, f), -1.0, 1.0));',
+    // FIX manchas abruptas (diagnóstico pós-LOOP-7): a escuridão da
+    // umbra não escalava com a vida da carga — só o raio. Com o piso
+    // 0.03 do updateActiveRegions, a mancha "morta" seguia 100% escura
+    // e TELEPORTAVA ~57° em 1 frame no renascimento (pop a cada
+    // ~40-60s a 60fps). lifeK esmaece a zero antes do teleporte, como
+    // as proeminências já fazem com env; o piso 0.03 vira só guarda
+    // numérica do campo.
+    '    float lifeK = smoothstep(0.04, 0.30, aw);',
+    '    float d = acos(clamp(dot(spW, f), -1.0, 1.0));',
     // assimetria física do par (lei de Hale na prática): o LÍDER (índice
     // par) é grande e coeso; o SEGUIDOR (ímpar) é menor e fragmentado —
     // pares reais nunca são dois olhos gêmeos
     '    float isFoll = mod(float(i), 2.0);',
     // contorno irregular: umbra real não é um círculo perfeito
-    '    d *= 1.0 + mix(0.18, 0.38, isFoll)*snoise(sp*24.0 + f*9.0)',
-    '           + mix(0.07, 0.16, isFoll)*snoise(sp*60.0 - f*4.0);',
+    '    d *= 1.0 + mix(0.18, 0.38, isFoll)*snoise(spW*24.0 + f*9.0)',
+    '           + mix(0.07, 0.16, isFoll)*snoise(spW*60.0 - f*4.0);',
     // ESCALA OBSERVADA (ref-07 GONG full-disk): umbras reais têm
     // 3.5-60 Mm de diâmetro (0.005-0.086 R). Antes chegava a 0.18 R —
     // uma ordem de grandeza acima de qualquer mancha já registrada
     '    float r = (0.016 + 0.014*aw) * (1.0 - 0.45*isFoll);',
-    '    float ui = 1.0 - smoothstep(r*0.55, r, d);',
-    '    float pi = clamp((1.0 - smoothstep(r, r*2.3, d)) - ui, 0.0, 1.0);',
+    '    float ui0 = 1.0 - smoothstep(r*0.55, r, d);',
+    '    float ui = ui0 * lifeK;',
+    '    float pi = clamp((1.0 - smoothstep(r, r*2.3, d)) - ui0, 0.0, 1.0) * lifeK;',
     '    umbra = max(umbra, ui);',
     '    if (pi > pen){',
     '      pen = pi;',

@@ -721,7 +721,10 @@ function init(){
       }
       ps.lead.w =  ps.baseQ * Math.max(env, 0.03);
       ps.foll.w = -ps.baseQ * 0.85 * Math.max(env, 0.03);
-      if (regDt > 0){ driftCharge(ps.lead, regDt); driftCharge(ps.foll, regDt); }
+      // MACRO_SLOW: a advecção do sim desacelera junto (SIM_DT) — as
+      // cargas derivam na mesma escala para as manchas não descolarem
+      // da plage (família do bug 4 da auditoria de movimento)
+      if (regDt > 0){ driftCharge(ps.lead, regDt*MACRO_SLOW); driftCharge(ps.foll, regDt*MACRO_SLOW); }
     }
   }
   updateActiveRegions(0);
@@ -832,9 +835,11 @@ function init(){
     // larga escala: convecção (sim) + turbulência com distorção de domínio
     '  float sim = texture2D(uSimTex, vUv).r;',
     '  vec3 q = sp * 2.6;',
-    '  vec2 w = vec2(fbm(q + vec3(0.0, 0.0, t*0.045)), fbm(q + vec3(5.2, 1.3, -t*0.05)));',
+    // fases ×0.15 (MACRO_SLOW): a turbulência de larga escala morfa em
+    // dezenas de segundos, não em segundos — era 0.045/0.05/0.06
+    '  vec2 w = vec2(fbm(q + vec3(0.0, 0.0, t*0.00675)), fbm(q + vec3(5.2, 1.3, -t*0.0075)));',
     '  vec3 rq = q + 1.7*vec3(w.x, w.y, (w.x+w.y)*0.5);',
-    '  float turb = fbm(rq*1.7 + vec3(0.0, 0.0, t*0.06))*0.5+0.5;',
+    '  float turb = fbm(rq*1.7 + vec3(0.0, 0.0, t*0.009))*0.5+0.5;',
     '  float heatLS = sim*0.60 + turb*0.40;',
     '  heatLS = pow(max(heatLS, 0.0), 1.75) + 0.05;',
     // rede de supergranulação: células ~30Mm; as BORDAS (F2-F1 pequeno)
@@ -3029,7 +3034,16 @@ function init(){
   var simAccum = 0;
   var chromoAccum = 0;
   var SIM_STEP_INTERVAL = TP.simStep;
-  var SIM_DT = 0.6;
+  // MACRO_SLOW (bug report do dono pós-LOOP-7): a macro-evolução — a
+  // FORMA do campo de filamentos (fluxo advectado, canal G) e a
+  // turbulência de larga escala — reorganizava-se em ~1-2s, uma
+  // "gelatina" em frequência própria destoando da rotação majestosa
+  // (filamentos reais vivem dias). 0.15 = sweep perceptual A/B/C:
+  // forma estável em ~4s, deriva/cisalhamento em ~15s, reorganização
+  // em ~30s. A vida FINA (fervura, fibrilas, plage, espículas,
+  // flares, breathing) NÃO é escalada — segue no ritmo atual.
+  var MACRO_SLOW = 0.15;
+  var SIM_DT = 0.6*MACRO_SLOW;
   var ROT_SPEED = 0.042;
 
   function flareEnvelope(ft){

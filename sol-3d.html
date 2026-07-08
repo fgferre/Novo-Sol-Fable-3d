@@ -652,15 +652,22 @@ function init(){
       lat = ps.hemi * (0.24 + Math.random()*0.30);
       lon = Math.random()*Math.PI*2;
       lead = sphDir(lon, lat);
-      var minAng = Math.PI;
+      var minAng = Math.PI, minLon = Math.PI;
       for (var j = 0; j < pairStates.length; j++){
         var other = pairStates[j];
         if (other === ps || !other.lead) continue;
         var od = new THREE.Vector3(other.lead.x, other.lead.y, other.lead.z);
         if (od.lengthSq() < 1e-6) continue;
         minAng = Math.min(minAng, lead.angleTo(od.normalize()));
+        // separação LONGITUDINAL mínima entre pares vivos (envelope
+        // GONG 2012-2026): sem ela os pares sorteavam no mesmo lado e a
+        // teia de linhas neutras — e os filamentos — aglomerava num
+        // hemisfério; fallback após 24 tentativas = comportamento antigo
+        var dl = Math.abs(lon - Math.atan2(od.z, od.x));
+        dl = dl % (Math.PI*2); if (dl > Math.PI) dl = Math.PI*2 - dl;
+        minLon = Math.min(minLon, dl);
       }
-      if (minAng > 0.55) break;
+      if (minAng > 0.55 && minLon >= 1.2) break;
     }
     // lei de Joy: o par é inclinado — o seguidor fica mais perto do polo;
     // separação maior que o raio das manchas (pares reais não se tocam)
@@ -874,22 +881,29 @@ function init(){
     '  float nl = abs(brEv) / (abs(brEv) + gradM*1.1 + 0.01);',
     // filamentos reais são CANAIS largos e difusos (ref-02/03), não
     // traços de caneta: máscaras mais largas e rampa mais longa
-    '  float filW1 = 0.13*(0.55 + 0.9*(fbmLight(sp*3.2 + vec3(9.1, 2.2, 0.0))*0.5+0.5));',
-    '  float filW3 = 0.21*(0.50 + 0.9*(fbmLight(sp*2.1 + vec3(5.5, 0.9, 2.8))*0.5+0.5));',
+    // Calibração contra envelope GONG (16 imagens reais 2012-2026, ver
+    // docs/audit-motion.md): canais reais são FINOS (0.005-0.012R),
+    // esparsos (8-15/disco, <1% de área) e independentes — larguras
+    // 0.13/0.21→0.038/0.058, rampas mais curtas, gates mais altos,
+    // filStr com teto menor (corta o colar colado à plage) e ganho
+    // 1.7→2.1 para o núcleo fino continuar legível. A FONTE não muda:
+    // canais seguem nascendo só nas linhas neutras do fluxo evoluído.
+    '  float filW1 = 0.038*(0.55 + 0.9*(fbmLight(sp*3.2 + vec3(9.1, 2.2, 0.0))*0.5+0.5));',
+    '  float filW3 = 0.058*(0.50 + 0.9*(fbmLight(sp*2.1 + vec3(5.5, 0.9, 2.8))*0.5+0.5));',
     '  float nlw = nl * (0.80 + 0.40*(fbmLight(sp*4.5 + vec3(7.7, 4.1, 1.9))*0.5+0.5));',
-    '  float rib1 = 1.0 - smoothstep(filW1*0.10, filW1*1.6, nlw);',
-    '  float rib3 = 1.0 - smoothstep(filW3*0.10, filW3*1.6, nlw);',
-    '  float filGate1 = smoothstep(0.06, 0.36, fbm(sp*0.70 + vec3(3.3, 7.7, 0.5)));',
-    '  float filGate3 = smoothstep(0.16, 0.42, fbm(sp*0.60 + vec3(6.1, 3.9, 8.2)));',
+    '  float rib1 = 1.0 - smoothstep(filW1*0.10, filW1*1.15, nlw);',
+    '  float rib3 = 1.0 - smoothstep(filW3*0.10, filW3*1.15, nlw);',
+    '  float filGate1 = smoothstep(0.23, 0.48, fbm(sp*0.70 + vec3(3.3, 7.7, 0.5)));',
+    '  float filGate3 = smoothstep(0.36, 0.58, fbm(sp*0.60 + vec3(6.1, 3.9, 8.2)));',
     // piso de gradiente mais baixo: filamentos QUIESCENTES longos vivem
     // em linhas neutras de campo FRACO (refs 02/03) — o piso alto cortava
     // o canal em fragmentos curtos ("ameba" em vez de serpente)
-    '  float filStr = smoothstep(0.02, 0.07, gradM) * (1.0 - smoothstep(1.6, 2.8, gradM));',
+    '  float filStr = smoothstep(0.012, 0.05, gradM) * (1.0 - smoothstep(0.5, 1.2, gradM));',
     '  float fil = max(rib1*filGate1, rib3*filGate3) * filStr;',
     // ganho: as máscaras multiplicadas raramente chegam a 1 — recupera a
     // profundidade visível dos filamentos (posição continua vindo do Br).
     // Ganho menor que antes: 2.4 saturava o clamp e binarizava a borda
-    '  fil = clamp(fil*1.7, 0.0, 1.0);',
+    '  fil = clamp(fil*2.1, 0.0, 1.0);',
     // plage: concentração forte do fluxo EVOLUÍDO
     '  float plage = smoothstep(0.26, 0.55, abs(brEv));',
     // plage real é MOSQUEADA: flocos brilhantes seguindo a rede, não um

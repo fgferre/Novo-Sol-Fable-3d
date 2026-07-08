@@ -212,6 +212,38 @@ O que separa 7.9 de 8.5+ ficou fora da missão (pendências do PROMPT):
 morfologia de flare ref-08 (fitas+arcada), movimento interno das
 proeminências, kernel LIC físico, Worley advectada.
 
+## Pós-LOOP-7 — fixes por bug report do dono (2026-07-07/08)
+
+1. **Manchas abruptas** (PR #22): a escuridão da umbra não escalava
+   com a vida da carga — teleportava ~57° em 1 frame 100% escura.
+   lifeK = smoothstep(0.04, 0.30, aw) + umbra avaliada no domínio
+   warpado da fervura (spW). Nota 8.0.
+2. **Macro-evolução "gelatina"** (PR #23): filamentos reorganizavam em
+   ~1-2s. MACRO_SLOW = 0.15 (SIM_DT, driftCharge, fases da turbulência
+   de larga escala): forma estável em 4s, deriva em 15s, reorganização
+   em 30s. Vida fina não escalada.
+3. **Via Láctea cinematográfica** (PR #23): véu mwNeb reescrito com
+   campos de matiz independentes (bojo âmbar, H-alfa vermelho, bolsões
+   ciano, poeira marrom); ganho 0.16→0.27 (saía do toe do ACES).
+4. **Filamentos fora do envelope real**: pesquisa em 16 imagens GONG
+   H-alfa (2012-2026): canais reais são 8-15/disco, <1% de área,
+   largura 0.005-0.012R, nos dois cinturões; emaranhado denso nunca
+   observado. Calibração medida com o mesmo pipeline: larguras
+   0.13/0.21→0.038/0.058, gates muito mais altos, filStr
+   0.012-0.05/0.5-1.2, ganho 2.1, placePair com separação longitudinal
+   mínima 1.2 rad. Resultado: 5-13 canais/face, cobertura mediana
+   ~0.77%, sem flicker, gates 9/9 ×3 (gate H do analyze.py
+   recalibrado: grid 1px, span>=60, área>=150 — o critério antigo só
+   detectava o emaranhado).
+
+**Resíduos conhecidos (próximo loop de filamentos, se desejado):**
+(a) com n>=10 a dominância hemisférica por face fica 0.90-1.00 (alvo
+GONG <=0.8) — canais grudam no cinturão das ARs da face; (b) complexo
+de loops recorrente ~0.3R borderline trança, cobertura transiente até
+2.03%; (c) layout macro quase idêntico entre reloads (teia de linhas
+neutras determinística — só os pares são sorteados): seed por carga
+nos fbm dos gates resolveria.
+
 ## Métrica de progresso
 
 Re-rodar o M2 (mesmo protocolo: 12+ frames rAF-consecutivos,

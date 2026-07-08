@@ -133,12 +133,22 @@ results.append(('G tom do sol calmo (sem umbra): spread em [0.08,0.36]',
 # span grande e baixo preenchimento de bbox; manchas são compactas) ----------
 from collections import deque
 gw = gh = len(Lg)
-thrF = 0.84*medL
-maskF = [[Lg[iy][ix] < thrF for ix in range(gw)] for iy in range(gh)]
-seenF = [[False]*gw for _ in range(gh)]
+# H recalibrado (envelope GONG 2012-2026, calibração dos filamentos):
+# canais reais são FINOS (0.005-0.012R ~ 2-4px neste enquadramento) — o
+# grid de passo 3 quebrava a conectividade e a área mínima de 300
+# células só era atingível pelo emaranhado antigo. Grid 1px só para
+# este gate; espessura ~3px + span >= 60px (~0.17R) + fill baixo =
+# canal escuro alongado real.
+LgF = center_grid(im, 300, 1)
+gwF = ghF = len(LgF)
+flatF = sorted(v for row in LgF for v in row)
+medF = flatF[len(flatF)//2]
+thrF = 0.84*medF
+maskF = [[LgF[iy][ix] < thrF for ix in range(gwF)] for iy in range(ghF)]
+seenF = [[False]*gwF for _ in range(ghF)]
 filaments = 0
-for iy in range(gh):
-    for ix in range(gw):
+for iy in range(ghF):
+    for ix in range(gwF):
         if maskF[iy][ix] and not seenF[iy][ix]:
             q = deque([(ix, iy)]); seenF[iy][ix] = True
             area = 0; mnx = mxx = ix; mny = mxy = iy
@@ -148,10 +158,10 @@ for iy in range(gh):
                 mny = min(mny, cy); mxy = max(mxy, cy)
                 for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                     nx, ny = cx+dx, cy+dy
-                    if 0 <= nx < gw and 0 <= ny < gh and maskF[ny][nx] and not seenF[ny][nx]:
+                    if 0 <= nx < gwF and 0 <= ny < ghF and maskF[ny][nx] and not seenF[ny][nx]:
                         seenF[ny][nx] = True; q.append((nx, ny))
             bw, bh = mxx-mnx+1, mxy-mny+1
-            if max(bw, bh) >= 45 and area >= 300 and area/(bw*bh) <= 0.45:
+            if max(bw, bh) >= 60 and area >= 150 and area/(bw*bh) <= 0.45:
                 filaments += 1
 results.append(('H filamentos: >=1 canal escuro alongado no disco',
                 filaments >= 1, f'{filaments} canais'))

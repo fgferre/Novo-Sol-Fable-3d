@@ -1,3 +1,26 @@
+# WIP nesta branch (não mesclado) — modelo procedural dos filamentos
+
+Os 2 commits desta branch à frente do main (e23e12a + 6e994c9)
+substituem as máscaras estáticas de fBm por um modelo 100% físico:
+cisalhamento (campo ao longo da linha neutra) × maturidade (idade-EMA
+advectada no canal B do sim, com unsharp anti-difusão e quantização
+1/255 para o caminho byte) × seed por carga (layout único por visita).
+Validado: gates 9/9 ×3, layouts diferentes entre reloads (IoU 0.03),
+dominância hemisférica 0.63, sem flicker, física intacta.
+
+**Bloqueio para merge: PERF.** Medição Opus (HEAD vs main, 3 reps,
+SwiftShader): tier low +9.8% (dentro da meta de 10%), tier high
++21.5% (fora). A decimação da idade a ~4Hz já derrubou de +30/+32%
+para cá; o custo restante é cisalhamento+maturidade por texel do bake
+2048² no tier high. Próxima sessão: otimizar o chromo shader (dobrar o
+cálculo de shear, simplificar a amostragem de extensão ±0.04 rad, ou
+mover parte da maturidade para o passe do sim) para trazer o high
+abaixo de 10%, então PR + merge. O main já tem a calibração GONG (PR
+#24), que resolve o bug visual do agrupamento — este modelo é o
+upgrade de fidelidade física por cima dela.
+
+---
+
 # Auditoria de MOVIMENTO (2026-07-06) — sol-3d.html @ 81957ce
 
 Dois auditores paralelos sobre o main pós-merge da camada Sunshine:

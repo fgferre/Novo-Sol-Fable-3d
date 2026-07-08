@@ -421,6 +421,9 @@ function init(){
     // critério de cisalhamento precisa correr na MESMA fase do usado
     // pelo bake da cromosfera (que anima em elapsed, não em tempo do sim)
     uElapsed: { value: 0.0 },
+    uDoAge: { value: 0.0 },
+    uAgeGrow: { value: 0.0 },
+    uAgeDecay: { value: 0.0 },
     uTexel: { value: new THREE.Vector2(1/SIM_W, 1/SIM_H) },
     uChargesSim: { value: null }   // preenchido após buildCharges
   };
@@ -432,6 +435,9 @@ function init(){
     'uniform float uSeed;',
     'uniform float uSeedOff;',
     'uniform float uElapsed;',
+    'uniform float uDoAge;',
+    'uniform float uAgeGrow;',
+    'uniform float uAgeDecay;',
     'uniform vec2 uTexel;',
     'uniform vec4 uChargesSim[10];',
     'varying vec2 vUv;',
@@ -594,8 +600,19 @@ function init(){
     // EMAs contínuas < 1/255 morreriam arredondadas a zero).
     '  float ageBlur = (prevC.b + cR.b + cL.b + cU.b + cD.b) / 5.0;',
     '  float agePrev = clamp(prevC.b + (prevC.b - ageBlur)*0.5, 0.0, 1.0);',
-    '  float isPIL = pilNow(uv);',
-    '  float dAge = isPIL*0.0035 - 0.0011;',
+    // DECIMAÇÃO da idade (perf): pilNow (9 taps + loop de 8 cargas) só
+    // roda a ~4Hz — a idade evolui em dezenas de segundos, amostrar a
+    // 16-26Hz era desperdício (QA mediu +12.8%/frame; decimado cai a
+    // ~1/5). Advecção+nitidez continuam TODO passo (baratas: os taps já
+    // estão carregados). Taxas uAgeGrow/uAgeDecay vêm do JS definidas
+    // POR SEGUNDO DE ELAPSED e iguais entre tiers — e ~2x mais lentas
+    // que o protótipo (persistência de dezenas de segundos nos
+    // segmentos maduros, pedido do QA de movimento).
+    '  float dAge = 0.0;',
+    '  if (uDoAge > 0.5){',
+    '    float isPIL = pilNow(uv);',
+    '    dAge = isPIL*uAgeGrow - uAgeDecay;',
+    '  }',
     '  float rnd = fract(sin(dot(uv + vec2(fract(uTime*0.71), fract(uTime*0.37)), vec2(12.9898, 78.233)))*43758.5453);',
     '  float nq = dAge*255.0;',
     '  float dq = sign(nq)*(floor(abs(nq)) + step(rnd, fract(abs(nq))))/255.0;',
@@ -621,14 +638,27 @@ function init(){
   }
 
   var simClockTime = 0.0;
+  // idade decimada: pilCrit roda 1 vez a cada AGE_EVERY passos (~4Hz em
+  // qualquer tier), com taxas POR SEGUNDO DE ELAPSED iguais entre tiers
+  // (o QA mediu turnover 2x mais rápido no high que no low quando as
+  // taxas eram por passo) e ~2x mais lentas que o protótipo: segmentos
+  // maduros persistem dezenas de segundos, como no Sol
+  var AGE_EVERY = Math.max(1, Math.round((1/TP.simStep)/4));
+  var AGE_DT = AGE_EVERY * TP.simStep;
+  var simStepCount = 0;
   function stepSimulation(dt){
     simClockTime += dt;
+    simStepCount++;
     var srcRT = simRTs[simIndex];
     var dstRT = simRTs[1-simIndex];
     simUniforms.uPrevState.value = srcRT.texture;
     simUniforms.uDt.value = dt;
     simUniforms.uTime.value = simClockTime;
     simUniforms.uElapsed.value = elapsed;
+    var doAge = (simStepCount % AGE_EVERY === 0);
+    simUniforms.uDoAge.value = doAge ? 1.0 : 0.0;
+    simUniforms.uAgeGrow.value = doAge ? 0.045 * AGE_DT : 0.0;
+    simUniforms.uAgeDecay.value = doAge ? 0.014 * AGE_DT : 0.0;
     renderer.setRenderTarget(dstRT);
     renderer.render(simStepScene, quadCamera);
     simIndex = 1-simIndex;

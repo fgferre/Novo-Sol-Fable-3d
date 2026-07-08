@@ -621,7 +621,20 @@ function init(){
     '}'
   ].join('\n');
 
-  var simStepMaterial = new THREE.ShaderMaterial({ uniforms: simUniforms, vertexShader: quadVertex, fragmentShader: simFragmentShader });
+  // SEED: shader COMPLETO (com pilSeed) — pré-aquecimento da idade no campo
+  // inicial, para o disco ter canais desde o 1º frame. Roda só 2x no init.
+  var simSeedMaterial = new THREE.ShaderMaterial({ uniforms: simUniforms, vertexShader: quadVertex, fragmentShader: simFragmentShader });
+  var simSeedScene = makeFullscreenScene(simSeedMaterial);
+  // HOT (por passo): pilSeed/brUvT REMOVIDOS. O SwiftShader compila o programa
+  // inteiro mesmo com a ramificação uSeed morta em runtime; a expansão inline
+  // de targetBr 9x dentro de pilSeed pesava ~57ms/render @768² em TODO passo
+  // (medido isolado: sim doAge=0 180ms->123ms; ~=main 114ms). Comportamento
+  // idêntico: pilSeed nunca rodava nos passos, e o seed usa simSeedScene.
+  var simHotFragmentShader = simFragmentShader
+    .replace(/float pilSeed\(vec2 uv, float t\)\{[\s\S]*?\n\}/, '')
+    .replace(/float brUvT\(vec2 uv, float t\)\{[\s\S]*?\n\}/, '')
+    .replace('float age0 = 0.85*smoothstep(0.38, 0.68, pilSeed(uv, uTime));', 'float age0 = 0.0;');
+  var simStepMaterial = new THREE.ShaderMaterial({ uniforms: simUniforms, vertexShader: quadVertex, fragmentShader: simHotFragmentShader });
   var simStepScene = makeFullscreenScene(simStepMaterial);
 
   // semeia os dois alvos com ruído em força total para não haver "pop-in".
@@ -630,9 +643,9 @@ function init(){
     simUniforms.uSeed.value = 1.0;
     simUniforms.uTime.value = 0.0;
     renderer.setRenderTarget(simRTs[0]);
-    renderer.render(simStepScene, quadCamera);
+    renderer.render(simSeedScene, quadCamera);
     renderer.setRenderTarget(simRTs[1]);
-    renderer.render(simStepScene, quadCamera);
+    renderer.render(simSeedScene, quadCamera);
     renderer.setRenderTarget(null);
     simUniforms.uSeed.value = 0.0;
   }

@@ -55,6 +55,48 @@ contraste das feições escuras (pré-existente). O main já tem a
 calibração GONG (PR #24); este modelo é o upgrade de fidelidade física
 por cima dela.
 
+## LOOP-8 iteração 2 — fidelidade dos filamentos (commit fe3d336)
+
+Medição de fidelidade (8 reloads, segmentação estilo GONG) contra o
+modelo mesclado na iter-1:
+- **Dominância hemisférica: JÁ RESOLVIDA** (mediana 0.57; 0.56 nos 7
+  reloads com n≥10; alvo ≤0.8). Era o resíduo #1 do PROMPT-LOOP-8
+  (dizia 0.90-1.00 a n≥10), mas o seed-por-carga + placePair
+  (minLon≥1.2) já o corrigiram. IoU entre reloads 0.024 (layouts bem
+  distintos), cobertura 0.49% (<1.5%).
+- **Resíduo #1 real = FRAGMENTAÇÃO.** Canais de linha neutra
+  renderizavam como cadeias de contas curtas: comprimento mediano
+  0.042R vs envelope GONG 0.08-0.15R, n=18 (vs 6-15), largura 0.0134R.
+  Os ~4 canais contínuos já atingiam 0.087R (no envelope) — a GEOMETRIA
+  está certa; o render quebrava cada canal.
+
+Causa-raiz (tuning, 14 variantes em cópias debug): filStr — um band-pass
+de gradM — ZERAVA o canal onde o gradiente saía de [0.05,0.38], cortando
+os canais no meio das regiões ativas. Fix (J2, 2 edits): (1) rolloff
+superior do filStr 0.38/0.90→0.48/1.02 (o canal sobrevive ao gradiente
+forte; joelho inferior 0.012/0.05 INTACTO → cobertura não infla); (2)
+smear pass-2 ±4→±6 (stepArc 1.6→2.6) para costurar pinches <15px.
+
+Efeito (k=8): n 18→12 (no alvo 6-15), fragmentos <0.06R −40%, p90
+comprimento +17%, cobertura −17% (sem inflar), largura +13%
+(0.0134→0.0151R, única regressão). Comprimento MEDIANO sobe só +5% —
+teto de shader-tuning (o resto é artefato do segmentador, que corta em
+cada pinch de brilho; ao olho os canais parecem finos/lineares/sem
+emaranhado). QA: gates A-I 9/9 ×2 no arquivo commitado (H filamentos
+3/1 canais), zero pageerror. Perf: whole-frame high J2 ≈ main atual
+(mediana 1638 vs 1692ms — o smear 9→13 taps é fração desprezível do
+frame).
+
+**Resíduos remanescentes (menor prioridade):** complexo de loops ~0.3R
+beirando trança (visto em 3/8 reloads, até 17.6% de cobertura local
+transiente); comprimento mediano dos canais (não alcançável por
+shader-tuning — precisaria de mudança no segmentador OU um modelo de
+canal contínuo por traçado); "respiração" ~6s do contraste
+(pré-existente). Nota de harness: o gate H do analyze.py usa limiar de
+span 60px (~0.163R) ACIMA do envelope GONG (0.15R máx), então
+sub-reporta canais reais dentro do envelope — recalibrar para ~40px
+seria mais fiel.
+
 ---
 
 # Auditoria de MOVIMENTO (2026-07-06) — sol-3d.html @ 81957ce

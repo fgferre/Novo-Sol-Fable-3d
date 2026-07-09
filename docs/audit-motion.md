@@ -61,25 +61,48 @@ sem-máscara 4 canais / 1.30% cobertura → com-máscara 3 canais / 0.40%
 (−1 canal, −0.90pp de contaminação). Gates 9/9 ×2, H passa com canais internos
 reais (3/6), zero pageerror.
 
+## Iteração 4 — continuidade dos canais (NULO, revertido: A/B mesma-cena refuta)
+
+O capstone visual vs GONG (7/10) apontou os canais quebrando em CONTAS/vírgulas
+vs o fio hairline contínuo do GONG (0.1-0.4R). Tuning (sweep de 4 variantes em
+debug-cont.html) recomendou V3 (smear direcional ±6→±8/stepArc 2.6→3.6 + piso
+do fibC 0.55→0.70). MAS a QA rigorosa REFUTOU o ganho: a métrica de continuidade
+(longest-run) tem variância ENORME por reload (0.18↔0.35R por sorteio). Com n=8
+reloads E um baseline MESMA-CENA (as 4 edições revertidas no mesmo seed), o
+shipped (longest 0.230R, close-delta -0.009R) é INDISTINGUÍVEL do baseline
+revertido (0.226R, -0.016R) — iter4 não produz ganho causal de continuidade. O
+"ganho" V0→V3 do debug (0.162→0.231) era ruído CRUZANDO CENAS diferentes (o
+0.231 do V3 montou num único sorteio de 0.309). Mesmíssimo beco do no-op da
+largura (iter2): tuning por comparação cruzada de cenas engana; só o A/B
+mesma-cena (edição on/off no mesmo seed) isola a edição. Revertido.
+
+DESCOBERTA (do A/B rigoroso): o render JÁ atinge continuidade na faixa GONG em
+MÉDIA — longest-run ~0.23R (até 0.35R; GONG 0.1-0.4R) — só que é ESTOCÁSTICO:
+alguns reloads leem beaded, outros um belo fio contínuo meandrando. O "7/10
+quebrado" do capstone julgou sorteios de baixa continuidade. Não há gap de
+continuidade estável e fixável por estes levers; a média já está no envelope.
+
 ## VEREDITO LOOP-9 (resumo honesto)
 
-Os filamentos procedurais JÁ estão no envelope GONG — medido com o termômetro
-corrigido: span mediano 0.081R (env 0.08-0.15R), dominância hemisférica 0.63
-(≤0.8), IoU entre reloads 0.25 (re-semeia por visita), cobertura NO DISCO 0.90%
-(<1.5%). Os "resíduos" da missão eram, em grande parte, ARTEFATOS DE MEDIÇÃO,
-não gaps físicos:
-- #1 (comprimento curto 0.042R): era o segmentador cortando nos pinches do
-  fibC; com segmentação robusta o span está no envelope. Coberto pela iter1.
-- Largura "2-3x gorda": halo de segmentação, não o núcleo (hairline ao olho);
-  filW não move a métrica → não-actionável por shader (iter2 nulo).
-- #3 (trança/cobertura elevada): artefato de limbo/cantos → coberto pela iter3.
-- Dominância hemisférica: já resolvida no LOOP-8; não re-atacada (0.63 confirma).
-- #4 (respiração ~6s): pré-existente, baixa prioridade; é MOVIMENTO, não filamento.
-Entregas VERDES mescladas: iter1 (gate H span 60→40px) e iter3 (máscara de
-disco 0.9R) — ambas HONESTAM o instrumento de QA para futuros loops não
-perseguirem fantasmas. Nenhuma mudança de SHADER se mostrou necessária nem
-benéfica: o modelo físico procedural está fiel ao envelope. Próximo loop, se
-desejado, só reabre com um bug report visual concreto do dono.
+A lição central: os gates numéricos por si davam "pronto", e as comparações de
+tuning CRUZANDO CENAS davam ganhos FALSOS; só o A/B MESMA-CENA (edição on/off no
+mesmo seed) e o juízo visual honesto separam sinal de ruído. Balanço:
+- #2 (gate H sub-reportava): span 60→40px (iter1, MESCLADO — real).
+- #3 (trança/cobertura 2.14%): artefato de limbo/cantos do crop; cobertura real
+  no disco 0.90%. Gate H mascarado ao disco 0.9R (iter3, MESCLADO — real).
+- Largura "2-3x gorda": halo de segmentação, não o núcleo; filW é no-op
+  (iter2, revertido).
+- #1 (continuidade): sob A/B mesma-cena, o smear±8 + piso do fibC é no-op
+  (iter4, revertido). O render já atinge a faixa GONG em média (longest ~0.23R),
+  de forma estocástica.
+- Dominância hemisférica (0.63) e IoU (0.25): já fiéis.
+- #4 (respiração ~6s): pré-existente, é MOVIMENTO — fora do escopo.
+CONCLUSÃO: os filamentos procedurais JÁ são fiéis ao envelope GONG em span,
+largura, esparsidade, distribuição em cinturões E continuidade média — os dois
+"gaps de shader" candidatos (largura, continuidade) NÃO se reproduzem sob A/B
+mesma-cena. Entregas VERDES do loop = as 2 correções de honestidade do
+instrumento de QA (iter1 gate H span, iter3 máscara de disco), que impedem
+futuros loops de perseguir os mesmos fantasmas. O modelo segue 100% físico.
 
 # Modelo procedural dos filamentos — perf resolvida (LOOP-8 iter 1)
 

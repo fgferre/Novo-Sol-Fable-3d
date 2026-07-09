@@ -149,7 +149,16 @@ gwF = ghF = len(LgF)
 flatF = sorted(v for row in LgF for v in row)
 medF = flatF[len(flatF)//2]
 thrF = 0.84*medF
-maskF = [[LgF[iy][ix] < thrF for ix in range(gwF)] for iy in range(ghF)]
+# LOOP-9 iter3: máscara de DISCO INTERNO (0.9R). O crop de 600px tem os 4
+# CANTOS fora do disco (R~369px; canto a 424px) e o anel de escurecimento
+# de limbo (~0.9-1.0R) cai abaixo de 0.84*med — ambos eram contados como
+# "canal", inflando a cobertura (census 2.14% -> 0.90% no disco) e criando
+# um FALSO "complexo de loops" (17-27% de densidade local era limbo+cantos;
+# o interior real fica ~9%, sem trança — 10/10 reloads). Consistente com o
+# gate I, que já mascara o disco. Não afeta o passe (>=1), mas honesta a contagem.
+diskR2 = (0.9*R)**2
+maskF = [[LgF[iy][ix] < thrF and ((ix-gwF//2)**2 + (iy-ghF//2)**2) < diskR2
+          for ix in range(gwF)] for iy in range(ghF)]
 seenF = [[False]*gwF for _ in range(ghF)]
 filaments = 0
 for iy in range(ghF):

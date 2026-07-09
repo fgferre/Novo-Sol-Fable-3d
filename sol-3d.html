@@ -671,7 +671,14 @@ function init(){
     var doAge = (simStepCount % AGE_EVERY === 0);
     simUniforms.uDoAge.value = doAge ? 1.0 : 0.0;
     simUniforms.uAgeGrow.value = doAge ? 0.045 * AGE_DT : 0.0;
-    simUniforms.uAgeDecay.value = doAge ? 0.014 * AGE_DT : 0.0;
+    // LOOP-9 (bug report do dono): decay 0.014→0.024. O 0.014 (2x mais lento
+    // que o protótipo, calibrado p/ anti-flicker) deixava a idade decair
+    // devagar demais: ao longo de MINUTOS os segmentos de linha neutra se
+    // ACUMULAVAM (marcas de filamento +43% em 400s no tier mid, sem parar) —
+    // fisicamente errado (filamentos reais somem). 0.024 leva a idade a um
+    // REGIME PERMANENTE (platô ~igual ao estado inicial) sem reintroduzir
+    // flicker (jitter frame-a-frame = baseline). Ainda < protótipo (~0.028).
+    simUniforms.uAgeDecay.value = doAge ? 0.024 * AGE_DT : 0.0;
     renderer.setRenderTarget(dstRT);
     renderer.render(simStepScene, quadCamera);
     simIndex = 1-simIndex;

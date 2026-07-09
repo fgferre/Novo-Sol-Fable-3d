@@ -31,6 +31,56 @@ do baseline: H 1→5 (gatesA1), 1→7 (gatesA2); layouts frescos H=7. Gates
 (passa com folga); o ganho é medir o núcleo GONG com honestidade,
 destravando as próximas iterações de fidelidade do shader.
 
+## Iteração 2 — afinar largura dos canais (NULO, revertido: f6191f1→a252244)
+
+O census apontou largura mediana 0.0172R vs GONG 0.005-0.012R como o "gap
+robusto". Tuning (sweep s∈{1.0,0.7,0.55,0.45} em debug-width.html) recomendou
+s=0.70 (filW1/filW3 0.038/0.058→0.0266/0.0406). A QA de 4 reloads REFUTOU: a
+cobertura ficou PLANA (2.14% vs baseline 2.19%, dentro do ruído de reseed),
+span/largura/n todos planos, e o A/B visual sem afinamento perceptível (o
+sweep de tuning rodara só 2 reloads e pegara ruído de reseed). Causa-raiz: a
+métrica de largura E a cobertura são limitadas pelo MESMO piso de segmentação
+— o halo escuro anti-serrilhado (~2-3px) em volta do canal não afina com filW.
+O "gap de largura" é o HALO, não o núcleo do canal, que o juiz visual já lê
+como hairline. filW é a alavanca errada. Revertido: não mesclar um no-op que
+alega ganho. Gates 9/9 (2/3 amostras, flake do gate A) confirmaram inocuidade.
+
+## Iteração 3 — resíduo #3 "trança" é ARTEFATO; gate H mascarado (commit def6fa4)
+
+Caracterização do resíduo #3 (10 reloads, split limbo/interior): NÃO existe
+trança. A "cobertura elevada 2.14%" e o "17-27% de densidade local" eram
+contaminação de LIMBO + CANTOS do crop de 600px do gate H — os 4 cantos ficam
+fora do disco (R≈369px; canto a 424px) e o anel de escurecimento de limbo
+(~0.9-1.0R) cai abaixo de 0.84·med, ambos contados como "canal". No disco
+interno: cobertura 0.90% (já <1.5%), densidade local ~9% (pico único 18.3% =
+uma MANCHA, não trança), 0 tranças em 10/10 reloads; os "blobs gordos" eram 4
+cantos fixos do crop + manchas ocasionais, não filamentos. Fix (QA-tooling,
+como iter1): pixel elegível = dist² < (0.9R)² — exclui cantos + anel de limbo,
+mantém o interior; consistente com o gate I. A/B na mesma element-limb.png:
+sem-máscara 4 canais / 1.30% cobertura → com-máscara 3 canais / 0.40%
+(−1 canal, −0.90pp de contaminação). Gates 9/9 ×2, H passa com canais internos
+reais (3/6), zero pageerror.
+
+## VEREDITO LOOP-9 (resumo honesto)
+
+Os filamentos procedurais JÁ estão no envelope GONG — medido com o termômetro
+corrigido: span mediano 0.081R (env 0.08-0.15R), dominância hemisférica 0.63
+(≤0.8), IoU entre reloads 0.25 (re-semeia por visita), cobertura NO DISCO 0.90%
+(<1.5%). Os "resíduos" da missão eram, em grande parte, ARTEFATOS DE MEDIÇÃO,
+não gaps físicos:
+- #1 (comprimento curto 0.042R): era o segmentador cortando nos pinches do
+  fibC; com segmentação robusta o span está no envelope. Coberto pela iter1.
+- Largura "2-3x gorda": halo de segmentação, não o núcleo (hairline ao olho);
+  filW não move a métrica → não-actionável por shader (iter2 nulo).
+- #3 (trança/cobertura elevada): artefato de limbo/cantos → coberto pela iter3.
+- Dominância hemisférica: já resolvida no LOOP-8; não re-atacada (0.63 confirma).
+- #4 (respiração ~6s): pré-existente, baixa prioridade; é MOVIMENTO, não filamento.
+Entregas VERDES mescladas: iter1 (gate H span 60→40px) e iter3 (máscara de
+disco 0.9R) — ambas HONESTAM o instrumento de QA para futuros loops não
+perseguirem fantasmas. Nenhuma mudança de SHADER se mostrou necessária nem
+benéfica: o modelo físico procedural está fiel ao envelope. Próximo loop, se
+desejado, só reabre com um bug report visual concreto do dono.
+
 # Modelo procedural dos filamentos — perf resolvida (LOOP-8 iter 1)
 
 Os commits desta branch substituem as máscaras estáticas de fBm por um

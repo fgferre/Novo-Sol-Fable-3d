@@ -1,3 +1,36 @@
+# LOOP-9 — resíduos de fidelidade dos filamentos (base main @ 2323f28)
+
+Baseline medido ANTES de mexer (2 subagentes paralelos sobre o main
+commitado): gates A-I 9/9 ×2, controles 6/6, zero pageerror. Census de
+filamentos (4 reloads, segmentação estilo GONG, settle 8s, rotação
+congelada, R=369px no enquadramento element-limb):
+- SPAN mediano **0.081R** (p90 0.163R) — JÁ no envelope GONG 0.08-0.15R.
+- LARGURA mediana **0.0172R** — 1.4-3.4× ACIMA do GONG (0.005-0.012R). É
+  o resíduo geométrico ROBUSTO (aparece em todas as faixas de span).
+- Histograma de span (canais, 4 frames): [20,40)=52 [40,60)=12
+  [60,80)=1 [80,120)=8. O gate H a 60px só via os 8 blobs quadrados
+  gordos (largura 0.10R, fill 0.44, aspecto 1.0) — os canais finos reais
+  vivem em [40,60) e passavam despercebidos.
+- Cobertura 2.19% (inflada pelos blobs gordos ~0.3R = resíduo #3);
+  dominância hemisférica 0.636 (PASS, ≤0.8 — NÃO re-atacar); IoU entre
+  reloads 0.247 (layout re-semeia por visita).
+- **RE-PRIORIZAÇÃO:** o "comprimento mediano curto (0.042R)" do LOOP-8
+  era em grande parte artefato do segmentador (cortava nos pinches de
+  brilho do `fibC` ao longo do canal); com segmentação robusta o span
+  mediano está no envelope. O gap real e robusto é a **LARGURA** (canais
+  gordos demais) → iteração 2.
+
+## Iteração 1 — gate H recalibrado (commit 8133bae)
+
+Ferramenta de QA, não o shader. O `span>=60px` (~0.163R) do `analyze.py`
+sentava no P90 dos canais, ACIMA do núcleo GONG, sub-reportando (H lia 1
+quando havia ~5). Fix: `span>=40px` (~0.11R) + `área>=100` (era 150);
+`fill<=0.45` intacto (rejeita manchas compactas). A/B nos MESMOS pixels
+do baseline: H 1→5 (gatesA1), 1→7 (gatesA2); layouts frescos H=7. Gates
+9/9 ×4 amostras, zero pageerror. O gate segue com regra de passe `>=1`
+(passa com folga); o ganho é medir o núcleo GONG com honestidade,
+destravando as próximas iterações de fidelidade do shader.
+
 # Modelo procedural dos filamentos — perf resolvida (LOOP-8 iter 1)
 
 Os commits desta branch substituem as máscaras estáticas de fBm por um

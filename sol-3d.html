@@ -1063,7 +1063,7 @@ function init(){
     // piso de gradiente mais baixo: filamentos QUIESCENTES longos vivem
     // em linhas neutras de campo FRACO (refs 02/03) — o piso alto cortava
     // o canal em fragmentos curtos ("ameba" em vez de serpente)
-    '  float filStr = smoothstep(0.012, 0.05, gradM) * (1.0 - smoothstep(0.38, 0.90, gradM));',
+    '  float filStr = smoothstep(0.012, 0.05, gradM) * (1.0 - smoothstep(0.48, 1.02, gradM));',
     // gate de cisalhamento SELETIVO: só onde o campo corre quase ao
     // longo da linha neutra (align < ~0.45) nasce canal — arcadas que
     // cruzam a PIL e a maior parte do tapete aleatório ficam de fora
@@ -1159,12 +1159,13 @@ function init(){
     '  vec3 dir = (BtL > 1e-4)',
     '    ? (Bt*cos(wig) + cross(sp, Bt)*sin(wig)) / BtL',
     '    : vec3(0.5773);',
-    // varredura longa: ±4 passos de ~3 texels ao longo do fluxo
-    '  float stepArc = uTexel.x * 6.28318530718 * 1.6;',
+    // varredura longa: ±6 passos ao longo do fluxo — alcance maior para
+    // costurar os pinches (<15px) que fragmentavam o canal em contas
+    '  float stepArc = uTexel.x * 6.28318530718 * 2.6;',
     '  vec4 acc = vec4(0.0); float wsum = 0.0;',
-    '  for(int i=-4;i<=4;i++){',
+    '  for(int i=-6;i<=6;i++){',
     '    vec3 q = normalize(sp + dir*(float(i)*stepArc));',
-    '    float w = 1.0 - abs(float(i))/5.2;',
+    '    float w = 1.0 - abs(float(i))/7.5;',
     '    acc += texture2D(uSrc, sphToUv(q)) * w;',
     '    wsum += w;',
     '  }',

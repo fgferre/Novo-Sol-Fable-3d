@@ -1038,8 +1038,14 @@ function init(){
     // filStr com teto menor (corta o colar colado à plage) e ganho
     // 1.7→2.1 para o núcleo fino continuar legível. A FONTE não muda:
     // canais seguem nascendo só nas linhas neutras do fluxo evoluído.
-    '  float filW1 = 0.038*(0.55 + 0.9*(fbmLight(sp*3.2 + vec3(9.1, 2.2, 0.0))*0.5+0.5));',
-    '  float filW3 = 0.058*(0.50 + 0.9*(fbmLight(sp*2.1 + vec3(5.5, 0.9, 2.8))*0.5+0.5));',
+    // LOOP-9 iter2: coeficientes 0.038/0.058 → 0.0266/0.0406 (s=0.70). O
+    // census media largura ~0.017R (1.4-3.4x o GONG 0.005-0.012R), mas a
+    // métrica de largura é LIMITADA pelo piso do segmentador (o halo escuro
+    // ~2-3px não afina); a COBERTURA (−40%: 2.2%→~1.5%) é o proxy confiável
+    // do afinamento. s=0.70 mira o topo do envelope (0.012R no modelo linear)
+    // e mantém n de canais (4.5) e span (0.084R) acima dos pisos (sem fragmentar).
+    '  float filW1 = 0.0266*(0.55 + 0.9*(fbmLight(sp*3.2 + vec3(9.1, 2.2, 0.0))*0.5+0.5));',
+    '  float filW3 = 0.0406*(0.50 + 0.9*(fbmLight(sp*2.1 + vec3(5.5, 0.9, 2.8))*0.5+0.5));',
     '  float nlw = nl * (0.80 + 0.40*(fbmLight(sp*4.5 + vec3(7.7, 4.1, 1.9))*0.5+0.5));',
     '  float rib1 = 1.0 - smoothstep(filW1*0.10, filW1*1.15, nlw);',
     '  float rib3 = 1.0 - smoothstep(filW3*0.10, filW3*1.15, nlw);',

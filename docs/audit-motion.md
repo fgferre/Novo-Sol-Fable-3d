@@ -1,23 +1,59 @@
-# WIP nesta branch (não mesclado) — modelo procedural dos filamentos
+# Modelo procedural dos filamentos — perf resolvida (LOOP-8 iter 1)
 
-Os 2 commits desta branch à frente do main (e23e12a + 6e994c9)
-substituem as máscaras estáticas de fBm por um modelo 100% físico:
-cisalhamento (campo ao longo da linha neutra) × maturidade (idade-EMA
-advectada no canal B do sim, com unsharp anti-difusão e quantização
-1/255 para o caminho byte) × seed por carga (layout único por visita).
-Validado: gates 9/9 ×3, layouts diferentes entre reloads (IoU 0.03),
-dominância hemisférica 0.63, sem flicker, física intacta.
+Os commits desta branch substituem as máscaras estáticas de fBm por um
+modelo 100% físico: cisalhamento (campo ao longo da linha neutra) ×
+maturidade (idade-EMA advectada no canal B do sim, com unsharp
+anti-difusão e quantização 1/255 para o caminho byte) × seed por carga
+(layout único por visita). Validado: gates A-I 9/9, layouts diferentes
+entre reloads (IoU 0.15), sem flicker, física intacta, controles 6/6,
+neutralidade cinema, zero pageerror.
 
-**Bloqueio para merge: PERF.** Medição Opus (HEAD vs main, 3 reps,
-SwiftShader): tier low +9.8% (dentro da meta de 10%), tier high
-+21.5% (fora). A decimação da idade a ~4Hz já derrubou de +30/+32%
-para cá; o custo restante é cisalhamento+maturidade por texel do bake
-2048² no tier high. Próxima sessão: otimizar o chromo shader (dobrar o
-cálculo de shear, simplificar a amostragem de extensão ±0.04 rad, ou
-mover parte da maturidade para o passe do sim) para trazer o high
-abaixo de 10%, então PR + merge. O main já tem a calibração GONG (PR
-#24), que resolve o bug visual do agrupamento — este modelo é o
-upgrade de fidelidade física por cima dela.
+## LOOP-8 iteração 1 — PERF do tier high (RESOLVIDA, commit acf57c4)
+
+O bloqueio de merge era a regressão de perf no tier high. Medição
+ISOLADA por passe (harness Playwright + hooks GPU-timed com barreira
+readPixels — fenceSync e gl.finish() NÃO bloqueiam nesse ANGLE/
+SwiftShader; ambos davam número falso) REDIAGNOSTICOU a causa,
+contrariando a hipótese do PROMPT-LOOP-8:
+
+- **NÃO era o bake do chromo.** Bake isolado @2048² (ms/render): head
+  1923 ≤ main 2085 — o modelo procedural é MAIS BARATO que as máscaras
+  fBm que substituiu. Cisalhamento + maturidade + amostragem de
+  extensão (atan/asin) não são regressão.
+- **Era o passe do SIM.** Sim isolado @768² doAge=0 (ms/render): main
+  114, head 181 (+67ms/passo, em TODO passo). Bisecção: o custo NÃO é
+  o age-tail (agerev=177) nem o sin() do hash (agehash=187); é a
+  PRESENÇA de pilSeed no shader quente. pilSeed faz inline de targetBr
+  9× e é alcançável pela ramificação uSeed (uniforme, não dobrável em
+  compile-time), então o SwiftShader compila o programa inteiro e
+  penaliza TODA invocação — mesmo pilSeed rodando só no seed. Artefato
+  de renderizador de software (GPU real faria DCE); mas o gate é
+  medido sob SwiftShader.
+
+**Fix (refactor puro, comportamento idêntico):** pilSeed/brUvT vivem
+num material de SEED dedicado (simSeedMaterial, roda 2× no init); o
+material quente por passo usa um shader enxuto com pilSeed/brUvT
+removidos via .replace em runtime (mesmo padrão do ajuste lic7 do
+chromo). pilNow/pilCrit (idade a ~4Hz) seguem no shader quente (+9ms
+de presença, aceitável). Sim isolado: 181→131ms doAge=0.
+
+**Validação:** whole-frame p50 high (3 reps interleaved, mediana
+robusta aos outliers de vários segundos do SwiftShader): main ~1636ms,
+head ~1828 (+11.8%), **fixed ~1719 (+5.1%)** — gate <10% ATINGIDO. QA
+paralela (workflow, 3 subagentes) TODA VERDE: gates A-I 9/9 ×2
+amostras (H filamentos 4/1 canais), controles 6/6, 6 knobs cinema
+neutros, M2 movimento (fervura ~7.0/frame com rotação congelada),
+filamentos presentes com pré-aquecimento intacto, layout muda entre
+reloads (IoU 0.15), zero pageerror. Baseline correto = origin/main
+ATUAL (o +21.5% anterior comparava com um main obsoleto e inflava).
+
+**Resíduos de fidelidade p/ próximas iterações (re-medir vs modelo
+atual):** dominância hemisférica com n≥10 (alvo ≤0.8); complexo de
+loops recorrente ~0.3R beirando trança; comprimento mediano dos canais
+um pouco curto (0.06-0.10R vs 0.08-0.15 GONG); "respiração" ~6s do
+contraste das feições escuras (pré-existente). O main já tem a
+calibração GONG (PR #24); este modelo é o upgrade de fidelidade física
+por cima dela.
 
 ---
 

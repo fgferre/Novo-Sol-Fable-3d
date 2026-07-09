@@ -413,17 +413,6 @@ function init(){
     uDt: { value: 0.0 },
     uTime: { value: 0.0 },
     uSeed: { value: 1.0 },
-    // SEED POR CARGA: offset aleatório somado às coordenadas dos ruídos
-    // do alvo (targetBr/target/potential) — o fluxo evoluído inteiro
-    // (e os canais de filamento que derivam dele) é único por visita
-    uSeedOff: { value: Math.random()*100.0 },
-    // tempo de PAREDE (elapsed): o ruído do campo horizontal usado no
-    // critério de cisalhamento precisa correr na MESMA fase do usado
-    // pelo bake da cromosfera (que anima em elapsed, não em tempo do sim)
-    uElapsed: { value: 0.0 },
-    uDoAge: { value: 0.0 },
-    uAgeGrow: { value: 0.0 },
-    uAgeDecay: { value: 0.0 },
     uTexel: { value: new THREE.Vector2(1/SIM_W, 1/SIM_H) },
     uChargesSim: { value: null }   // preenchido após buildCharges
   };
@@ -433,11 +422,6 @@ function init(){
     'uniform float uDt;',
     'uniform float uTime;',
     'uniform float uSeed;',
-    'uniform float uSeedOff;',
-    'uniform float uElapsed;',
-    'uniform float uDoAge;',
-    'uniform float uAgeGrow;',
-    'uniform float uAgeDecay;',
     'uniform vec2 uTexel;',
     'uniform vec4 uChargesSim[10];',
     'varying vec2 vUv;',
@@ -455,7 +439,7 @@ function init(){
     '    b += uChargesSim[i].w * exp(-dAng*dAng*150.0);',
     '  }',
     '  b = clamp(b*0.7, -1.0, 1.0);',
-    '  float carpet = snoise(p3*7.5 + vec3(uSeedOff*1.7, uSeedOff*0.9, t*0.012 + uSeedOff*2.3));',
+    '  float carpet = snoise(p3*7.5 + vec3(0.0, 0.0, t*0.012));',
     '  carpet = sign(carpet) * smoothstep(0.30, 0.75, abs(carpet));',
     '  return clamp(b + carpet*0.38, -1.0, 1.0);',
     '}',
@@ -463,7 +447,7 @@ function init(){
     '  float lon = uv.x*6.28318530718;',
     '  float lat = (uv.y-0.5)*3.14159265359;',
     '  vec3 p = vec3(cos(lat)*cos(lon), sin(lat), cos(lat)*sin(lon));',
-    '  return fbmLight(p*3.1 + vec3(uSeedOff*0.7, uSeedOff*1.3, t*0.06 + uSeedOff*0.4));',
+    '  return fbmLight(p*3.1 + vec3(0.0,0.0,t*0.06));',
     '}',
     'vec2 curlVel(vec2 uv, float t){',
     '  float e = 0.004;',
@@ -475,71 +459,6 @@ function init(){
     '  float dPdy = (pU-pD)/(2.0*e);',
     '  return vec2(dPdy, -dPdx);',
     '}',
-    // MATURIDADE COM MEMÓRIA (canal B do sim): "é canal de filamento em
-    // formação AGORA?" = linha neutra do fluxo (|Br| pequeno + fluxo
-    // oposto em volta) COM campo horizontal CISALHADO (correndo ao longo
-    // da linha, não cruzando — o mesmo campo cargas+ruído do bake). A
-    // idade é uma média móvel ADVECTADA desse sinal — só PILs cisalhadas
-    // que PERSISTEM dezenas de segundos amadurecem, como no Sol real.
-    'float pilCrit(vec2 uv, float bC, float bR, float bL, float bU, float bD){',
-    '  float lat = (uv.y-0.5)*3.14159265359;',
-    '  float lon = uv.x*6.28318530718;',
-    '  float gx = (bR-bL) / max(cos(lat), 0.2);',
-    '  float gy = (bU-bD);',
-    '  float gm = length(vec2(gx, gy));',
-    '  float nl = abs(bC) / (abs(bC) + gm*1.1 + 0.01);',
-    '  float pil = (1.0 - smoothstep(0.06, 0.18, nl)) * smoothstep(0.008, 0.032, gm) * (1.0 - smoothstep(0.40, 0.90, gm));',
-    '  if (pil < 0.001) return 0.0;',
-    // campo horizontal no ponto: cargas (mesma fórmula do bField do
-    // bake) + ruído do sol calmo na MESMA fase (uElapsed*0.006)
-    '  vec3 p = vec3(cos(lat)*cos(lon), sin(lat), cos(lat)*sin(lon));',
-    '  vec3 Bn = vec3(0.0);',
-    '  for(int i=0;i<8;i++){',
-    '    vec3 d = p - uChargesSim[i].xyz;',
-    '    float r2 = dot(d,d) + 1e-3;',
-    '    Bn += uChargesSim[i].w * d / (r2*sqrt(r2));',
-    '  }',
-    '  Bn += 0.30 * vec3(snoise(p*2.4 + vec3(0.0,0.0,uElapsed*0.006)),',
-    '                    snoise(p*2.4 + vec3(4.2,7.1,uElapsed*0.006)),',
-    '                    snoise(p*2.4 + vec3(9.3,2.8,uElapsed*0.006)));',
-    '  vec3 Bt = Bn - p*dot(Bn, p);',
-    '  vec3 eLon = vec3(-sin(lon), 0.0, cos(lon));',
-    '  vec3 eLat = vec3(-sin(lat)*cos(lon), cos(lat), -sin(lat)*sin(lon));',
-    '  vec3 gv = eLon*gx + eLat*gy;',
-    '  float Btm = length(Bt);',
-    '  float al = abs(dot(Bt, gv)) / max(Btm*gm, 1e-6);',
-    '  float conf = smoothstep(0.008, 0.032, gm) * smoothstep(0.05, 0.18, Btm);',
-    '  float shGate = smoothstep(0.62, 0.88, mix(0.5, 1.0 - al, conf));',
-    '  return pil * shGate;',
-    '}',
-    'float pilNow(vec2 uv){',
-    '  vec2 t3 = uTexel*3.0;',
-    '  vec2 t8 = uTexel*8.0;',
-    '  float bC = texture2D(uPrevState, uv).g*2.0 - 1.0;',
-    '  float bR = texture2D(uPrevState, vec2(fract(uv.x+t3.x), uv.y)).g + texture2D(uPrevState, vec2(fract(uv.x+t8.x), uv.y)).g;',
-    '  float bL = texture2D(uPrevState, vec2(fract(uv.x-t3.x), uv.y)).g + texture2D(uPrevState, vec2(fract(uv.x-t8.x), uv.y)).g;',
-    '  float bU = texture2D(uPrevState, vec2(uv.x, clamp(uv.y+t3.y, 0.0, 1.0))).g + texture2D(uPrevState, vec2(uv.x, clamp(uv.y+t8.y, 0.0, 1.0))).g;',
-    '  float bD = texture2D(uPrevState, vec2(uv.x, clamp(uv.y-t3.y, 0.0, 1.0))).g + texture2D(uPrevState, vec2(uv.x, clamp(uv.y-t8.y, 0.0, 1.0))).g;',
-    '  return pilCrit(uv, bC, bR, bL, bU, bD);',
-    '}',
-    // mesmo critério no campo-ALVO analítico (para o pré-aquecimento do
-    // seed: o disco não pode nascer sem canais)
-    'float brUvT(vec2 uv, float t){',
-    '  float lat = (uv.y-0.5)*3.14159265359;',
-    '  float lon = uv.x*6.28318530718;',
-    '  vec3 p = vec3(cos(lat)*cos(lon), sin(lat), cos(lat)*sin(lon));',
-    '  return 0.5 + 0.5*targetBr(p, t);',
-    '}',
-    'float pilSeed(vec2 uv, float t){',
-    '  vec2 t3 = uTexel*3.0;',
-    '  vec2 t8 = uTexel*8.0;',
-    '  float bC = brUvT(uv, t)*2.0 - 1.0;',
-    '  float bR = brUvT(vec2(fract(uv.x+t3.x), uv.y), t) + brUvT(vec2(fract(uv.x+t8.x), uv.y), t);',
-    '  float bL = brUvT(vec2(fract(uv.x-t3.x), uv.y), t) + brUvT(vec2(fract(uv.x-t8.x), uv.y), t);',
-    '  float bU = brUvT(vec2(uv.x, clamp(uv.y+t3.y, 0.0, 1.0)), t) + brUvT(vec2(uv.x, clamp(uv.y+t8.y, 0.0, 1.0)), t);',
-    '  float bD = brUvT(vec2(uv.x, clamp(uv.y-t3.y, 0.0, 1.0)), t) + brUvT(vec2(uv.x, clamp(uv.y-t8.y, 0.0, 1.0)), t);',
-    '  return pilCrit(uv, bC, bR, bL, bU, bD);',
-    '}',
     'float diffRotDegPerDay(float lat){',
     '  float s = sin(lat); float s2 = s*s;',
     '  return 14.71 - 2.39*s2 - 1.78*s2*s2;',
@@ -549,14 +468,11 @@ function init(){
     '  float lat = (uv.y-0.5)*3.14159265359;',
     '  float lon = uv.x*6.28318530718;',
     '  vec3 p3 = vec3(cos(lat)*cos(lon), sin(lat), cos(lat)*sin(lon));',
-    '  float target = fbm(p3*3.6 + vec3(uSeedOff*1.1, uSeedOff*0.5, uTime*0.05 + uSeedOff*1.9));',
+    '  float target = fbm(p3*3.6 + vec3(0.0,0.0,uTime*0.05));',
     '  target = target*0.5+0.5;',
     '  float tBr = targetBr(p3, uTime);',
     '  if (uSeed > 0.5) {',
-    // PRÉ-AQUECIMENTO da idade: as PILs do campo inicial já nascem
-    // maduras — o disco tem canais desde o primeiro frame
-    '    float age0 = 0.85*smoothstep(0.38, 0.68, pilSeed(uv, uTime));',
-    '    gl_FragColor = vec4(target, 0.5 + 0.5*tBr, age0, 1.0);',
+    '    gl_FragColor = vec4(target, 0.5 + 0.5*tBr, target, 1.0);',
     '    return;',
     '  }',
     // CFL: o passo semi-Lagrangiano só transporta coerentemente se o
@@ -590,51 +506,11 @@ function init(){
     '  float blurB = (prevB + (cR.g*2.0-1.0) + (cL.g*2.0-1.0) + (cU.g*2.0-1.0) + (cD.g*2.0-1.0)) / 5.0;',
     '  float advB = mix(prevB, blurB, 0.06);',
     '  float resB = clamp(mix(advB, tBr, 0.008), -1.0, 1.0);',
-    // idade com memória ADVECTADA: cresce onde a PIL persiste, decai
-    // onde ela sumiu. A reamostragem bilinear sub-texel DIFUNDE a crista
-    // fina a cada passo (a EMA saturava em ~0.5) — a máscara de nitidez
-    // com os taps em cruz já amostrados devolve o que a difusão tirou,
-    // sem criação líquida de idade. Incrementos QUANTIZADOS em degraus
-    // de 1/255 com arredondamento estocástico — a taxa média sobrevive
-    // idêntica tanto no HalfFloat quanto no fallback UnsignedByte (onde
-    // EMAs contínuas < 1/255 morreriam arredondadas a zero).
-    '  float ageBlur = (prevC.b + cR.b + cL.b + cU.b + cD.b) / 5.0;',
-    '  float agePrev = clamp(prevC.b + (prevC.b - ageBlur)*0.5, 0.0, 1.0);',
-    // DECIMAÇÃO da idade (perf): pilNow (9 taps + loop de 8 cargas) só
-    // roda a ~4Hz — a idade evolui em dezenas de segundos, amostrar a
-    // 16-26Hz era desperdício (QA mediu +12.8%/frame; decimado cai a
-    // ~1/5). Advecção+nitidez continuam TODO passo (baratas: os taps já
-    // estão carregados). Taxas uAgeGrow/uAgeDecay vêm do JS definidas
-    // POR SEGUNDO DE ELAPSED e iguais entre tiers — e ~2x mais lentas
-    // que o protótipo (persistência de dezenas de segundos nos
-    // segmentos maduros, pedido do QA de movimento).
-    '  float dAge = 0.0;',
-    '  if (uDoAge > 0.5){',
-    '    float isPIL = pilNow(uv);',
-    '    dAge = isPIL*uAgeGrow - uAgeDecay;',
-    '  }',
-    '  float rnd = fract(sin(dot(uv + vec2(fract(uTime*0.71), fract(uTime*0.37)), vec2(12.9898, 78.233)))*43758.5453);',
-    '  float nq = dAge*255.0;',
-    '  float dq = sign(nq)*(floor(abs(nq)) + step(rnd, fract(abs(nq))))/255.0;',
-    '  float age = clamp(agePrev + dq, 0.0, 1.0);',
-    '  gl_FragColor = vec4(result, 0.5 + 0.5*resB, age, 1.0);',
+    '  gl_FragColor = vec4(result, 0.5 + 0.5*resB, result, 1.0);',
     '}'
   ].join('\n');
 
-  // SEED: shader COMPLETO (com pilSeed) — pré-aquecimento da idade no campo
-  // inicial, para o disco ter canais desde o 1º frame. Roda só 2x no init.
-  var simSeedMaterial = new THREE.ShaderMaterial({ uniforms: simUniforms, vertexShader: quadVertex, fragmentShader: simFragmentShader });
-  var simSeedScene = makeFullscreenScene(simSeedMaterial);
-  // HOT (por passo): pilSeed/brUvT REMOVIDOS. O SwiftShader compila o programa
-  // inteiro mesmo com a ramificação uSeed morta em runtime; a expansão inline
-  // de targetBr 9x dentro de pilSeed pesava ~57ms/render @768² em TODO passo
-  // (medido isolado: sim doAge=0 180ms->123ms; ~=main 114ms). Comportamento
-  // idêntico: pilSeed nunca rodava nos passos, e o seed usa simSeedScene.
-  var simHotFragmentShader = simFragmentShader
-    .replace(/float pilSeed\(vec2 uv, float t\)\{[\s\S]*?\n\}/, '')
-    .replace(/float brUvT\(vec2 uv, float t\)\{[\s\S]*?\n\}/, '')
-    .replace('float age0 = 0.85*smoothstep(0.38, 0.68, pilSeed(uv, uTime));', 'float age0 = 0.0;');
-  var simStepMaterial = new THREE.ShaderMaterial({ uniforms: simUniforms, vertexShader: quadVertex, fragmentShader: simHotFragmentShader });
+  var simStepMaterial = new THREE.ShaderMaterial({ uniforms: simUniforms, vertexShader: quadVertex, fragmentShader: simFragmentShader });
   var simStepScene = makeFullscreenScene(simStepMaterial);
 
   // semeia os dois alvos com ruído em força total para não haver "pop-in".
@@ -643,35 +519,21 @@ function init(){
     simUniforms.uSeed.value = 1.0;
     simUniforms.uTime.value = 0.0;
     renderer.setRenderTarget(simRTs[0]);
-    renderer.render(simSeedScene, quadCamera);
+    renderer.render(simStepScene, quadCamera);
     renderer.setRenderTarget(simRTs[1]);
-    renderer.render(simSeedScene, quadCamera);
+    renderer.render(simStepScene, quadCamera);
     renderer.setRenderTarget(null);
     simUniforms.uSeed.value = 0.0;
   }
 
   var simClockTime = 0.0;
-  // idade decimada: pilCrit roda 1 vez a cada AGE_EVERY passos (~4Hz em
-  // qualquer tier), com taxas POR SEGUNDO DE ELAPSED iguais entre tiers
-  // (o QA mediu turnover 2x mais rápido no high que no low quando as
-  // taxas eram por passo) e ~2x mais lentas que o protótipo: segmentos
-  // maduros persistem dezenas de segundos, como no Sol
-  var AGE_EVERY = Math.max(1, Math.round((1/TP.simStep)/4));
-  var AGE_DT = AGE_EVERY * TP.simStep;
-  var simStepCount = 0;
   function stepSimulation(dt){
     simClockTime += dt;
-    simStepCount++;
     var srcRT = simRTs[simIndex];
     var dstRT = simRTs[1-simIndex];
     simUniforms.uPrevState.value = srcRT.texture;
     simUniforms.uDt.value = dt;
     simUniforms.uTime.value = simClockTime;
-    simUniforms.uElapsed.value = elapsed;
-    var doAge = (simStepCount % AGE_EVERY === 0);
-    simUniforms.uDoAge.value = doAge ? 1.0 : 0.0;
-    simUniforms.uAgeGrow.value = doAge ? 0.045 * AGE_DT : 0.0;
-    simUniforms.uAgeDecay.value = doAge ? 0.014 * AGE_DT : 0.0;
     renderer.setRenderTarget(dstRT);
     renderer.render(simStepScene, quadCamera);
     simIndex = 1-simIndex;
@@ -1001,19 +863,6 @@ function init(){
     '                   snoise(sp*2.4 + vec3(4.2,7.1,t*0.006)),',
     '                   snoise(sp*2.4 + vec3(9.3,2.8,t*0.006)));',
     '  vec3 gradEv = sftGrad(vUv);',
-    // CISALHAMENTO (assinatura real do canal de filamento): o campo
-    // horizontal — SEM o termo do próprio gradiente, senão auto-alinha —
-    // deve correr AO LONGO da linha neutra (⊥ ao gradiente do fluxo).
-    // Onde o campo CRUZA a linha é arcada jovem, sem filamento. Onde o
-    // gradiente ou o campo tangencial são fracos demais para definir
-    // direção, o termo fica NEUTRO (não suprime nem garante).
-    '  vec3 BtS = B - sp*dot(B, sp);',
-    '  vec3 gT = gradEv - sp*dot(gradEv, sp);',
-    '  float gradM = length(gT);',
-    '  float BtSm = length(BtS);',
-    '  float alignPIL = abs(dot(BtS, gT)) / max(BtSm*gradM, 1e-6);',
-    '  float shearConf = smoothstep(0.012, 0.05, gradM) * smoothstep(0.05, 0.18, BtSm);',
-    '  float shear = mix(0.62, 1.0 - alignPIL, shearConf);',
     '  B += gradEv * 7.0;',
     '  float Br = dot(B, sp);',
     '  float Bmag = length(B) + 1e-5;',
@@ -1026,6 +875,7 @@ function init(){
     '    + (texture2D(uSimTex, vec2(fract(vUv.x - uSimTexel.x*2.0), vUv.y)).g*2.0 - 1.0)',
     '    + (texture2D(uSimTex, vec2(vUv.x, clamp(vUv.y + uSimTexel.y*2.0, 0.0, 1.0))).g*2.0 - 1.0)',
     '    + (texture2D(uSimTex, vec2(vUv.x, clamp(vUv.y - uSimTexel.y*2.0, 0.0, 1.0))).g*2.0 - 1.0)) / 5.0;',
+    '  float gradM = length(gradEv);',
     // filamentos: linha de INVERSÃO do fluxo transportado (|Br|~0 com
     // fluxo oposto em volta — é onde filamentos reais se sustentam)
     '  float nl = abs(brEv) / (abs(brEv) + gradM*1.1 + 0.01);',
@@ -1043,36 +893,17 @@ function init(){
     '  float nlw = nl * (0.80 + 0.40*(fbmLight(sp*4.5 + vec3(7.7, 4.1, 1.9))*0.5+0.5));',
     '  float rib1 = 1.0 - smoothstep(filW1*0.10, filW1*1.15, nlw);',
     '  float rib3 = 1.0 - smoothstep(filW3*0.10, filW3*1.15, nlw);',
-    // MATURIDADE: canal B do sim = idade-EMA advectada da linha neutra.
-    // Só PILs que PERSISTIRAM dezenas de segundos ganham canal — as
-    // máscaras estáticas de fBm (filGate1/filGate3) foram substituídas
-    // por este critério físico emergente + o cisalhamento acima.
-    // idade amostrada também AO LONGO do canal (⊥ ao gradiente do fluxo,
-    // ±0.04 rad): ilhotas de PIL curtas demais para ser canal não têm
-    // idade madura nos dois lados — critério de EXTENSÃO emergente
-    '  vec3 dirC = cross(sp, gradEv);',
-    '  dirC = (length(dirC) > 1e-5) ? normalize(dirC) : vec3(0.5773);',
-    '  vec3 qA = normalize(sp + dirC*0.04);',
-    '  vec3 qB = normalize(sp - dirC*0.04);',
-    '  vec2 uvA = vec2(fract(atan(qA.z, qA.x)/6.28318530718), asin(clamp(qA.y, -1.0, 1.0))/3.14159265359 + 0.5);',
-    '  vec2 uvB = vec2(fract(atan(qB.z, qB.x)/6.28318530718), asin(clamp(qB.y, -1.0, 1.0))/3.14159265359 + 0.5);',
-    '  float ageC = texture2D(uSimTex, vUv).b;',
-    '  float ageAB = 0.5*(texture2D(uSimTex, uvA).b + texture2D(uSimTex, uvB).b);',
-    '  float ageCh = min(ageC, ageAB);',
-    '  float mature = smoothstep(0.48, 0.75, ageCh);',
+    '  float filGate1 = smoothstep(0.23, 0.48, fbm(sp*0.70 + vec3(3.3, 7.7, 0.5)));',
+    '  float filGate3 = smoothstep(0.36, 0.58, fbm(sp*0.60 + vec3(6.1, 3.9, 8.2)));',
     // piso de gradiente mais baixo: filamentos QUIESCENTES longos vivem
     // em linhas neutras de campo FRACO (refs 02/03) — o piso alto cortava
     // o canal em fragmentos curtos ("ameba" em vez de serpente)
-    '  float filStr = smoothstep(0.012, 0.05, gradM) * (1.0 - smoothstep(0.48, 1.02, gradM));',
-    // gate de cisalhamento SELETIVO: só onde o campo corre quase ao
-    // longo da linha neutra (align < ~0.45) nasce canal — arcadas que
-    // cruzam a PIL e a maior parte do tapete aleatório ficam de fora
-    '  float shearGate = smoothstep(0.45, 0.75, shear);',
-    '  float fil = max(rib1, rib3) * shearGate * mature * filStr;',
+    '  float filStr = smoothstep(0.012, 0.05, gradM) * (1.0 - smoothstep(0.5, 1.2, gradM));',
+    '  float fil = max(rib1*filGate1, rib3*filGate3) * filStr;',
     // ganho: as máscaras multiplicadas raramente chegam a 1 — recupera a
     // profundidade visível dos filamentos (posição continua vindo do Br).
     // Ganho menor que antes: 2.4 saturava o clamp e binarizava a borda
-    '  fil = clamp(fil*2.5, 0.0, 1.0);',
+    '  fil = clamp(fil*2.1, 0.0, 1.0);',
     // plage: concentração forte do fluxo EVOLUÍDO
     '  float plage = smoothstep(0.26, 0.55, abs(brEv));',
     // plage real é MOSQUEADA: flocos brilhantes seguindo a rede, não um
@@ -1159,13 +990,12 @@ function init(){
     '  vec3 dir = (BtL > 1e-4)',
     '    ? (Bt*cos(wig) + cross(sp, Bt)*sin(wig)) / BtL',
     '    : vec3(0.5773);',
-    // varredura longa: ±6 passos ao longo do fluxo — alcance maior para
-    // costurar os pinches (<15px) que fragmentavam o canal em contas
-    '  float stepArc = uTexel.x * 6.28318530718 * 2.6;',
+    // varredura longa: ±4 passos de ~3 texels ao longo do fluxo
+    '  float stepArc = uTexel.x * 6.28318530718 * 1.6;',
     '  vec4 acc = vec4(0.0); float wsum = 0.0;',
-    '  for(int i=-6;i<=6;i++){',
+    '  for(int i=-4;i<=4;i++){',
     '    vec3 q = normalize(sp + dir*(float(i)*stepArc));',
-    '    float w = 1.0 - abs(float(i))/7.5;',
+    '    float w = 1.0 - abs(float(i))/5.2;',
     '    acc += texture2D(uSrc, sphToUv(q)) * w;',
     '    wsum += w;',
     '  }',

@@ -1092,10 +1092,7 @@ function init(){
     // filamentos são FEIXES de fios escuros (fibrilas do canal), não
     // faixas lisas: modular pela textura LIC quebra o contorno contínuo
     // ("vinco de celofane") em fios — como nas ref-02/03 de perto
-    // LOOP-9 iter4: piso 0.55→0.70 (amplitude 0.75→0.55) — a modulação alta
-    // criava DROPOUTS ao longo do canal (as "contas"); piso maior mantém o
-    // fio contínuo e mais fino, ainda com textura de fibrila.
-    '  fil *= 0.70 + 0.55*(fibC*0.5+0.5);',
+    '  fil *= 0.55 + 0.75*(fibC*0.5+0.5);',
     '  gl_FragColor = vec4(min(heatLS, 1.0), fil, min(plage, 1.0), 0.5 + 0.5*fibC);',
     '}'
   ].join('\n');
@@ -1162,18 +1159,13 @@ function init(){
     '  vec3 dir = (BtL > 1e-4)',
     '    ? (Bt*cos(wig) + cross(sp, Bt)*sin(wig)) / BtL',
     '    : vec3(0.5773);',
-    // varredura longa ao longo do fluxo — alcance maior para costurar os
-    // pinches e emendar os fragmentos em fios CONTÍNUOS. LOOP-9 iter4: ±6→±8
-    // e stepArc 2.6→3.6 (capstone visual vs GONG: os canais quebravam em
-    // contas/vírgulas; GONG é um fio hairline único meandrando 0.1-0.4R).
-    // Efeito: longest-run 0.16R→0.23R (na faixa GONG), close-delta
-    // +0.023→-0.017R (canal já emendado no raw), largura 0.0134R (hairline),
-    // cobertura 0.89%. +4 taps no passe de smear (13→17).
-    '  float stepArc = uTexel.x * 6.28318530718 * 3.6;',
+    // varredura longa: ±6 passos ao longo do fluxo — alcance maior para
+    // costurar os pinches (<15px) que fragmentavam o canal em contas
+    '  float stepArc = uTexel.x * 6.28318530718 * 2.6;',
     '  vec4 acc = vec4(0.0); float wsum = 0.0;',
-    '  for(int i=-8;i<=8;i++){',
+    '  for(int i=-6;i<=6;i++){',
     '    vec3 q = normalize(sp + dir*(float(i)*stepArc));',
-    '    float w = 1.0 - abs(float(i))/9.5;',
+    '    float w = 1.0 - abs(float(i))/7.5;',
     '    acc += texture2D(uSrc, sphToUv(q)) * w;',
     '    wsum += w;',
     '  }',

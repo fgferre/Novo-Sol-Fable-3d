@@ -137,8 +137,13 @@ gw = gh = len(Lg)
 # canais reais são FINOS (0.005-0.012R ~ 2-4px neste enquadramento) — o
 # grid de passo 3 quebrava a conectividade e a área mínima de 300
 # células só era atingível pelo emaranhado antigo. Grid 1px só para
-# este gate; espessura ~3px + span >= 60px (~0.17R) + fill baixo =
-# canal escuro alongado real.
+# este gate; espessura ~3px + span baixo + fill baixo = canal alongado.
+# LOOP-9 iter1: span 60px (0.163R) sub-reportava — sentava no P90 dos
+# canais (R=369px no enquadramento element-limb), ACIMA do núcleo GONG
+# 0.08-0.15R (~30-55px), e só contava os blobs quadrados gordos
+# (fill~0.44). Census de 4 reloads: 12 canais finos reais (largura
+# 0.031R, fill 0.35) vivem na faixa [40,60)px e passavam despercebidos.
+# Span>=40px (~0.11R) + área>=100 = núcleo GONG; contagem 1→~5/face.
 LgF = center_grid(im, 300, 1)
 gwF = ghF = len(LgF)
 flatF = sorted(v for row in LgF for v in row)
@@ -161,7 +166,7 @@ for iy in range(ghF):
                     if 0 <= nx < gwF and 0 <= ny < ghF and maskF[ny][nx] and not seenF[ny][nx]:
                         seenF[ny][nx] = True; q.append((nx, ny))
             bw, bh = mxx-mnx+1, mxy-mny+1
-            if max(bw, bh) >= 60 and area >= 150 and area/(bw*bh) <= 0.45:
+            if max(bw, bh) >= 40 and area >= 100 and area/(bw*bh) <= 0.45:
                 filaments += 1
 results.append(('H filamentos: >=1 canal escuro alongado no disco',
                 filaments >= 1, f'{filaments} canais'))

@@ -37,21 +37,25 @@ function init(){
       urlQ[p[0]] = decodeURIComponent(p[1] || '');
     });
   } catch(e){}
-  // Modo determinístico de QA (?det=1[&seed=N]): substitui Math.random por
-  // um PRNG semeado (mulberry32) e fixa o dt do frame em 1/60s simulado.
-  // Com isso duas execuções produzem exatamente a mesma cena/frame — é o
-  // que permite comparar screenshots pixel a pixel entre versões do código
-  // (paridade de migração). Sem ?det=1 nada muda.
+  // Modo determinístico de QA (?det=1[&seed=N]): todos os sorteios do APP
+  // passam por srand() — um PRNG semeado (mulberry32) — e o dt do frame
+  // fica fixo em 1/60s simulado. Com isso duas execuções produzem
+  // exatamente a mesma cena/frame — é o que permite comparar screenshots
+  // pixel a pixel entre versões do código (paridade de migração). O RNG é
+  // LOCAL do app (não sobrescreve Math.random): o three consome
+  // Math.random internamente (UUIDs) em quantidades que variam por versão
+  // e contaminaria o stream. Sem ?det=1, srand === Math.random.
   var DET = urlQ.det === '1';
   // ?hold=F congela o tempo simulado a partir do frame F (delta=0): o
   // frame renderizado vira uma imagem ESTÁTICA e o screenshot deixa de
   // correr contra o requestAnimationFrame.
   var DET_HOLD = 0;
   var detFrames = 0;
+  var srand = Math.random;
   if (DET) DET_HOLD = parseInt(urlQ.hold, 10) || 0;
   if (DET) {
     var detSeed = ((parseInt(urlQ.seed, 10) || 1) >>> 0) || 1;
-    Math.random = function(){
+    srand = function(){
       detSeed = (detSeed + 0x6D2B79F5) >>> 0;
       var t = detSeed;
       t = Math.imul(t ^ (t >>> 15), t | 1);
@@ -108,7 +112,11 @@ function init(){
   var TIER_PARAMS = {
     low:  { fbm:4, seg:96,  stars:3500, bright:130, simW:384, simH:192, simStep:1/16, bloom:3, prom:4, chromo:512,  granFreq:22.0, lic7:false },
     mid:  { fbm:5, seg:128, stars:5000, bright:200, simW:768, simH:384, simStep:1/22, bloom:4, prom:6, chromo:1024, granFreq:30.0, lic7:true  },
-    high: { fbm:5, seg:128, stars:7000, bright:240, simW:768, simH:384, simStep:1/26, bloom:4, prom:7, chromo:2048, granFreq:34.0, lic7:true  }
+    high: { fbm:5, seg:128, stars:7000, bright:240, simW:768, simH:384, simStep:1/26, bloom:4, prom:7, chromo:2048, granFreq:34.0, lic7:true  },
+    // ULTRA (desktop com GPU dedicada): DPR até 3, malha/sim/estrelas
+    // maiores e 5 níveis de bloom. Nunca é escolhido no primeiro load —
+    // só o auto-tune promove (p95 < limiar por 30s no high) ou ?tier=ultra.
+    ultra:{ fbm:6, seg:192, stars:10000, bright:320, simW:1024, simH:512, simStep:1/30, bloom:5, prom:8, chromo:2048, granFreq:36.0, lic7:true }
   };
   // T3.2: partida por HARDWARE + memória de sessões anteriores. A
   // heurística antiga (toque/tela pequena => low) rebaixava iPhones Pro;
@@ -138,6 +146,12 @@ function init(){
   }
   var TIER = detectTier();
   var TP = TIER_PARAMS[TIER];
+  // ultra desbloqueia DPR nativo até 3 (o cap 2 protege os tiers móveis)
+  if (TIER === 'ultra'){
+    pixelRatio = Math.min(window.devicePixelRatio || 1, 3) * RENDER_SCALE;
+    renderer.setPixelRatio(pixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  }
   var FBM_OCTAVES = TP.fbm;
   var SPHERE_SEG  = TP.seg;
   var STAR_COUNT  = TP.stars;
@@ -585,7 +599,7 @@ function init(){
       pilStats.candidates = cands.length;
       if (!cands.length){ pilStats.mode = 'fallback'; return null; }
       var tot = 0; cands.forEach(function(c){ tot += c.s; });
-      var r = Math.random()*tot, c = cands[cands.length-1];
+      var r = srand()*tot, c = cands[cands.length-1];
       for (var i=0;i<cands.length;i++){ r -= cands[i].s; if (r <= 0){ c = cands[i]; break; } }
       var lon = (c.x+0.5)/PIL_W * Math.PI*2;
       var lat = ((c.y+0.5)/PIL_H - 0.5) * Math.PI;
@@ -630,8 +644,8 @@ function init(){
     // exige distância angular mínima dos líderes das outras regiões
     var lat, lon, lead;
     for (var attempt = 0; attempt < 24; attempt++){
-      lat = ps.hemi * (0.24 + Math.random()*0.30);
-      lon = Math.random()*Math.PI*2;
+      lat = ps.hemi * (0.24 + srand()*0.30);
+      lon = srand()*Math.PI*2;
       lead = sphDir(lon, lat);
       var minAng = Math.PI, minLon = Math.PI;
       for (var j = 0; j < pairStates.length; j++){
@@ -652,8 +666,8 @@ function init(){
     }
     // lei de Joy: o par é inclinado — o seguidor fica mais perto do polo;
     // separação maior que o raio das manchas (pares reais não se tocam)
-    var sep = 0.19 + Math.random()*0.10;
-    var follLat = lat + ps.hemi * sep * (0.105 + Math.random()*0.071);   // tilt de Joy 6-10 graus
+    var sep = 0.19 + srand()*0.10;
+    var follLat = lat + ps.hemi * sep * (0.105 + srand()*0.071);   // tilt de Joy 6-10 graus
     lead.multiplyScalar(0.88);
     var foll = sphDir(lon+sep, follLat).multiplyScalar(0.88);
     ps.lead.set(lead.x, lead.y, lead.z, ps.lead.w);
@@ -662,7 +676,7 @@ function init(){
   (function buildCharges(){
     for (var i=0;i<4;i++){
       var hemi = (i%2===0) ? 1 : -1;
-      var q = (1.0 + Math.random()*0.8) * hemi;
+      var q = (1.0 + srand()*0.8) * hemi;
       var lead = new THREE.Vector4(0,0,0, q);
       var foll = new THREE.Vector4(0,0,0, -q*0.85);
       charges.push(lead); charges.push(foll);
@@ -670,10 +684,10 @@ function init(){
       // outro lugar). Fases espalhadas: sempre há 2-3 regiões vivas.
       var ps = {
         lead: lead, foll: foll, baseQ: q, hemi: hemi,
-        period: 150 + Math.random()*90,
+        period: 150 + srand()*90,
         phase: 0, reborn: false
       };
-      ps.phase = (i/4 + Math.random()*0.1) * ps.period;
+      ps.phase = (i/4 + srand()*0.1) * ps.period;
       placePair(ps);
       pairStates.push(ps);
     }
@@ -765,6 +779,13 @@ function init(){
     uCharges: { value: charges },
     uFlare: { value: new THREE.Vector4(0, 0, 1, 0) },
     uPlageEm: { value: knob('plageglow', 0.35, 0.0, 1.5) },
+    // Oscilações p-mode (heliosismologia): o Sol "toca" em modos acústicos
+    // de ~5 minutos (harmônicos esféricos de baixo grau, Leighton 1962).
+    // Aqui: 3 modos (l=2 m=0, l=2 m=2, l=3 m=1) com períodos comprimidos
+    // (~21-34s de parede; os reais são 296-317s) e amplitude exagerada
+    // ~10^4x (Δr/R real ≈ 10^-7 seria invisível) — mesma honestidade de
+    // VFX da convecção. Default 0 = desligado, frame idêntico ao baseline.
+    uPmode: { value: knob('pmode', 0.0, 0.0, 1.0) },
     uSimTex: { value: simRTs[0].texture },
     uSimTexel: { value: simUniforms.uTexel.value }
   };
@@ -1047,10 +1068,12 @@ function init(){
   var sunVertexShader = NOISE_GLSL + '\n' + [
     'uniform float uTime;',
     'uniform float uDispScale;',
+    'uniform float uPmode;',
     'varying vec3 vNormalW;',
     'varying vec3 vPositionW;',
     'varying vec3 vPosObj;',
     'varying float vDisp;',
+    'varying float vPm;',
     'varying vec2 vUvV;',
     'void main(){',
     '  vUvV = uv;',
@@ -1058,7 +1081,24 @@ function init(){
     '  vec3 seed = position * 1.6 + vec3(0.0, 0.0, uTime*0.045);',
     '  float n = fbm(seed);',
     '  vDisp = n;',
-    '  vec3 displaced = position + normal * n * uDispScale;',
+    // p-modes: soma de 3 harmônicos esféricos de baixo grau (polinômios de
+    // Legendre em sin(lat)), períodos incomensuráveis — a superfície
+    // "respira" como um sino tocando em acordes, não como um pistão
+    '  float pmSum = 0.0;',
+    '  if (uPmode > 0.001){',
+    '    vec3 np = normalize(position);',
+    '    float plat = np.y;',
+    '    float plon = atan(np.z, np.x);',
+    '    float p20 = 1.5*plat*plat - 0.5;',
+    '    float p22 = 1.0 - plat*plat;',
+    '    float p31 = plat*sqrt(max(0.0, 1.0 - plat*plat));',
+    '    pmSum = 0.45*p20*sin(uTime*0.299)',
+    '          + 0.35*p22*sin(uTime*0.229 + 2.0*plon)',
+    '          + 0.30*p31*sin(uTime*0.185 + plon);',
+    '    pmSum *= uPmode;',
+    '  }',
+    '  vPm = pmSum;',
+    '  vec3 displaced = position + normal * (n * uDispScale + pmSum * 0.004 * length(position));',
     '  vec4 worldPos = modelMatrix * vec4(displaced, 1.0);',
     '  vPositionW = worldPos.xyz;',
     '  vNormalW = normalize(mat3(modelMatrix) * normal);',
@@ -1093,6 +1133,7 @@ function init(){
     'varying vec3 vPositionW;',
     'varying vec3 vPosObj;',
     'varying float vDisp;',
+    'varying float vPm;',
     'varying vec2 vUvV;',
     'uniform vec4 uCharges[10];'].join('\n') + '\n' + SFTDIR_GLSL + '\n' + BFIELD_GLSL + '\n' + LIC_GLSL + '\n' + [
     'void main(){',
@@ -1261,6 +1302,9 @@ function init(){
     // como bloom (glow suave em volta das regiões ativas, ref-03) sem
     // tocar na luminância mediana do disco
     '  color += vec3(1.0, 0.70, 0.32) * clamp(plage, 0.0, 1.0) * uPlageEm;',
+    // p-mode: a crista da onda acústica é levemente mais quente/brilhante
+    // (perturbação de temperatura acompanha a de deslocamento)
+    '  color *= 1.0 + vPm * 0.05;',
     '  gl_FragColor = vec4(color, 1.0);',
     '}'
   ].join('\n');
@@ -1514,8 +1558,8 @@ function init(){
     if (pil) return pil;
     var anchor = null;
     for (var tries=0; tries<48; tries++){
-      var th = Math.random()*Math.PI*2;
-      var ph = Math.acos(2*Math.random()-1);
+      var th = srand()*Math.PI*2;
+      var ph = Math.acos(2*srand()-1);
       var cand = new THREE.Vector3(
         Math.sin(ph)*Math.cos(th),
         Math.cos(ph),
@@ -1539,13 +1583,13 @@ function init(){
       var x0 = new THREE.Vector3(1,0,0).applyQuaternion(baseQ);
       var cr = new THREE.Vector3().crossVectors(x0, anchor.pilTangent);
       ang0 = Math.atan2(anchor.dot(cr), x0.dot(anchor.pilTangent));
-    } else ang0 = Math.random()*Math.PI;
+    } else ang0 = srand()*Math.PI;
     ps.meshes.forEach(function(mm, k){
       var spin = new THREE.Quaternion().setFromAxisAngle(anchor, ang0 + k*Math.PI*0.5);
       mm.quaternion.copy(spin.multiply(baseQ));
       mm.position.copy(anchor).multiplyScalar(SUN_RADIUS*0.995);
       mm.userData.dir = anchor.clone();
-      mm.material.uniforms.uSeed.value = Math.random()*100;
+      mm.material.uniforms.uSeed.value = srand()*100;
     });
   }
   // uniforms comuns aos três shaders de proeminência (ciclo de vida,
@@ -1709,10 +1753,10 @@ function init(){
       //    -0.22, o ápice fica ~0.56·h => h 0.22-0.32R dá ápice 86-125 Mm ✓
       //  - quiescentes/hedgerow: 30-100 Mm de altura => h 0.09-0.15R ✓
       //  - plumas/surges eruptivos: 100-250 Mm => h 0.18-0.32R ✓
-      var w = isArch ? SUN_RADIUS*(0.80 + Math.random()*0.35)
-            : isHedgerow ? SUN_RADIUS*(0.60 + Math.random()*0.32) : SUN_RADIUS*(0.55 + Math.random()*0.5);
-      var h = isArch ? SUN_RADIUS*(0.22 + Math.random()*0.10)
-            : isHedgerow ? SUN_RADIUS*(0.09 + Math.random()*0.06) : SUN_RADIUS*(0.18 + Math.random()*0.14);
+      var w = isArch ? SUN_RADIUS*(0.80 + srand()*0.35)
+            : isHedgerow ? SUN_RADIUS*(0.60 + srand()*0.32) : SUN_RADIUS*(0.55 + srand()*0.5);
+      var h = isArch ? SUN_RADIUS*(0.22 + srand()*0.10)
+            : isHedgerow ? SUN_RADIUS*(0.09 + srand()*0.06) : SUN_RADIUS*(0.18 + srand()*0.14);
       var geo = new THREE.PlaneGeometry(w, h, 48, 1);
       geo.translate(0, h*0.5 - SUN_RADIUS*0.02, 0);   // base levemente dentro do disco
       // CONEXÃO FÍSICA: um cartão reto não abraça a esfera — nas pontas a
@@ -1734,7 +1778,7 @@ function init(){
       })();
       var promUniforms = {
         uTime: { value: 0 },
-        uSeed: { value: Math.random()*100 },
+        uSeed: { value: srand()*100 },
         uIntensity: { value: 1.0 },
         uAspect: { value: w/h },
         // ciclo de vida (0..1): a ESTRUTURA cresce da superfície no
@@ -1763,13 +1807,13 @@ function init(){
       var mat2 = mat.clone();
       var mesh = new THREE.Mesh(geo, mat);
       var mesh2 = new THREE.Mesh(geo, mat2);
-      var phase = Math.random()*Math.PI*2;
-      var speed = 0.6+Math.random()*0.8;
+      var phase = srand()*Math.PI*2;
+      var speed = 0.6+srand()*0.8;
       // ciclo de vida como o das regiões ativas: períodos individuais e
       // fases ESCALONADAS (o limbo nunca fica vazio nem lotado de uma vez)
-      var ps = { meshes: [mesh, mesh2], period: 70 + Math.random()*50,
+      var ps = { meshes: [mesh, mesh2], period: 70 + srand()*50,
                  phase: 0, reborn: false };
-      ps.phase = (i/PROMINENCE_COUNT + Math.random()*0.08) * ps.period;
+      ps.phase = (i/PROMINENCE_COUNT + srand()*0.08) * ps.period;
       [mesh, mesh2].forEach(function(mm, k){
         mm.userData.twinIdx = k;
         mm.userData.phase = phase;
@@ -1793,18 +1837,18 @@ function init(){
     var positions = new Float32Array(count*3);
     var colors = new Float32Array(count*3);
     for(var i=0;i<count;i++){
-      var u = Math.random(), v = Math.random();
+      var u = srand(), v = srand();
       var th = 2*Math.PI*u;
       var ph = Math.acos(2*v-1);
-      var rr = radius*(0.55+Math.random()*0.45);
+      var rr = radius*(0.55+srand()*0.45);
       positions[i*3]   = rr*Math.sin(ph)*Math.cos(th);
       positions[i*3+1] = rr*Math.sin(ph)*Math.sin(th);
       positions[i*3+2] = rr*Math.cos(ph);
-      var starTemp = (Math.random() < (hotBias ? 0.30 : 0.75))
-        ? (2800+Math.random()*3200)
-        : (hotBias ? (7000+Math.random()*13000) : (6000+Math.random()*20000));
+      var starTemp = (srand() < (hotBias ? 0.30 : 0.75))
+        ? (2800+srand()*3200)
+        : (hotBias ? (7000+srand()*13000) : (6000+srand()*20000));
       var sc = kelvinToRGB(starTemp);
-      var b = 0.35 + 0.90*Math.pow(Math.random(), 2.2);   // distribuição ~log: poucas vivas
+      var b = 0.35 + 0.90*Math.pow(srand(), 2.2);   // distribuição ~log: poucas vivas
       colors[i*3]=sc.r*b; colors[i*3+1]=sc.g*b; colors[i*3+2]=sc.b*b;
     }
     var geo = new THREE.BufferGeometry();
@@ -2128,6 +2172,11 @@ function init(){
   var VEIL_BASE = knob('veil', lk('veil', 0), 0.0, 1.5);
   var STREAK_K = knob('streak', lk('streak', 0), 0.0, 1.5);
   var ADAPT_K = knob('adapt', lk('adapt', 0), 0.0, 1.0);
+  // hand: linguagem de câmera do Sunshine — o Sol é filmado em lente
+  // longa com deriva lenta e micro-tremor de operador (0.1-0.3 Hz + um
+  // harmônico rápido fraco). Soma de senos incomensuráveis = pseudo-
+  // perlin sem alocação; média zero, NÃO acumula no estado da câmera.
+  var HAND_K = knob('hand', lk('hand', 0), 0.0, 1.5);
   var adaptCur = 1.0;
   var cineProj = new THREE.Vector3();
   var compUniforms = {
@@ -2143,6 +2192,11 @@ function init(){
     uFringe:{value: knob('fringe', lk('fringe', 0), 0.0, 1.5)},
     uShimmer:{value: knob('shimmer', lk('shimmer', 0), 0.0, 1.5)},
     uTone:{value: knob('tone', lk('tone', 0), 0.0, 1.2)},
+    // film: mistura ACES (0) -> AgX (1). AgX desatura as altas de forma
+    // gradual — o centro do disco para de "clipar nuclear" e resolve a
+    // pendência de recalibração pós-ACES do audit-loop6. Default 0 =
+    // pixel-idêntico ao baseline.
+    uFilm:{value: knob('film', lk('film', 0), 0.0, 1.0)},
     uCTime:{value: 0.0},
     uSunC:{value: new THREE.Vector2(0.5, 0.5)},
     uSunR:{value: 0.33},
@@ -2164,6 +2218,7 @@ function init(){
     'uniform float uFringe;',
     'uniform float uShimmer;',
     'uniform float uTone;',
+    'uniform float uFilm;',
     'uniform float uCTime;',
     'uniform vec2 uSunC;',
     'uniform float uSunR;',
@@ -2172,6 +2227,26 @@ function init(){
     'vec3 ACESFilm(vec3 x){',
     '  float a=2.51; float b=0.03; float c=2.43; float d=0.59; float e=0.14;',
     '  return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);',
+    '}',
+    // AgX (fit polinomial de B. Wrensch sobre o AgX de T. Sobotka): curva
+    // de resposta tipo filme com rolloff suave nas altas. Como o pipeline
+    // grava direto no canvas (o ACES acima também embute o "gamma"), o
+    // resultado fica no espaço codificado do AgX base — comparável ao ACES.
+    'vec3 agxContrast(vec3 x){',
+    '  vec3 x2 = x*x; vec3 x4 = x2*x2;',
+    '  return 15.5*x4*x2 - 40.14*x4*x + 31.96*x4 - 6.868*x2*x + 0.4298*x2 + 0.1191*x - 0.00232;',
+    '}',
+    'vec3 AgXFilm(vec3 val){',
+    '  const mat3 agx_mat = mat3(',
+    '    0.842479062253094, 0.0423282422610123, 0.0423756549057051,',
+    '    0.0784335999999992, 0.878468636469772, 0.0784336,',
+    '    0.0792237451477643, 0.0791661274605434, 0.879142973793104);',
+    '  const float min_ev = -12.47393;',
+    '  const float max_ev = 4.026069;',
+    '  val = agx_mat * val;',
+    '  val = clamp(log2(max(val, vec3(1e-10))), min_ev, max_ev);',
+    '  val = (val - min_ev) / (max_ev - min_ev);',
+    '  return clamp(agxContrast(val), 0.0, 1.0);',
     '}',
     'float hash12(vec2 p){',
     '  vec3 p3 = fract(vec3(p.xyx) * 0.1031);',
@@ -2206,6 +2281,11 @@ function init(){
     '    vec2 off = rc * ((0.006 + 0.020*dot(rc, rc)) * uFringe);',
     '    sceneCol.r = texture2D(tScene, uv + off).r;',
     '    sceneCol.b = texture2D(tScene, uv - off).b;',
+    // o G parado no centro criava um rebordo VERDE no limbo com
+    // fringe>=0.5 (G brilhante onde R/B já saíram do disco). Espalhar o
+    // G em ±off/2 — o comprimento de onda do verde fica ENTRE o do R e o
+    // do B, como numa lente real — dissolve o rebordo em gradiente.
+    '    sceneCol.g = 0.5*(texture2D(tScene, uv + off*0.5).g + texture2D(tScene, uv - off*0.5).g);',
     '  }',
     '  vec3 bloomCol = texture2D(tBloom, uv).rgb;',
     '  vec3 color = (sceneCol + bloomCol*uBloomStrength) * (uExposure * uAdapt);',
@@ -2219,7 +2299,8 @@ function init(){
     '  if (uStreak > 0.001){',
     '    color += texture2D(tStreak, uv).rgb * (uStreak * 0.70) * vec3(0.80,0.88,1.12) * uExposure * uAdapt;',
     '  }',
-    '  color = ACESFilm(color);',
+    '  vec3 aces = ACESFilm(color);',
+    '  color = (uFilm > 0.001) ? mix(aces, AgXFilm(color), uFilm) : aces;',
     '  color = mix(vec3(dot(color, vec3(0.299,0.587,0.114))), color, uSat);',
     // split-tone Sunshine: sombras frias, altas douradas (contraste
     // ouro-vs-frio de Boyle/Küchler dentro do mesmo frame)
@@ -2287,11 +2368,19 @@ function init(){
   var flingSamples = [];
 
   function updateCamera(){
-    var sp = Math.sin(phi);
+    var th = theta, ph = phi;
+    // offsets de "mão" aplicados só na POSE do frame (theta/phi reais
+    // ficam intactos: soltar o knob volta exatamente ao enquadramento)
+    if (HAND_K > 0.001){
+      var ht = elapsed || 0;
+      th += HAND_K*(0.0042*Math.sin(ht*0.291) + 0.0023*Math.sin(ht*0.833+1.7) + 0.0008*Math.sin(ht*2.31+0.4));
+      ph += HAND_K*(0.0031*Math.sin(ht*0.247+0.9) + 0.0017*Math.sin(ht*0.911+2.6) + 0.0007*Math.sin(ht*2.73+1.2));
+    }
+    var sp = Math.sin(ph);
     camera.position.set(
-      camDist*sp*Math.cos(theta),
-      camDist*Math.cos(phi),
-      camDist*sp*Math.sin(theta)
+      camDist*sp*Math.cos(th),
+      camDist*Math.cos(ph),
+      camDist*sp*Math.sin(th)
     );
     camera.lookAt(0,0,0);
   }
@@ -2535,7 +2624,13 @@ function init(){
     tuneEvents++;
   }
   function persistTier(t){ try { localStorage.setItem('solTier', t); } catch(e){} }
-  var TIER_ORDER = ['low', 'mid', 'high'];
+  var TIER_ORDER = ['low', 'mid', 'high', 'ultra'];
+  // Alvos por classe de aparelho: no desktop degrada acima de 18ms p95
+  // (~55fps) como antes; no móvel o compromisso decidido é OUTRO — piso
+  // de 24fps (42ms p95): o aparelho segura o tier/escala enquanto estiver
+  // acima disso em vez de se rebaixar até o low para perseguir 60.
+  var TUNE_HI = coarsePointer ? 42 : 18;
+  var TUNE_LO = coarsePointer ? 21 : 9;
   function autoTune(delta, frameMs){
     // aba em background/stall: rAF é estrangulado a ~1fps e o p95 iria
     // rebaixar (e persistir!) um tier por culpa do navegador, não da GPU.
@@ -2548,7 +2643,7 @@ function init(){
     if (tuneWin.length < 30 || tuneCooldown > 0) return;
     var a = tuneWin.slice().sort(function(x, y){ return x - y; });
     var p95 = a[Math.floor(a.length*0.95)];
-    if (p95 > 18){
+    if (p95 > TUNE_HI){
       tuneGoodT = 0;
       if (scaleIdx < SCALE_STEPS.length-1){
         applyRenderScale(scaleIdx+1);
@@ -2557,14 +2652,17 @@ function init(){
         var k = TIER_ORDER.indexOf(TIER);
         if (k > 0){ persistTier(TIER_ORDER[k-1]); tuneCooldown = 1e9; }
       }
-    } else if (p95 < 9){
+    } else if (p95 < TUNE_LO){
       tuneGoodT += delta;
       if (scaleIdx > 0 && tuneGoodT > 10){
         applyRenderScale(scaleIdx-1);
         tuneGoodT = 0; tuneCooldown = 6; tuneWin.length = 0;
       } else if (scaleIdx === 0 && tuneGoodT > 30){
         var k2 = TIER_ORDER.indexOf(TIER);
-        if (k2 < 2 && !urlQ.tier){ persistTier(TIER_ORDER[k2+1]); }
+        // ultra é só para ponteiro fino (desktop): DPR 3 + malha 192
+        // afogariam um celular que por acaso sustente 60 no high
+        var kMax = coarsePointer ? 2 : TIER_ORDER.length - 1;
+        if (k2 < kMax && !urlQ.tier){ persistTier(TIER_ORDER[k2+1]); }
         tuneGoodT = -1e9;   // uma recomendação por sessão
       }
     } else tuneGoodT = 0;
@@ -2607,6 +2705,9 @@ function init(){
                  fringe: compUniforms.uFringe.value,
                  shimmer: compUniforms.uShimmer.value,
                  tone: compUniforms.uTone.value,
+                 film: compUniforms.uFilm.value,
+                 pmode: sunUniforms.uPmode.value,
+                 hand: HAND_K,
                  adaptMul: compUniforms.uAdapt.value,
                  look: LOOK ? 'sunshine' : '' };
       };
@@ -2800,6 +2901,9 @@ function init(){
       { sec: 'tempo' },
       { k:'speed', label:'Ritmo do tempo', lo:0.05, hi:2, step:0.05, dflt:1,
         get:function(){ return TIME_SCALE; }, set:function(v){ TIME_SCALE = v; } },
+      { k:'pmode', label:'Oscilações (p-modes)', lo:0, hi:1, step:0.05, dflt:0,
+        get:function(){ return sunUniforms.uPmode.value; },
+        set:function(v){ sunUniforms.uPmode.value = v; } },
       { sec: 'luz & cor' },
       { k:'bloom', label:'Bloom', lo:0, hi:2.5, step:0.05, dflt:1,
         get:function(){ return BLOOM_STRENGTH_BASE/BLOOM_BASE0; },
@@ -2835,6 +2939,11 @@ function init(){
       { k:'tone', label:'Grade Sunshine', lo:0, hi:1.2, step:0.05, dflt:0,
         get:function(){ return compUniforms.uTone.value; },
         set:function(v){ compUniforms.uTone.value = v; } },
+      { k:'film', label:'Filme (ACES→AgX)', lo:0, hi:1, step:0.05, dflt:0,
+        get:function(){ return compUniforms.uFilm.value; },
+        set:function(v){ compUniforms.uFilm.value = v; } },
+      { k:'hand', label:'Câmera de mão', lo:0, hi:1.5, step:0.05, dflt:0,
+        get:function(){ return HAND_K; }, set:function(v){ HAND_K = v; } },
       { sec: 'coroa' },
       { k:'halo', label:'Halo coronal', lo:0, hi:1.6, step:0.05, dflt:0.55,
         get:function(){ return coronaRaysUniforms.uHalo.value; },
@@ -2980,7 +3089,7 @@ function init(){
   // flare de SUPERFÍCIE: laço brilhante na plage de uma região madura
   var surfFlareT = 999;
   var surfFlareAmp = 1.0;
-  var surfFlareCooldown = 8 + Math.random()*10;
+  var surfFlareCooldown = 8 + srand()*10;
   var surfFlareDir = new THREE.Vector3(0, 0, 1);
   // flare <-> proeminência: a reconexão que ilumina a superfície também
   // injeta energia no plasma suspenso — o flare AGITA/ERGUE a proeminência
@@ -2998,12 +3107,12 @@ function init(){
   function triggerSurfaceFlare(){
     var live = pairStates.filter(function(ps){ return Math.abs(ps.lead.w) > Math.abs(ps.baseQ)*0.6; });
     if (!live.length) return false;
-    var ps = live[Math.floor(Math.random()*live.length)];
+    var ps = live[Math.floor(srand()*live.length)];
     // ponto entre o par (onde os laços de flare reais acontecem), com jitter
     surfFlareDir.set(
-      (ps.lead.x + ps.foll.x)*0.5 + (Math.random()-0.5)*0.06,
-      (ps.lead.y + ps.foll.y)*0.5 + (Math.random()-0.5)*0.06,
-      (ps.lead.z + ps.foll.z)*0.5 + (Math.random()-0.5)*0.06
+      (ps.lead.x + ps.foll.x)*0.5 + (srand()-0.5)*0.06,
+      (ps.lead.y + ps.foll.y)*0.5 + (srand()-0.5)*0.06,
+      (ps.lead.z + ps.foll.z)*0.5 + (srand()-0.5)*0.06
     ).normalize();
     // amplitude ∝ |w| da região que flareia (X-class só em região forte)
     surfFlareAmp = Math.min(1.5, 0.55 + 0.55*Math.abs(ps.lead.w));
@@ -3091,7 +3200,7 @@ function init(){
     if (surfFlareCooldown <= 0){
       if (triggerSurfaceFlare()) surfFlareT = 0;
       // sol ativo flareia mais: cooldown encolhe com a atividade global
-      surfFlareCooldown = (12 + Math.random()*14) / (0.5 + 1.1*coronaRaysUniforms.uActivity.value);
+      surfFlareCooldown = (12 + srand()*14) / (0.5 + 1.1*coronaRaysUniforms.uActivity.value);
     }
     surfFlareT += delta;
     var sfEnv = flareEnvelope(surfFlareT) * 1.7 * surfFlareAmp;

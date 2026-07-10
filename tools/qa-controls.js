@@ -1,7 +1,8 @@
 // QA de controles AAA: teclado, dblclick, drag, wheel — via __solInfo.state()
+// Uso: node tools/qa-controls.js [arquivo.html]
 const path = require('path');
 const { chromium } = require('playwright');
-const url = 'file://' + path.resolve('sol-3d.html');
+const url = 'file://' + path.resolve(process.argv[2] || 'sol-3d.html');
 (async () => {
   const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });

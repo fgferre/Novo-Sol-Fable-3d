@@ -1,0 +1,46 @@
+name: QA
+
+# QA automatizado em todo push/PR: build Vite + regressão de paridade
+# visual (modo determinístico ?det=1 comparado pixel a pixel contra os
+# baselines commitados em qa/baselines) + QA de controles. O render usa
+# SwiftShader (software), então as imagens são reprodutíveis entre runs.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: qa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Build (normal + arquivo único)
+        run: |
+          npm run build
+          npm run build:single
+      - name: QA de controles
+        run: node tools/qa-controls.js dist-single/index.html
+      - name: Paridade visual vs baselines
+        run: |
+          node tools/parity.js qa-out --file dist-single/index.html
+          node tools/imgdiff.js qa/baselines qa-out --max-frac 0.001 --out qa-diff
+      - name: Anexar diffs em caso de falha
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-screenshots
+          path: |
+            qa-out/
+            qa-diff/
+          if-no-files-found: ignore

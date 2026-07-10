@@ -32,12 +32,22 @@ idêntica ao baseline (convenção do projeto desde o LOOP-5).
 
 ## Fases
 
-### Fase 0 — Modernização da base (em execução)
-Vite + módulos + three atual com paridade pixel-perfect (modo `?det=1` +
-`tools/parity.js` + `tools/imgdiff.js`); QA em CI (workflow `qa.yml`);
-tiers recalibrados (piso 24 fps mobile, tier ultra desktop); dívidas: fix
-do rim verde do fringe, tonemap AgX opcional, oscilações p-mode de 5 min
-(primeira física nova), linguagem de câmera (drift + micro-shake).
+### Fase 0 — Modernização da base (entregue nesta branch)
+Vite + npm + three 0.185 com paridade pixel-perfect PROVADA (determinismo
+0px; migração ≤7px/0,0012% — anti-alias de borda): modo `?det=1&seed&hold`
++ `tools/parity.js` + `tools/imgdiff.js`; QA em CI (workflow `qa.yml`);
+tiers recalibrados (piso 24 fps mobile via limiar 42ms p95, tier ultra
+desktop com DPR 3); fix do rebordo verde do fringe (CA espectral de 6
+taps com pesos de arco-íris); tonemap AgX opcional (knob `film`, com
+outset); oscilações p-mode (knob `pmode` — primeira física nova);
+linguagem de câmera Sunshine (knob `hand`).
+
+**Débito consciente da Fase 0**: o código do app segue monolítico em
+`src/main.js` (~3400 linhas). A divisão em módulos por domínio
+(`src/glsl/`, `src/sim/`, `src/surface/`, `src/atmosphere/`, `src/post/`,
+`src/camera/`, `src/ui/`) fica como loop de infra dedicado: é um refactor
+mecânico grande sobre um closure com muito estado compartilhado, e o
+gate de paridade determinística já existe para fazê-lo com segurança.
 
 ### Fase 1 — "A estrela magnetizada"
 Loops coronais traçados por RK4 sobre o campo de cargas existente

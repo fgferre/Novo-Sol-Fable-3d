@@ -1,0 +1,42 @@
+{
+  "name": "novo-sol",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "vite",
+    "build": "vite build",
+    "build:single": "SINGLEFILE=1 vite build",
+    "preview": "vite preview",
+    "qa:controls": "node tools/qa-controls.js dist-single/index.html",
+    "qa:parity": "node tools/parity.js qa-out --file dist-single/index.html && node tools/imgdiff.js qa/baselines qa-out --max-frac 0.001",
+    "qa:motion": "node tools/qa-motion.js out/motion dist-single/index.html",
+    "qa:shot": "node tools/shot.js shots --file dist-single/index.html"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fgferre/Novo-Sol-Fable-3d.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/fgferre/Novo-Sol-Fable-3d/issues"
+  },
+  "homepage": "https://github.com/fgferre/Novo-Sol-Fable-3d#readme",
+  "private": "true",
+  "devDependencies": {
+    "pixelmatch": "^5.3.0",
+    "playwright": "1.56.0",
+    "pngjs": "^7.0.0",
+    "vite": "^8.1.4",
+    "vite-plugin-singlefile": "^2.3.3"
+  },
+  "dependencies": {
+    "three": "^0.185.1"
+  }
+}

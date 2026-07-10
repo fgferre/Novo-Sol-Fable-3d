@@ -1,3 +1,9 @@
 out/
 shots/
+shots-*/
 debug-*.html
+node_modules/
+dist/
+dist-single/
+qa-out/
+*.log

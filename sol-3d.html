@@ -268,22 +268,6 @@ function init(){
     '    if(d<d1){ d2=d1; d1=d; } else if(d<d2){ d2=d; }',
     '  }',
     '  return vec2(sqrt(d1), sqrt(d2));',
-    '}',
-    // variante: retorna dist ao centro mais próximo (w) e o VETOR até ele
-    // (xyz) — dá a direção radial exata para os fios da penumbra
-    'vec4 worleyF1Dir(vec3 p){',
-    '  vec3 ip = floor(p); vec3 fp = fract(p);',
-    '  float d1 = 9.0; vec3 v1 = vec3(0.0);',
-    '  for(int x=-1;x<=1;x++)',
-    '  for(int y=-1;y<=1;y++)',
-    '  for(int z=-1;z<=1;z++){',
-    '    vec3 g = vec3(float(x),float(y),float(z));',
-    '    vec3 o = hash33(ip+g);',
-    '    vec3 r = g + o - fp;',
-    '    float d = dot(r,r);',
-    '    if(d<d1){ d1=d; v1=r; }',
-    '  }',
-    '  return vec4(v1, sqrt(d1));',
     '}'
   ].join('\n');
 
@@ -313,21 +297,52 @@ function init(){
   ].join('\n');
 
   // ---------------------------------------------------------------
-  // Radiação de corpo negro (aproximação de Tanner Helland, válida
-  // ~1000K-40000K). Usada para derivar cor a partir de temperatura,
-  // em vez de uma rampa de cores escolhida à mão.
+  // Campo magnético de cargas pontuais sob a superfície + LIC (line
+  // integral convolution) barata — blocos compartilhados pelos shaders
+  // do bake (chromo), do smear e do disco: os três avaliam o MESMO
+  // campo e a MESMA convolução de fios.
   // ---------------------------------------------------------------
-  var BLACKBODY_GLSL = [
-    'vec3 blackbodyColor(float kelvin){',
-    '  float tmp = kelvin / 100.0;',
-    '  float r; float g; float b;',
-    '  if (tmp <= 66.0) { r = 255.0; } else { r = 329.698727446 * pow(tmp - 60.0, -0.1332047592); }',
-    '  if (tmp <= 66.0) { g = 99.4708025861 * log(tmp) - 161.1195681661; } else { g = 288.1221695283 * pow(tmp - 60.0, -0.0755148492); }',
-    '  if (tmp >= 66.0) { b = 255.0; } else if (tmp <= 19.0) { b = 0.0; } else { b = 138.5177312231 * log(tmp - 10.0) - 305.0447927307; }',
-    '  return clamp(vec3(r,g,b)/255.0, 0.0, 1.0);',
+  var BFIELD_GLSL = [
+    'vec3 bField(vec3 p){',
+    '  vec3 B = vec3(0.0);',
+    '  for(int i=0;i<10;i++){',
+    '    vec3 d = p - uCharges[i].xyz;',
+    '    float r2 = dot(d,d) + 1e-3;',
+    '    B += uCharges[i].w * d / (r2*sqrt(r2));',
+    '  }',
+    '  return B;',
     '}'
   ].join('\n');
+  // média de ruído fino amostrado ao longo da direção do fluxo -> o
+  // ruído vira fios "escovados"; domínio ANISOTRÓPICO (comprimido ao
+  // longo do fluxo — cada fio nasce ~4x mais longo antes mesmo da
+  // convolução) e curva de contraste gamma < 1 no |x| (fios nítidos)
+  var LIC_GLSL = [
+    'float licFibril(vec3 p, vec3 dir, float freq, float stepLen, float t){',
+    '  float acc = 0.0; float wsum = 0.0;',
+    '  for(int i=-6;i<=6;i++){',
+    '    float s = float(i)/6.0;',
+    '    float w = 1.0 - abs(s)*0.62;',
+    '    vec3 q = normalize(p + dir*(s*stepLen));',
+    '    vec3 qq = q*freq;',
+    '    qq -= dir*(dot(qq, dir)*0.88);',
+    '    acc += snoise(qq + vec3(0.0,0.0,t*0.05)) * w;',
+    '    wsum += w;',
+    '  }',
+    '  acc /= wsum;',
+    '  return sign(acc) * pow(abs(acc), 0.68);',
+    '}'
+  ].join('\n');
+  // aparelhos fracos: LIC com 5 amostras em vez de 7 (mesma técnica do
+  // ajuste de oitavas do fBm, feito por substituição de texto no GLSL)
+  function tuneLic(src){
+    return TP.lic7 ? src : src
+      .replace(/int i=-6;i<=6/g, 'int i=-3;i<=3')
+      .replace(/float\(i\)\/6\.0/g, 'float(i)/3.0');
+  }
 
+  // Radiação de corpo negro (aproximação de Tanner Helland, válida
+  // ~1000K-40000K): cor a partir de temperatura para as estrelas.
   function kelvinToRGB(kelvin){
     var tmp = kelvin/100, r,g,b;
     if (tmp<=66) r=255; else r=Math.min(255,Math.max(0,329.698727446*Math.pow(tmp-60,-0.1332047592)));
@@ -336,19 +351,20 @@ function init(){
     if (tmp>=66) b=255; else if(tmp<=19) b=0; else b=Math.min(255,Math.max(0,138.5177312231*Math.log(tmp-10)-305.0447927307));
     return new THREE.Color(r/255,g/255,b/255);
   }
-  function clamp01(x){ return Math.min(1, Math.max(0, x)); }
-  function colorToRgba(c, a){
-    var r = Math.round(clamp01(c.r)*255);
-    var g = Math.round(clamp01(c.g)*255);
-    var b = Math.round(clamp01(c.b)*255);
-    return 'rgba('+r+','+g+','+b+','+a+')';
-  }
 
   // ---------------------------------------------------------------
   // Infraestrutura compartilhada de "quad" de tela cheia
   // (usada pela simulação e pelo bloom multi-escala)
   // ---------------------------------------------------------------
   var quadVertex = 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy,0.0,1.0); }';
+  // vertex padrão de malha com UV (coroa de raios e cartões de proeminência)
+  var uvMeshVertex = [
+    'varying vec2 vUv;',
+    'void main(){',
+    '  vUv = uv;',
+    '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);',
+    '}'
+  ].join('\n');
   function makeFullscreenScene(material){
     var geo = new THREE.PlaneGeometry(2,2);
     var mesh = new THREE.Mesh(geo, material);
@@ -625,8 +641,6 @@ function init(){
   var SUN_RADIUS = 2.2;
   var sunGeometry = new THREE.SphereGeometry(SUN_RADIUS, SPHERE_SEG, SPHERE_SEG);
 
-  var FACULAE_COLOR = kelvinToRGB(6400);
-
   // ---------------------------------------------------------------
   // MODELO MAGNÉTICO: o que organiza a cromosfera real é o campo B.
   // Aproximamos com cargas pontuais logo abaixo da superfície:
@@ -638,7 +652,6 @@ function init(){
   // vivem nas linhas neutras (Br=0), manchas nos pés das cargas, plage
   // onde |B| é forte. Posições em espaço do objeto: giram com a esfera.
   // ---------------------------------------------------------------
-  var CHARGE_COUNT = 10;
   var charges = [];
   var pairStates = [];
   function sphDir(lo, la){
@@ -754,16 +767,21 @@ function init(){
   function flicker1f(t){
     return (vnoise1(t) + 0.5*vnoise1(t*2.17 + 7.3) + 0.25*vnoise1(t*4.61 + 13.1)) / 1.75;
   }
-  // avaliação do mesmo campo em JS (para ancorar proeminências etc.)
+  // avaliação do mesmo campo em JS (para ancorar proeminências etc.).
+  // Roda por proeminência a cada frame: aritmética escalar num vetor
+  // reutilizado — zero alocações no caminho quente (o retorno é
+  // compartilhado; nenhum chamador o retém entre chamadas)
+  var bFieldOut = new THREE.Vector3();
   function bFieldJS(p){
-    var B = new THREE.Vector3();
+    var bx = 0, by = 0, bz = 0;
     for (var i=0;i<charges.length;i++){
       var c = charges[i];
-      var d = new THREE.Vector3(p.x-c.x, p.y-c.y, p.z-c.z);
-      var r2 = d.lengthSq() + 1e-3;
-      B.addScaledVector(d, c.w/(r2*Math.sqrt(r2)));
+      var dx = p.x-c.x, dy = p.y-c.y, dz = p.z-c.z;
+      var r2 = dx*dx + dy*dy + dz*dz + 1e-3;
+      var k = c.w/(r2*Math.sqrt(r2));
+      bx += dx*k; by += dy*k; bz += dz*k;
     }
-    return B;
+    return bFieldOut.set(bx, by, bz);
   }
 
   var sunUniforms = {
@@ -808,32 +826,7 @@ function init(){
     'uniform vec2 uSimTexel;',
     'uniform float uGranFreq;',
     'uniform vec4 uCharges[10];',
-    'varying vec2 vUv;'].join('\n') + '\n' + SFTDIR_GLSL + '\n' + [
-    'vec3 bField(vec3 p){',
-    '  vec3 B = vec3(0.0);',
-    '  for(int i=0;i<10;i++){',
-    '    vec3 d = p - uCharges[i].xyz;',
-    '    float r2 = dot(d,d) + 1e-3;',
-    '    B += uCharges[i].w * d / (r2*sqrt(r2));',
-    '  }',
-    '  return B;',
-    '}',
-    'float licFibril(vec3 p, vec3 dir, float freq, float stepLen, float t){',
-    '  float acc = 0.0; float wsum = 0.0;',
-    '  for(int i=-6;i<=6;i++){',
-    '    float s = float(i)/6.0;',
-    '    float w = 1.0 - abs(s)*0.62;',
-    '    vec3 q = normalize(p + dir*(s*stepLen));',
-    // ruído ANISOTRÓPICO: domínio comprimido ao longo do fluxo — cada
-    // fio nasce ~4x mais longo antes mesmo da convolução
-    '    vec3 qq = q*freq;',
-    '    qq -= dir*(dot(qq, dir)*0.88);',
-    '    acc += snoise(qq + vec3(0.0,0.0,t*0.05)) * w;',
-    '    wsum += w;',
-    '  }',
-    '  acc /= wsum;',
-    '  return sign(acc) * pow(abs(acc), 0.68);',
-    '}',
+    'varying vec2 vUv;'].join('\n') + '\n' + SFTDIR_GLSL + '\n' + BFIELD_GLSL + '\n' + LIC_GLSL + '\n' + [
     'void main(){',
     '  float lon = vUv.x*6.28318530718;',
     '  float lat = (vUv.y-0.5)*3.14159265359;',
@@ -927,11 +920,7 @@ function init(){
     '  gl_FragColor = vec4(min(heatLS, 1.0), fil, min(plage, 1.0), 0.5 + 0.5*fibC);',
     '}'
   ].join('\n');
-  if (!TP.lic7) {
-    chromoFragment = chromoFragment
-      .replace(/int i=-6;i<=6/g, 'int i=-3;i<=3')
-      .replace(/float\(i\)\/6\.0/g, 'float(i)/3.0');
-  }
+  chromoFragment = tuneLic(chromoFragment);
   var chromoMaterial = new THREE.ShaderMaterial({ uniforms: chromoUniforms, vertexShader: quadVertex, fragmentShader: chromoFragment });
   var chromoScene = makeFullscreenScene(chromoMaterial);
 
@@ -959,16 +948,7 @@ function init(){
     'uniform vec2 uTexel;',
     'uniform sampler2D uSimTex;',
     'uniform vec2 uSimTexel;',
-    'varying vec2 vUv;'].join('\n') + '\n' + SFTDIR_GLSL + '\n' + [
-    'vec3 bField(vec3 p){',
-    '  vec3 B = vec3(0.0);',
-    '  for(int i=0;i<10;i++){',
-    '    vec3 d = p - uCharges[i].xyz;',
-    '    float r2 = dot(d,d) + 1e-3;',
-    '    B += uCharges[i].w * d / (r2*sqrt(r2));',
-    '  }',
-    '  return B;',
-    '}',
+    'varying vec2 vUv;'].join('\n') + '\n' + SFTDIR_GLSL + '\n' + BFIELD_GLSL + '\n' + [
     'vec2 sphToUv(vec3 q){',
     '  return vec2(fract(atan(q.z, q.x)/6.28318530718),',
     '              asin(clamp(q.y, -1.0, 1.0))/3.14159265359 + 0.5);',
@@ -1128,7 +1108,7 @@ function init(){
   // de mundo — bug real: o padrão ficava fixo no espaço enquanto a esfera
   // girava por baixo ("derrapagem" das manchas).
   // ---------------------------------------------------------------
-  var sunFragmentShader = NOISE_GLSL + '\n' + BLACKBODY_GLSL + '\n' + [
+  var sunFragmentShader = NOISE_GLSL + '\n' + [
     'uniform float uTime;',
     'uniform sampler2D uChromoTex;',
     'uniform sampler2D uChromoFar;',
@@ -1146,38 +1126,7 @@ function init(){
     'varying vec3 vPosObj;',
     'varying float vDisp;',
     'varying vec2 vUvV;',
-    'uniform vec4 uCharges[10];'].join('\n') + '\n' + SFTDIR_GLSL + '\n' + [
-    // Campo magnético de cargas pontuais sob a superfície + ruído fraco
-    // (sal do sol calmo). É ESTE campo que organiza fibrilas, filamentos,
-    // manchas e plage — como na cromosfera real.
-    'vec3 bField(vec3 p){',
-    '  vec3 B = vec3(0.0);',
-    '  for(int i=0;i<10;i++){',
-    '    vec3 d = p - uCharges[i].xyz;',
-    '    float r2 = dot(d,d) + 1e-3;',
-    '    B += uCharges[i].w * d / (r2*sqrt(r2));',
-    '  }',
-    '  return B;',
-    '}',
-    // LIC (line integral convolution) barata: média de ruído fino amostrado
-    // ao longo da direção do fluxo -> o ruído vira fios "escovados".
-    'float licFibril(vec3 p, vec3 dir, float freq, float stepLen, float t){',
-    '  float acc = 0.0; float wsum = 0.0;',
-    '  for(int i=-6;i<=6;i++){',
-    '    float s = float(i)/6.0;',
-    '    float w = 1.0 - abs(s)*0.62;',
-    '    vec3 q = normalize(p + dir*(s*stepLen));',
-    // ruído ANISOTRÓPICO: domínio comprimido ao longo do fluxo — cada
-    // fio nasce ~4x mais longo antes mesmo da convolução
-    '    vec3 qq = q*freq;',
-    '    qq -= dir*(dot(qq, dir)*0.88);',
-    '    acc += snoise(qq + vec3(0.0,0.0,t*0.05)) * w;',
-    '    wsum += w;',
-    '  }',
-    '  acc /= wsum;',
-    // curva de contraste: fios finos nítidos, não névoa (gamma < 1 no |x|)
-    '  return sign(acc) * pow(abs(acc), 0.68);',
-    '}',
+    'uniform vec4 uCharges[10];'].join('\n') + '\n' + SFTDIR_GLSL + '\n' + BFIELD_GLSL + '\n' + LIC_GLSL + '\n' + [
     'void main(){',
     '  vec3 viewDir = normalize(cameraPosition - vPositionW);',
     '  vec3 N = normalize(vNormalW);',
@@ -1348,13 +1297,7 @@ function init(){
     '}'
   ].join('\n');
 
-  // aparelhos fracos: LIC com 5 amostras em vez de 7 (mesma técnica do
-  // ajuste de oitavas do fBm, feito por substituição de texto no GLSL)
-  if (!TP.lic7) {
-    sunFragmentShader = sunFragmentShader
-      .replace(/int i=-6;i<=6/g, 'int i=-3;i<=3')
-      .replace(/float\(i\)\/6\.0/g, 'float(i)/3.0');
-  }
+  sunFragmentShader = tuneLic(sunFragmentShader);
 
   var sunMaterial = new THREE.ShaderMaterial({
     uniforms: sunUniforms,
@@ -1420,13 +1363,7 @@ function init(){
   };
   var coronaRaysMat = new THREE.ShaderMaterial({
     uniforms: coronaRaysUniforms,
-    vertexShader: [
-      'varying vec2 vUv;',
-      'void main(){',
-      '  vUv = uv;',
-      '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);',
-      '}'
-    ].join('\n'),
+    vertexShader: uvMeshVertex,
     fragmentShader: NOISE_GLSL + '\n' + [
       'uniform float uTime;',
       'uniform vec3 uRight;',
@@ -1637,12 +1574,153 @@ function init(){
     } else ang0 = Math.random()*Math.PI;
     ps.meshes.forEach(function(mm, k){
       var spin = new THREE.Quaternion().setFromAxisAngle(anchor, ang0 + k*Math.PI*0.5);
-      mm.quaternion.copy(spin.multiply(baseQ.clone()));
+      mm.quaternion.copy(spin.multiply(baseQ));
       mm.position.copy(anchor).multiplyScalar(SUN_RADIUS*0.995);
       mm.userData.dir = anchor.clone();
       mm.material.uniforms.uSeed.value = Math.random()*100;
     });
   }
+  // uniforms comuns aos três shaders de proeminência (ciclo de vida,
+  // agitação por flare e "tempo do plasma" são a mesma interface)
+  var PROM_HEADER_GLSL = [
+    'uniform float uTime;',
+    'uniform float uSeed;',
+    'uniform float uIntensity;',
+    'uniform float uAspect;',
+    'uniform float uLife;',
+    'uniform float uAgit;',
+    'uniform float uPTime;',
+    'varying vec2 vUv;'
+  ].join('\n');
+  var hedgerowFragment = NOISE_GLSL + '\n' + PROM_HEADER_GLSL + '\n' + [
+    'void main(){',
+    '  float xn = vUv.x*2.0 - 1.0;',
+    '  float y = vUv.y;',
+    // topo em arco irregular (mais alto no meio, recortado por ruído
+    // em duas escalas — os montículos da ref-05 são bem denteados)
+    '  float yTop = (0.60 + 0.28*snoise(vec3(xn*2.3, uSeed, 0.0))',
+    '             + 0.12*snoise(vec3(xn*6.1, uSeed*1.7, 2.0))) * (1.0 - xn*xn*0.62);',
+    // ciclo de vida: a cortina CRESCE da superfície e recolhe no fim
+    '  yTop *= 0.10 + 0.90*uLife;',
+    // flare vizinho ERGUE a cortina (injeção de energia por baixo)
+    '  yTop *= 1.0 + 0.60*uAgit;',
+    // cortina: fios VERTICAIS finos, drenando devagar (uPTime acelera
+    // a drenagem sob agitação, sem saltos)
+    '  float th1 = snoise(vec3(vUv.x*uAspect*24.0, y*3.0 - uPTime*0.05, uSeed));',
+    '  float th2 = snoise(vec3(vUv.x*uAspect*55.0, y*6.0 - uPTime*0.08, uSeed+7.7));',
+    '  float wisp = smoothstep(0.05, 0.80, (th1*0.6 + th2*0.5)*0.5+0.5);',
+    '  float body = smoothstep(0.02, 0.16, yTop - y);',
+    '  float a = wisp * body * uIntensity;',
+    '  a *= 1.0 - smoothstep(0.72, 1.0, abs(xn));',
+    // corta abaixo da superfície curva (sem borda reta flutuante)
+    '  a *= smoothstep(0.0, 0.07, y);',
+    // extinção alargada 0.08→0.22 (backlog M2 nº6, aqui e nas outras
+    // 2 camadas): o fade final comprimia-se em ~1 frame — a
+    // proeminência agora se apaga ao longo da cauda do envelope
+    '  a *= smoothstep(0.0, 0.22, uLife);',
+    '  vec3 col = mix(vec3(0.45,0.06,0.02), vec3(1.30,0.42,0.12), wisp*(1.0-y*0.8));',
+    // brilho HDR do flare: a COR sobe (o alfa satura no corpo denso e
+    // esconderia o reavivamento; >1.0 o bloom captura)
+    '  col *= 1.0 + 0.9*uAgit;',
+    '  gl_FragColor = vec4(col, a*1.05);',
+    '}'
+  ].join('\n');
+  // PLUMA VARRIDA (ref-04): a proeminência real da foto não é um
+  // leque denso e simétrico — são FEIXES distintos de fios finos
+  // quase paralelos, todos varridos para um lado, com pontas
+  // desfiadas e céu vazio entre os feixes
+  var fanFragment = NOISE_GLSL + '\n' + PROM_HEADER_GLSL + '\n' + [
+      'void main(){',
+      '  float xn = vUv.x*2.0 - 1.0;',
+      // pé deslocado para o lado oposto à varredura
+      '  float side = (fract(uSeed*0.73) > 0.5) ? 1.0 : -1.0;',
+      '  vec2 p = vec2(xn*uAspect*0.5 - 0.30*side, vUv.y + 0.06);',
+      '  float r = length(p);',
+      '  float ang = atan(-side*p.x, p.y);',
+      // varredura: o fio curva-se para o lado conforme sobe
+      '  float sweep = 0.55 + 0.40*snoise(vec3(uSeed*0.7, 1.3, 0.0));',
+      '  float aa = ang - sweep*r*1.35;',
+      // feixes com VÃOS: gate de baixa frequência sobre o ângulo varrido
+      '  float bundle = snoise(vec3(aa*3.4, uSeed*1.9, 0.4));',
+      '  float bgate = smoothstep(-0.05, 0.42, bundle);',
+      // fios finos e paralelos dentro de cada feixe (drenam devagar)
+      '  float th1 = snoise(vec3(aa*26.0 + uSeed, r*2.0 - uPTime*0.045, uSeed));',
+      '  float th2 = snoise(vec3(aa*57.0 - uSeed, r*3.6 - uPTime*0.07, uSeed*2.3));',
+      '  float wisp = smoothstep(0.12, 0.80, (th1*0.60 + th2*0.50)*0.5+0.5);',
+      // cada feixe tem comprimento próprio; a ponta é DESFIADA
+      '  float blen = 0.62 + 0.34*snoise(vec3(bundle*2.7, uSeed*1.3, 2.2));',
+      // ciclo de vida: os feixes ALONGAM a partir da superfície
+      '  blen *= 0.10 + 0.90*uLife;',
+      // flare vizinho alonga/ergue os feixes
+      '  blen *= 1.0 + 0.50*uAgit;',
+      '  float fray = 0.12*snoise(vec3(aa*13.0, r*6.0, uSeed*3.1));',
+      '  float tip = 1.0 - smoothstep(blen*0.52, blen + fray, r);',
+      '  float a = wisp * bgate * tip * uIntensity;',
+      '  a *= 1.0 - smoothstep(1.05, 1.45, abs(ang));',
+      '  a *= smoothstep(0.0, 0.05, vUv.y);',
+      '  a *= smoothstep(0.0, 0.22, uLife);',
+      // H-alfa contra céu escuro: vermelho profundo, pontas mais frias
+      '  vec3 col = mix(vec3(0.48,0.07,0.02), vec3(1.30,0.45,0.13), wisp*tip);',
+      '  col *= 1.0 + 0.9*uAgit;',
+      '  gl_FragColor = vec4(col, a*1.15);',
+      '}'
+    ].join('\n');
+  // ARCO: tubo de fios seguindo um laço magnético — coordenadas
+  // polares centradas ABAIXO da base; o feixe vive num anel |r-R0|
+  // fino, fios comprimidos na direção ANGULAR (seguem o arco), pés
+  // mais grossos/brilhantes e vão transparente sob o vão do laço
+  var archFragment = NOISE_GLSL + '\n' + PROM_HEADER_GLSL + '\n' + [
+    'void main(){',
+    '  float xn = vUv.x*2.0 - 1.0;',
+    '  float y = vUv.y;',
+    '  vec2 p = vec2(xn*uAspect*0.5, y + 0.22);',
+    '  float r = length(p);',
+    '  float ang = atan(p.x, p.y);',
+    // raio do laço: UM arco só por proeminência (o raio não pode
+    // ondular com o ângulo, senão vira renda de arquinhos) — apenas
+    // uma assimetria suave e respiração lenta. Alto o bastante para
+    // o vão sob o laço se erguer claramente do limbo
+    '  float R0 = 0.78 + 0.05*snoise(vec3(uSeed, 2.1, 0.0))',
+    '           + 0.030*snoise(vec3(ang*0.8 + uSeed, 5.3, uTime*0.02));',
+    // ciclo de vida: o laço ERGUE-SE de sob a superfície (R0 pequeno
+    // fica todo abaixo do limbo) e afunda de volta no colapso
+    '  R0 *= 0.15 + 0.85*uLife;',
+    // flare vizinho ERGUE o laço inteiro
+    '  R0 *= 1.0 + 0.32*uAgit;',
+    '  float d = r - R0;',
+    // fios ao longo do arco (dreno lento de matéria pelos pés: o
+    // padrão angular desliza para baixo dos dois lados; uPTime
+    // acelera o dreno sob agitação, sem saltos)
+    '  float drift = uPTime*0.045;',
+    // FIOS ANISOTRÓPICOS (ref-04): fios reais correm PARALELOS ao
+    // arco — variação rápida ATRAVÉS do tubo (d), lenta ao longo
+    // (ang). Frequências parecidas nos dois eixos viravam mancha
+    // isotrópica ("pele de onça" num tubo sólido).
+    // frequência angular BAIXA: fios longos e contínuos ao longo do
+    // arco (freq alta picotava em "confete tracejado")
+    '  float th1 = snoise(vec3(ang*1.6 + uSeed + sign(ang)*drift, d*34.0, uSeed*1.3));',
+    '  float th2 = snoise(vec3(ang*3.0 - uSeed + sign(ang)*drift*1.6, d*70.0, uSeed*2.1));',
+    // gate chega a ZERO entre fios: céu aparece ATRAVÉS do laço
+    // (proeminência é opticamente fina, não tubo opaco)
+    '  float wisp = smoothstep(0.34, 0.74, (th1*0.62 + th2*0.5)*0.5+0.5);',
+    // feixes com vãos de céu entre grupos de fios
+    '  float bund = smoothstep(-0.35, 0.30, snoise(vec3(ang*2.3 + uSeed*3.1, d*7.0, uSeed)));',
+    // tubo mais grosso e denso nos pés (como nos laços reais)
+    '  float thick = 0.12 + 0.05*smoothstep(0.35, 1.15, abs(ang))',
+    '              + 0.025*snoise(vec3(ang*3.1, uSeed*0.7, 0.0));',
+    // borda EMPLUMADA: os fios definem a silhueta, não um degrau
+    '  float tube = 1.0 - smoothstep(thick*0.10, thick*1.30, abs(d));',
+    '  float feet = 1.0 - smoothstep(1.08, 1.38, abs(ang));',
+    '  float a = wisp * bund * tube * feet * uIntensity;',
+    '  a *= smoothstep(0.0, 0.06, y);',
+    '  a *= smoothstep(0.0, 0.22, uLife);',
+    '  vec3 col = mix(vec3(0.45,0.06,0.02), vec3(1.28,0.42,0.12), wisp);',
+    '  col *= 1.0 + 0.9*uAgit;',
+    // vãos derrubaram a cobertura média: compensa no alfa para o laço
+    // existir em exposição nativa (fios finos MAS visíveis)
+    '  gl_FragColor = vec4(col, a*2.0);',
+    '}'
+  ].join('\n');
   (function buildProminences(){
     for(var i=0;i<PROMINENCE_COUNT;i++){
       // âncora na superfície + plano vertical (local +Y = radial para fora).
@@ -1670,9 +1748,9 @@ function init(){
       var geo = new THREE.PlaneGeometry(w, h, 48, 1);
       geo.translate(0, h*0.5 - SUN_RADIUS*0.02, 0);   // base levemente dentro do disco
       // CONEXÃO FÍSICA: um cartão reto não abraça a esfera — nas pontas a
-      // base flutuava até ~0.14R acima do limbo (o corte parabólico uSag
-      // só disfarçava, deixando vão sob os pés dos arcos). Curvamos o
-      // cartão em torno do centro do Sol: cada coluna de vértices vira um
+      // base flutuava até ~0.14R acima do limbo (um corte parabólico no
+      // shader só disfarçava, deixando vão sob os pés dos arcos). Curvamos
+      // o cartão em torno do centro do Sol: cada coluna de vértices vira um
       // raio, a base fica a raio constante 0.975R em QUALQUER x e vUv.y
       // passa a medir altura radial verdadeira acima da base.
       (function bendOverSphere(){
@@ -1691,9 +1769,6 @@ function init(){
         uSeed: { value: Math.random()*100 },
         uIntensity: { value: 1.0 },
         uAspect: { value: w/h },
-        // cartão curvado: a base já segue a esfera; o termo uSag vira só
-        // um fade suave de emersão logo abaixo da superfície (valor 0)
-        uSag: { value: 0.0 },
         // ciclo de vida (0..1): a ESTRUTURA cresce da superfície no
         // nascimento e recolhe no colapso — nunca pop-in
         uLife: { value: 0.0 },
@@ -1704,171 +1779,9 @@ function init(){
         // uTime por um fator transitório saltaria a coordenada do noise)
         uPTime: { value: 0.0 }
       };
-      var hedgerowFragment = NOISE_GLSL + '\n' + [
-        'uniform float uTime;',
-        'uniform float uSeed;',
-        'uniform float uIntensity;',
-        'uniform float uAspect;',
-        'uniform float uSag;',
-        'uniform float uLife;',
-        'uniform float uAgit;',
-        'uniform float uPTime;',
-        'varying vec2 vUv;',
-        'void main(){',
-        '  float xn = vUv.x*2.0 - 1.0;',
-        '  float y = vUv.y;',
-        // topo em arco irregular (mais alto no meio, recortado por ruído
-        // em duas escalas — os montículos da ref-05 são bem denteados)
-        '  float yTop = (0.60 + 0.28*snoise(vec3(xn*2.3, uSeed, 0.0))',
-        '             + 0.12*snoise(vec3(xn*6.1, uSeed*1.7, 2.0))) * (1.0 - xn*xn*0.62);',
-        // ciclo de vida: a cortina CRESCE da superfície e recolhe no fim
-        '  yTop *= 0.10 + 0.90*uLife;',
-        // flare vizinho ERGUE a cortina (injeção de energia por baixo)
-        '  yTop *= 1.0 + 0.60*uAgit;',
-        // cortina: fios VERTICAIS finos, drenando devagar (uPTime acelera
-        // a drenagem sob agitação, sem saltos)
-        '  float th1 = snoise(vec3(vUv.x*uAspect*24.0, y*3.0 - uPTime*0.05, uSeed));',
-        '  float th2 = snoise(vec3(vUv.x*uAspect*55.0, y*6.0 - uPTime*0.08, uSeed+7.7));',
-        '  float wisp = smoothstep(0.05, 0.80, (th1*0.6 + th2*0.5)*0.5+0.5);',
-        '  float body = smoothstep(0.02, 0.16, yTop - y);',
-        '  float a = wisp * body * uIntensity;',
-        '  a *= 1.0 - smoothstep(0.72, 1.0, abs(xn));',
-        // corta abaixo da superfície curva (sem borda reta flutuante)
-        '  a *= smoothstep(0.0, 0.07, y - uSag*xn*xn);',
-        // extinção alargada 0.08→0.22 (backlog M2 nº6, aqui e nas outras
-        // 2 camadas): o fade final comprimia-se em ~1 frame — a
-        // proeminência agora se apaga ao longo da cauda do envelope
-        '  a *= smoothstep(0.0, 0.22, uLife);',
-        '  vec3 col = mix(vec3(0.45,0.06,0.02), vec3(1.30,0.42,0.12), wisp*(1.0-y*0.8));',
-        // brilho HDR do flare: a COR sobe (o alfa satura no corpo denso e
-        // esconderia o reavivamento; >1.0 o bloom captura)
-        '  col *= 1.0 + 0.9*uAgit;',
-        '  gl_FragColor = vec4(col, a*1.05);',
-        '}'
-      ].join('\n');
-      // PLUMA VARRIDA (ref-04): a proeminência real da foto não é um
-      // leque denso e simétrico — são FEIXES distintos de fios finos
-      // quase paralelos, todos varridos para um lado, com pontas
-      // desfiadas e céu vazio entre os feixes
-      var fanFragment = NOISE_GLSL + '\n' + [
-          'uniform float uTime;',
-          'uniform float uSeed;',
-          'uniform float uIntensity;',
-          'uniform float uAspect;',
-          'uniform float uSag;',
-          'uniform float uLife;',
-          'uniform float uAgit;',
-          'uniform float uPTime;',
-          'varying vec2 vUv;',
-          'void main(){',
-          '  float xn = vUv.x*2.0 - 1.0;',
-          // pé deslocado para o lado oposto à varredura
-          '  float side = (fract(uSeed*0.73) > 0.5) ? 1.0 : -1.0;',
-          '  vec2 p = vec2(xn*uAspect*0.5 - 0.30*side, vUv.y + 0.06);',
-          '  float r = length(p);',
-          '  float ang = atan(-side*p.x, p.y);',
-          // varredura: o fio curva-se para o lado conforme sobe
-          '  float sweep = 0.55 + 0.40*snoise(vec3(uSeed*0.7, 1.3, 0.0));',
-          '  float aa = ang - sweep*r*1.35;',
-          // feixes com VÃOS: gate de baixa frequência sobre o ângulo varrido
-          '  float bundle = snoise(vec3(aa*3.4, uSeed*1.9, 0.4));',
-          '  float bgate = smoothstep(-0.05, 0.42, bundle);',
-          // fios finos e paralelos dentro de cada feixe (drenam devagar)
-          '  float th1 = snoise(vec3(aa*26.0 + uSeed, r*2.0 - uPTime*0.045, uSeed));',
-          '  float th2 = snoise(vec3(aa*57.0 - uSeed, r*3.6 - uPTime*0.07, uSeed*2.3));',
-          '  float wisp = smoothstep(0.12, 0.80, (th1*0.60 + th2*0.50)*0.5+0.5);',
-          // cada feixe tem comprimento próprio; a ponta é DESFIADA
-          '  float blen = 0.62 + 0.34*snoise(vec3(bundle*2.7, uSeed*1.3, 2.2));',
-          // ciclo de vida: os feixes ALONGAM a partir da superfície
-          '  blen *= 0.10 + 0.90*uLife;',
-          // flare vizinho alonga/ergue os feixes
-          '  blen *= 1.0 + 0.50*uAgit;',
-          '  float fray = 0.12*snoise(vec3(aa*13.0, r*6.0, uSeed*3.1));',
-          '  float tip = 1.0 - smoothstep(blen*0.52, blen + fray, r);',
-          '  float a = wisp * bgate * tip * uIntensity;',
-          '  a *= 1.0 - smoothstep(1.05, 1.45, abs(ang));',
-          '  a *= smoothstep(0.0, 0.05, vUv.y - uSag*xn*xn);',
-          '  a *= smoothstep(0.0, 0.22, uLife);',
-          // H-alfa contra céu escuro: vermelho profundo, pontas mais frias
-          '  vec3 col = mix(vec3(0.48,0.07,0.02), vec3(1.30,0.45,0.13), wisp*tip);',
-          '  col *= 1.0 + 0.9*uAgit;',
-          '  gl_FragColor = vec4(col, a*1.15);',
-          '}'
-        ].join('\n');
-      // ARCO: tubo de fios seguindo um laço magnético — coordenadas
-      // polares centradas ABAIXO da base; o feixe vive num anel |r-R0|
-      // fino, fios comprimidos na direção ANGULAR (seguem o arco), pés
-      // mais grossos/brilhantes e vão transparente sob o vão do laço
-      var archFragment = NOISE_GLSL + '\n' + [
-        'uniform float uTime;',
-        'uniform float uSeed;',
-        'uniform float uIntensity;',
-        'uniform float uAspect;',
-        'uniform float uSag;',
-        'uniform float uLife;',
-        'uniform float uAgit;',
-        'uniform float uPTime;',
-        'varying vec2 vUv;',
-        'void main(){',
-        '  float xn = vUv.x*2.0 - 1.0;',
-        '  float y = vUv.y;',
-        '  vec2 p = vec2(xn*uAspect*0.5, y + 0.22);',
-        '  float r = length(p);',
-        '  float ang = atan(p.x, p.y);',
-        // raio do laço: UM arco só por proeminência (o raio não pode
-        // ondular com o ângulo, senão vira renda de arquinhos) — apenas
-        // uma assimetria suave e respiração lenta. Alto o bastante para
-        // o vão sob o laço se erguer claramente do limbo
-        '  float R0 = 0.78 + 0.05*snoise(vec3(uSeed, 2.1, 0.0))',
-        '           + 0.030*snoise(vec3(ang*0.8 + uSeed, 5.3, uTime*0.02));',
-        // ciclo de vida: o laço ERGUE-SE de sob a superfície (R0 pequeno
-        // fica todo abaixo do limbo) e afunda de volta no colapso
-        '  R0 *= 0.15 + 0.85*uLife;',
-        // flare vizinho ERGUE o laço inteiro
-        '  R0 *= 1.0 + 0.32*uAgit;',
-        '  float d = r - R0;',
-        // fios ao longo do arco (dreno lento de matéria pelos pés: o
-        // padrão angular desliza para baixo dos dois lados; uPTime
-        // acelera o dreno sob agitação, sem saltos)
-        '  float drift = uPTime*0.045;',
-        // FIOS ANISOTRÓPICOS (ref-04): fios reais correm PARALELOS ao
-        // arco — variação rápida ATRAVÉS do tubo (d), lenta ao longo
-        // (ang). Frequências parecidas nos dois eixos viravam mancha
-        // isotrópica ("pele de onça" num tubo sólido).
-        // frequência angular BAIXA: fios longos e contínuos ao longo do
-        // arco (freq alta picotava em "confete tracejado")
-        '  float th1 = snoise(vec3(ang*1.6 + uSeed + sign(ang)*drift, d*34.0, uSeed*1.3));',
-        '  float th2 = snoise(vec3(ang*3.0 - uSeed + sign(ang)*drift*1.6, d*70.0, uSeed*2.1));',
-        // gate chega a ZERO entre fios: céu aparece ATRAVÉS do laço
-        // (proeminência é opticamente fina, não tubo opaco)
-        '  float wisp = smoothstep(0.34, 0.74, (th1*0.62 + th2*0.5)*0.5+0.5);',
-        // feixes com vãos de céu entre grupos de fios
-        '  float bund = smoothstep(-0.35, 0.30, snoise(vec3(ang*2.3 + uSeed*3.1, d*7.0, uSeed)));',
-        // tubo mais grosso e denso nos pés (como nos laços reais)
-        '  float thick = 0.12 + 0.05*smoothstep(0.35, 1.15, abs(ang))',
-        '              + 0.025*snoise(vec3(ang*3.1, uSeed*0.7, 0.0));',
-        // borda EMPLUMADA: os fios definem a silhueta, não um degrau
-        '  float tube = 1.0 - smoothstep(thick*0.10, thick*1.30, abs(d));',
-        '  float feet = 1.0 - smoothstep(1.08, 1.38, abs(ang));',
-        '  float a = wisp * bund * tube * feet * uIntensity;',
-        '  a *= smoothstep(0.0, 0.06, y - uSag*xn*xn);',
-        '  a *= smoothstep(0.0, 0.22, uLife);',
-        '  vec3 col = mix(vec3(0.45,0.06,0.02), vec3(1.28,0.42,0.12), wisp);',
-        '  col *= 1.0 + 0.9*uAgit;',
-        // vãos derrubaram a cobertura média: compensa no alfa para o laço
-        // existir em exposição nativa (fios finos MAS visíveis)
-        '  gl_FragColor = vec4(col, a*2.0);',
-        '}'
-      ].join('\n');
       var mat = new THREE.ShaderMaterial({
         uniforms: promUniforms,
-        vertexShader: [
-          'varying vec2 vUv;',
-          'void main(){',
-          '  vUv = uv;',
-          '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);',
-          '}'
-        ].join('\n'),
+        vertexShader: uvMeshVertex,
         fragmentShader: isArch ? archFragment : (isHedgerow ? hedgerowFragment : fanFragment),
         transparent: true,
         blending: THREE.AdditiveBlending,
@@ -3074,6 +2987,12 @@ function init(){
   var elapsed = 0;
   var simAccum = 0;
   var chromoAccum = 0;
+  // temporários do frame (reutilizados: nada de alocação por frame)
+  var camDirN = new THREE.Vector3();
+  var promNormal = new THREE.Vector3();
+  var promWorldTmp = new THREE.Vector3();
+  var camRightTmp = new THREE.Vector3();
+  var camUpTmp = new THREE.Vector3();
   var SIM_STEP_INTERVAL = TP.simStep;
   // MACRO_SLOW (bug report do dono pós-LOOP-7): a macro-evolução — a
   // FORMA do campo de filamentos (fluxo advectado, canal G) e a
@@ -3207,10 +3126,7 @@ function init(){
     var sfEnv = flareEnvelope(surfFlareT) * 1.7 * surfFlareAmp;
     // uFlare.xyz em espaço do OBJETO (o mesmo das cargas/sp no shader)
     sunUniforms.uFlare.value.set(surfFlareDir.x, surfFlareDir.y, surfFlareDir.z, sfEnv < 0.004 ? 0 : sfEnv);
-    var camDirN = camera.position.clone().normalize();
-    var promNormal = new THREE.Vector3();
-    var camRightTmp = new THREE.Vector3();
-    var camUpTmp = new THREE.Vector3();
+    camDirN.copy(camera.position).normalize();
     // estado por proeminência (uma vez por PAR de cartões, não por mesh)
     promStates.forEach(function(ps){
       // ciclo de vida: nasce crescendo da superfície, vive, colapsa e a
@@ -3239,12 +3155,13 @@ function init(){
       // de perfil (edgeK), mas o PAR deve somar brilho ~constante — o
       // gêmeo carrega o que o outro perde. Sem a normalização, a sorte
       // do spin deixava proeminências até ~2.6x mais fracas que outras.
-      ps.orient = ps.meshes.map(function(mm){
-        mm.getWorldDirection(promNormal);
+      if (!ps.orient) ps.orient = [0, 0];
+      for (var oi = 0; oi < 2; oi++){
+        ps.meshes[oi].getWorldDirection(promNormal);
         var nv = Math.abs(promNormal.dot(camDirN));
         var ek = Math.min(1, Math.max(0, (nv - 0.03) / 0.13));
-        return (1.0 - 0.5*nv) * ek*ek*(3 - 2*ek);
-      });
+        ps.orient[oi] = (1.0 - 0.5*nv) * ek*ek*(3 - 2*ek);
+      }
       ps.orientNorm = 1.05 / Math.max(0.45, ps.orient[0] + ps.orient[1]);
     });
     prominenceMeshes.forEach(function(m){
@@ -3263,8 +3180,8 @@ function init(){
       // flare vizinho reaviva o plasma suspenso (interação visível)
       base += 1.6 * ps.agit;
       // física do limbo: proeminências só brilham na borda; contra o disco, somem
-      var wd = m.userData.dir.clone().applyQuaternion(prominenceGroup.quaternion);
-      var facing = wd.dot(camDirN);
+      var facing = promWorldTmp.copy(m.userData.dir)
+        .applyQuaternion(prominenceGroup.quaternion).dot(camDirN);
       var s = Math.min(1, Math.max(0, (facing - 0.10) / 0.42));
       s = s*s*(3.0-2.0*s);
       base *= (0.05 + 0.95*(1.0 - s));

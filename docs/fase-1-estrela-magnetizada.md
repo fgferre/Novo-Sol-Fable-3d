@@ -119,6 +119,31 @@ futuro com juiz visual.
   (SwiftShader): busy 1.09 ms (loops=0) vs 1.00 ms (loops=1.2, 12/12
   traçados) — delta dentro do ruído; draw calls 30→31 (+1 exato).
 
+## Reality check contra fotos reais (2026-07-10)
+
+Juiz visual lado a lado com fotografias reais (além das refs do repo):
+X17 de 2003-10-28 em H-alfa (`File:28102003 halpha.jpg`, Wikimedia
+Commons — A foto canônica de two-ribbon no disco), loops SDO/AIA 171
+no limbo (`File:Bright Arcing Loops`, Commons) e a ref-08 do repo
+(AIA 131, flares no limbo). Capturas de comparação reproduzíveis via
+`tools/shot-flare-views.js` (flare no limbo + close das fitas em det).
+
+- **Bate**: duas fitas alongadas saturando a ~branco com canal escuro
+  entre elas, junto às manchas do par; bordas em strands; arcada em
+  escada ligando fita a fita; loops ambientes no limbo = arcos finos
+  brilhantes contra o céu, em feixes (como o AIA 171 real).
+- **Desvios achados e CORRIGIDOS**: fitas reais são tortas (curvas e
+  kinks — as nossas eram retas com wobble leve) e o par real é
+  assimétrico (uma fita mais brilhante/estreita). Shader ganhou dobra
+  de baixa freq compartilhada (o par curva junto), ondulação
+  INDEPENDENTE por fita e assimetria ±24% de brilho / ∓15% de largura
+  com lado sorteado por evento.
+- **Desvio conhecido e ACEITO**: no disco, laços pós-flare em H-alfa
+  real aparecem ESCUROS depois de esfriar (absorção); a nossa arcada
+  branca-quente modela só a fase quente recém-reconectada (estética
+  AIA/ref-08) e esmaece antes do estágio frio — o estágio "arcada
+  escura" fica de fora por ora.
+
 ## Débito consciente
 
 - Fail-rate do semeador ambiente ~80% (linhas abertas/rasteiras

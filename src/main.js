@@ -1297,15 +1297,23 @@ function init(){
     '      float fdx = dot(sp, uFlareGeo.xyz);',
     '      float fdy = dot(sp, uFlarePerp.xyz);',
     '      float falong = exp(-fdx*fdx/(uFlarePerp.w*uFlarePerp.w));',
-    // fitas reais NÃO são barras de aerógrafo: a linha central ONDULA
-    // ao longo da PIL e o brilho quebra em STRANDS com vãos escuros
-    // (fase própria do evento em uFlareRib.z — cada flare rasga outro)
-    '      float fwob = fbmLight(sp*34.0 + vec3(uFlareRib.z*1.3)) * 0.013;',
+    // fitas reais NÃO são barras de aerógrafo (reality-check vs o X17
+    // de 2003-10-28 em H-alfa): o PAR curva junto (dobra de baixa freq
+    // compartilhada), cada fita ainda ondula POR CONTA PRÓPRIA (kinks
+    // independentes — fitas reais não são paralelas perfeitas), o
+    // brilho quebra em STRANDS com vãos, e o par é ASSIMÉTRICO — uma
+    // fita mais brilhante/estreita que a outra (lado sorteado por
+    // evento via a fase uFlareRib.z)
+    '      float fbend = fbmLight(sp*12.0 + vec3(uFlareRib.z*0.7)) * 0.022;',
+    '      float fwob1 = fbend + fbmLight(sp*34.0 + vec3(uFlareRib.z*1.3)) * 0.014;',
+    '      float fwob2 = fbend + fbmLight(sp*34.0 + vec3(uFlareRib.z*1.3 + 9.2)) * 0.014;',
+    '      float fasy = (fract(uFlareRib.z*0.173) > 0.5) ? 1.0 : -1.0;',
     '      float frag1 = 0.25 + 0.95*smoothstep(0.25, 0.75, fbmLight(sp*230.0 + vec3(uFlareRib.z))*0.5+0.5);',
     '      float frag2 = 0.25 + 0.95*smoothstep(0.25, 0.75, fbmLight(sp*230.0 + vec3(uFlareRib.z+4.7))*0.5+0.5);',
-    '      float fd1 = (fdy + fwob - uFlareGeo.w)/uFlareRib.y;',
-    '      float fd2 = (fdy + fwob + uFlareGeo.w)/uFlareRib.y;',
-    '      flareRibG = uFlareRib.x * falong * (exp(-fd1*fd1)*frag1 + exp(-fd2*fd2)*frag2) * floc;',
+    '      float fd1 = (fdy + fwob1 - uFlareGeo.w)/(uFlareRib.y*(1.0 - 0.15*fasy));',
+    '      float fd2 = (fdy + fwob2 + uFlareGeo.w)/(uFlareRib.y*(1.0 + 0.15*fasy));',
+    '      flareRibG = uFlareRib.x * falong * (exp(-fd1*fd1)*frag1*(1.0 + 0.24*fasy)',
+    '                                        + exp(-fd2*fd2)*frag2*(1.0 - 0.24*fasy)) * floc;',
     '      heat += flareGlow*0.9 + flareRibG*0.55;',
     '    }',
     '  }',

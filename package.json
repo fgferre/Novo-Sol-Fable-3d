@@ -15,7 +15,8 @@
     "qa:controls": "node tools/qa-controls.js dist-single/index.html",
     "qa:parity": "node tools/parity.js qa-out --file dist-single/index.html && node tools/imgdiff.js qa/baselines qa-out --max-frac 0.001",
     "qa:motion": "node tools/qa-motion.js out/motion dist-single/index.html",
-    "qa:shot": "node tools/shot.js shots --file dist-single/index.html"
+    "qa:shot": "node tools/shot.js shots --file dist-single/index.html",
+    "qa:phase1": "node tools/qa-phase1.js out/phase1 --file dist-single/index.html"
   },
   "repository": {
     "type": "git",

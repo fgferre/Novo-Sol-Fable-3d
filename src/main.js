@@ -82,7 +82,14 @@ function init(){
     // calibrado por sweep de 7 variantes + juiz visual (h2, 8.5/10;
     // fringe>=0.5 gera rebordo verde no limbo — manter <=0.35)
     veil:0.85, adapt:0.55, fringe:0.35, shimmer:0.45, tone:0.65,
-    streak:0.65, bloom:1.15, grain:1.7, vig:0.85, exposure:1.08
+    streak:0.65, bloom:1.15, grain:1.7, vig:0.85, exposure:1.08,
+    // FASE 2: loops/burst (dívida da F1) + disp/hal calibrados por
+    // sweep de 6 variantes × 2 vistas com painel de 3 juízes (cinema/
+    // realismo/legibilidade) — v1-sutil venceu unânime (8.5/10 nas 3
+    // lentes); valores = mediana das 3 recomendações. Acima disso:
+    // loops>=0.8 vira "mola de neon", burst>=1.0 vira cunha dura,
+    // disp>=0.7 lava o disco p/ ouro, hal>=0.9 véu leitoso.
+    loops:0.55, burst:0.55, disp:0.40, hal:0.45
   } : null;
   function lk(n, base){ return (LOOK && LOOK[n] !== undefined) ? LOOK[n] : base; }
   var IDLE_CINE = urlQ.idle === '1' || (urlQ.idle === undefined && savedKnobs.idle == 1);
@@ -1907,7 +1914,7 @@ function init(){
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }
-  var LOOP_K = knob('loops', 0.0, 0.0, 1.5);
+  var LOOP_K = knob('loops', lk('loops', 0), 0.0, 1.5);
   var LOOP_AMB = TP.loops, LOOP_ARC = TP.larc, LOOP_N = LOOP_AMB + LOOP_ARC;
   var LOOP_SEG = TP.lseg;
   // FASE 2 (débito LOD da Fase 1): fitas orientadas à câmera no lugar de
@@ -2298,7 +2305,14 @@ function init(){
       if (st.ok){
         var ta = surfFlareT - st.delay;
         if (ta > 0){
-          envA = flareEnvGrad(ta) * 1.25 * surfFlareAmp;
+          // FASE 2: a arcada NÃO aparece durante o flash impulsivo —
+          // fisicamente os laços pós-reconexão crescem na fase gradual,
+          // e visualmente a arcada de frente lia como "anéis fantasma"
+          // ao redor do core (flagrado unânime pelo painel de juízes,
+          // presente até no controle sem knobs). Gate 0.55→1.05 no
+          // relógio do evento; em t>=2.5 (check B4) já vale 1.
+          var arcGate = Math.min(1, Math.max(0, (surfFlareT - 0.55)/0.5));
+          envA = flareEnvGrad(ta) * 1.25 * surfFlareAmp * arcGate;
           loopHotArr[LOOP_AMB + i] = Math.exp(-ta*0.30);
         }
       }

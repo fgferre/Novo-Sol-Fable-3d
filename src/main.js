@@ -106,6 +106,11 @@ function init(){
   // cycle=0 liga o ciclo sozinho (modo documental de um toque).
   var CYCLE_K = knob('cycle', lk('cycle', 0), 0.0, 1.5);
   var LAPSE_K = knob('lapse', lk('lapse', 0), 0.0, 1.5);
+  // FASE 3 — continuidade filamento↔proeminência: a MESMA estrutura
+  // escura contra o disco (filamento, absorção) e vermelha além do
+  // limbo (proeminência, emissão). Default 0 = gêmeos de absorção
+  // invisíveis, frame e custo idênticos ao baseline.
+  var FPROM_K = knob('fprom', lk('fprom', 0), 0.0, 1.5);
   var RENDER_SCALE = (parseFloat(urlQ.scale) > 0)
     ? Math.min(2.0, Math.max(0.3, parseFloat(urlQ.scale))) : 1.0;
 
@@ -1743,6 +1748,16 @@ function init(){
       mm.userData.dir = anchor.clone();
       mm.material.uniforms.uSeed.value = srand()*100;
     });
+    // FASE 3 — o gêmeo de absorção (filamento deitado) segue o cartão
+    // 0: mesma âncora, mesma orientação (x ao longo da PIL) e o MESMO
+    // uSeed — a estrutura escura no disco é a mesma cortina do limbo.
+    // Nenhum sorteio novo: o stream do srand não desloca.
+    if (ps.flat){
+      ps.flat.quaternion.copy(ps.meshes[0].quaternion);
+      ps.flat.position.copy(ps.meshes[0].position);
+      ps.flat.userData.dir = ps.meshes[0].userData.dir;
+      ps.flat.material.uniforms.uSeed.value = ps.meshes[0].material.uniforms.uSeed.value;
+    }
   }
   // uniforms comuns aos três shaders de proeminência (ciclo de vida,
   // agitação por flare e "tempo do plasma" são a mesma interface)
@@ -1885,6 +1900,58 @@ function init(){
     '  gl_FragColor = vec4(col, a*2.0);',
     '}'
   ].join('\n');
+  // FASE 3 — CONTINUIDADE FILAMENTO↔PROEMINÊNCIA. Proeminência e
+  // filamento são o MESMO objeto visto de ângulos diferentes: a cortina
+  // de plasma vermelha de perfil (limbo) é o canal escuro de absorção
+  // visto de cima (disco). O cartão radial em pé degenera em linha de
+  // 0px visto de cima, então o gêmeo escuro é um cartão DEITADO sobre a
+  // esfera, na mesma âncora/tangente de PIL e com o MESMO uSeed — o
+  // perfil yTop que recorta o topo da cortina vira a meia-largura do
+  // canal (as reentrâncias são os "barbs" dos filamentos reais, ver
+  // ref-07). Blending multiplicativo dst*(1-src): absorção de verdade,
+  // não aditivo — o mesmo mecanismo que o débito da arcada escura pede.
+  // O crossfade usa o MESMO facing que apaga a emissão contra o disco:
+  // escuro ∝ s, vermelho ∝ (1-s) — no limbo a estrutura troca de cara
+  // sem trocar de identidade.
+  // vertex do gêmeo: igual ao uvMeshVertex + posição de MUNDO por
+  // varying — o gate por-pixel do limbo precisa saber onde o ponto da
+  // superfície está em relação à borda visível do disco
+  var promAbsorbVertex = [
+    'varying vec2 vUv;',
+    'varying vec3 vWPos;',
+    'void main(){',
+    '  vUv = uv;',
+    '  vWPos = (modelMatrix * vec4(position,1.0)).xyz;',
+    '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);',
+    '}'
+  ].join('\n');
+  var promAbsorbFragment = hedgerowFragment
+    .replace('void main(){',
+      'uniform float uAbsorb;\nvarying vec3 vWPos;\nvoid main(){')
+    // yc = afastamento do CENTRO do canal (a PIL corre no meio do
+    // cartão deitado); o y do ruído fica ASSINADO — espelhar o noise
+    // com abs() gerava "renda" simétrica ornamental (QA F3)
+    .replace('  float y = vUv.y;',
+      '  float y = vUv.y;\n  float yc = abs(y*2.0 - 1.0);')
+    // a largura do canal usa yc (o perfil yTop da cortina vira a
+    // meia-largura do filamento — as reentrâncias são os barbs)
+    .replace('  float body = smoothstep(0.02, 0.16, yTop - y);',
+      '  float body = smoothstep(0.02, 0.16, yTop - yc);')
+    // o corte "abaixo da superfície" do cartão em pé mataria um lado
+    // inteiro do canal deitado — fora
+    .replace('  a *= smoothstep(0.0, 0.07, y);', '')
+    .replace('  gl_FragColor = vec4(col, a*1.05);',
+      // fade por-pixel do limbo: a absorção escala com mu (a luz que
+      // RESTA para absorver — sobre o anel escurecido do limbo um
+      // multiply forte lia como renda flutuante, QA F3) e um taper mata
+      // o resíduo perto da borda: filamentos H-alfa reais somem por
+      // projeção ao se aproximarem do limbo (ρ>0.9) e é a proeminência
+      // vermelha do cartão em pé que assume dali em diante. mu usa o
+      // horizonte verdadeiro (ponto→câmera, não o eixo da câmera).
+      '  float mu = dot(normalize(vWPos), normalize(cameraPosition - vWPos));\n' +
+      '  float ab = clamp(a*1.3, 0.0, 1.0) * uAbsorb' +
+      ' * mu * smoothstep(0.25, 0.45, mu);\n' +
+      '  gl_FragColor = vec4(vec3(ab), 1.0);');
   (function buildProminences(){
     for(var i=0;i<PROMINENCE_COUNT;i++){
       // âncora na superfície + plano vertical (local +Y = radial para fora).
@@ -1974,6 +2041,50 @@ function init(){
         prominenceMeshes.push(mm);
         prominenceGroup.add(mm);
       });
+      // FASE 3 — gêmeo de absorção (filamento): cartão DEITADO drapejado
+      // sobre a esfera, largura máxima ~0.05R (canais reais 0.005-0.012R,
+      // gigantes com barbs mais largos — ref-07). Sem sorteios novos: a
+      // geometria não consome srand e o uSeed é copiado do cartão em pé.
+      (function buildFlatTwin(){
+        var hF = SUN_RADIUS*0.05;
+        var geoF = new THREE.PlaneGeometry(w, hF, 48, 6);
+        var posF = geoF.attributes.position;
+        var cDist = SUN_RADIUS*0.995;
+        var lift = SUN_RADIUS*0.012;   // acima da superfície, sem z-fight
+        for (var vi=0; vi<posF.count; vi++){
+          // plano xy -> xz (deitado), depois drapeja no raio da esfera
+          var vx = posF.getX(vi), vz = posF.getY(vi);
+          var dl = Math.sqrt(vx*vx + cDist*cDist + vz*vz);
+          var rr = (cDist + lift)/dl;
+          posF.setXYZ(vi, vx*rr, cDist*rr - cDist, vz*rr);
+        }
+        geoF.computeBoundingSphere();
+        var matF = new THREE.ShaderMaterial({
+          uniforms: {
+            uTime: { value: 0 }, uSeed: { value: 0 },
+            // uAspect do cartão EM PÉ (não w/hF): a frequência dos fios
+            // do shader escala com o aspect — com w/hF (~11-23) o canal
+            // virava picote; com w/h a fibra tem a MESMA escala da
+            // cortina do limbo (identidade de textura, não só de seed)
+            uIntensity: { value: 1.0 }, uAspect: { value: w/h },
+            uLife: { value: 0.0 }, uAgit: { value: 0.0 },
+            uPTime: { value: 0.0 }, uAbsorb: { value: 0.0 }
+          },
+          vertexShader: promAbsorbVertex,
+          fragmentShader: promAbsorbFragment,
+          transparent: true,
+          blending: THREE.CustomBlending,
+          blendSrc: THREE.ZeroFactor,
+          blendDst: THREE.OneMinusSrcColorFactor,
+          depthWrite: false,
+          side: THREE.DoubleSide
+        });
+        var flat = new THREE.Mesh(geoF, matF);
+        flat.renderOrder = -1;   // escurece o disco ANTES das emissões
+        flat.visible = false;    // knob fprom=0: nem entra no draw
+        ps.flat = flat;
+        prominenceGroup.add(flat);
+      })();
       placeProminence(ps, anchor);
       promStates.push(ps);
     }
@@ -3433,6 +3544,7 @@ function init(){
                  burst: BURST_K,
                  cycle: CYCLE_K,
                  lapse: LAPSE_K,
+                 fprom: FPROM_K,
                  adaptMul: compUniforms.uAdapt.value,
                  look: LOOK ? 'sunshine' : '' };
       };
@@ -3612,6 +3724,22 @@ function init(){
                  crossLon: pilBrAt(x-2, y)*pilBrAt(x+2, y) < 0.0,
                  crossLat: pilBrAt(x, y-2)*pilBrAt(x, y+2) < 0.0 };
       };
+      // FASE 3 — QA da continuidade filamento↔proeminência: estado dos
+      // gêmeos de absorção (visibilidade, força, identidade de seed)
+      window.__solInfo.fpromInfo = function(){
+        camera.updateMatrixWorld(true);
+        var cd = camera.position.clone().normalize();
+        return promStates.map(function(ps){
+          var facing = ps.flat.userData.dir.clone()
+            .applyQuaternion(prominenceGroup.quaternion).dot(cd);
+          return { vis: ps.flat.visible,
+                   absorb: ps.flat.material.uniforms.uAbsorb.value,
+                   facing: facing,
+                   seedMatch: ps.flat.material.uniforms.uSeed.value ===
+                              ps.meshes[0].material.uniforms.uSeed.value,
+                   env: ps.env };
+        });
+      };
       window.__solInfo.resampleProm = function(i){
         var a = sampleProminenceAnchor();
         placeProminence(promStates[i], a);
@@ -3776,6 +3904,8 @@ function init(){
         set:function(v){ coronaRaysUniforms.uActGain.value = v; } },
       { k:'loops', label:'Loops coronais', lo:0, hi:1.5, step:0.05, dflt:0,
         get:function(){ return LOOP_K; }, set:function(v){ LOOP_K = v; } },
+      { k:'fprom', label:'Filamento ↔ proeminência', lo:0, hi:1.5, step:0.05, dflt:0,
+        get:function(){ return FPROM_K; }, set:function(v){ FPROM_K = v; } },
       { sec: 'céu' },
       { k:'stars', label:'Estrelas', lo:0, hi:2, step:0.05, dflt:1,
         get:function(){ return stars.material.opacity/STARS_OP0; },
@@ -4182,6 +4312,23 @@ function init(){
         ps.orient[oi] = (1.0 - 0.5*nv) * ek*ek*(3 - 2*ek);
       }
       ps.orientNorm = 1.05 / Math.max(0.45, ps.orient[0] + ps.orient[1]);
+      // FASE 3 — gêmeo de absorção: escuro ∝ s (o MESMO smoothstep de
+      // facing que apaga a emissão contra o disco usa 1-s) — no limbo
+      // os dois se cruzam e a estrutura continua através da borda.
+      // Teto 0.55 = a mesma absorção máxima dos filamentos do bake.
+      if (FPROM_K > 0.001){
+        ps.flat.visible = true;
+        var facingF = promWorldTmp.copy(ps.flat.userData.dir)
+          .applyQuaternion(prominenceGroup.quaternion).dot(camDirN);
+        var sF = Math.min(1, Math.max(0, (facingF - 0.10) / 0.42));
+        sF = sF*sF*(3.0-2.0*sF);
+        var fu = ps.flat.material.uniforms;
+        fu.uLife.value = ps.env;
+        fu.uAgit.value = ps.agit;
+        fu.uPTime.value = ps.drift;
+        fu.uTime.value = elapsed;
+        fu.uAbsorb.value = Math.min(1.0, FPROM_K) * 0.55 * sF * ps.fieldK;
+      } else if (ps.flat.visible) ps.flat.visible = false;
     });
     prominenceMeshes.forEach(function(m){
       var ps = m.userData.state;

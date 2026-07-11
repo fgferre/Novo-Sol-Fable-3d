@@ -112,6 +112,80 @@ const meanAbsLat = (regs) => regs.reduce((s, r) => s + Math.abs(r.lat), 0) / reg
     }
     await page.close();
   }
+  // --- E: continuidade filamento↔proeminência (knob fprom) ---------------
+  {
+    // E1 — fprom=0: gêmeos de absorção nem entram no draw (a prova
+    // visual é o gate de paridade; aqui a prova de estado/custo)
+    const page = await open('');
+    const off = await page.evaluate(() => window.__solInfo.fpromInfo());
+    check('E1 fprom=0 inerte (gêmeos invisíveis, absorb=0)',
+      off.every((f) => !f.vis && f.absorb === 0),
+      JSON.stringify(off.map((f) => f.vis)));
+    await page.close();
+  }
+  {
+    const page = await open('fprom=1.2');
+    // maturidade forçada: sob hold o envelope natural fica onde caiu
+    await page.evaluate(() => {
+      for (let i = 0; i < 12; i++) try { window.__solInfo.setPromLife(i, 0.35); } catch (e) {}
+    });
+    await frames(page, 3);
+    const fi = await page.evaluate(() => window.__solInfo.fpromInfo());
+    // E2 — identidade: o gêmeo escuro usa o MESMO seed do cartão em pé
+    // (mesma estrutura, não duas estruturas na mesma âncora)
+    check('E2 identidade filamento=proeminência (uSeed compartilhado nos ' + fi.length + ' pares)',
+      fi.length > 0 && fi.every((f) => f.seedMatch),
+      JSON.stringify(fi.map((f) => f.seedMatch)));
+    // E3 — absorção viva contra o disco: pelo menos uma proeminência de
+    // frente com gêmeo escuro forte, e o knob limita o teto (≤0.55·1.2)
+    const maxAb = Math.max.apply(null, fi.map((f) => f.absorb));
+    check('E3 filamento escuro contra o disco (max absorb>0.3, teto respeitado)',
+      maxAb > 0.3 && maxAb <= 0.55*1.2 + 1e-6, 'max ' + maxAb.toFixed(3));
+    // E4 — crossfade no limbo: varrendo a órbita em torno da âncora da
+    // prom mais forte, existe uma faixa onde absorção E emissão
+    // coexistem (a estrutura atravessa a borda sem trocar de
+    // identidade). Varredura em vez de mira cega: o prominenceGroup só
+    // herda o rotY (sem tilt) e o crossfade vive num anel estreito.
+    const iBest = fi.indexOf(fi.reduce((a, b) => (b.absorb > a.absorb ? b : a), fi[0]));
+    // mira exata na âncora: prominences() indexa MESHES (2 cartões/
+    // prom) => 2*i; tilt z=0.1265 ANTES do rotY (Euler XYZ, qa-phase1)
+    const aim = await page.evaluate((idx) => {
+      const st = window.__solInfo.state();
+      const v = window.__solInfo.prominences()[idx*2], tz = 0.1265, ry = st.rotY;
+      const tx = v[0]*Math.cos(tz) - v[1]*Math.sin(tz);
+      const ty = v[0]*Math.sin(tz) + v[1]*Math.cos(tz);
+      const w = [tx*Math.cos(ry) + v[2]*Math.sin(ry), ty,
+                 -tx*Math.sin(ry) + v[2]*Math.cos(ry)];
+      const dist = st.minDist + (st.fitDist - st.minDist)*0.45;
+      return { th: Math.atan2(w[2], w[0]),
+               ph: Math.acos(Math.max(-1, Math.min(1, w[1]))), dist: dist };
+    }, iBest);
+    // varredura em PHI rumo ao equador: a separação angular cresce
+    // linearmente para QUALQUER âncora (em theta, âncora polar quase
+    // não se afasta) — em algum ponto a âncora cruza o limbo visível
+    const phDir = (aim.ph < Math.PI/2) ? 1 : -1;
+    const sweep = [];
+    for (let k = 0; k < 14; k++){
+      await page.evaluate(([th, ph, dist]) => {
+        window.__solInfo.setView(th, ph, dist); return null;
+      }, [aim.th, aim.ph + phDir*k*0.12, aim.dist]);
+      await frames(page, 2);
+      const s = await page.evaluate((idx) => {
+        const f = window.__solInfo.fpromInfo()[idx];
+        const pj = window.__solInfo.projectProm(idx);
+        return { absorb: +f.absorb.toFixed(3),
+                 emiss: +Math.max(pj.uInt[0], pj.uInt[1]).toFixed(3) };
+      }, iBest);
+      sweep.push(s);
+      if (s.absorb > 0.08 && s.emiss > 0.15) break;
+    }
+    const hit = sweep.find((s) => s.absorb > 0.08 && s.emiss > 0.15);
+    check('E4 crossfade no limbo: absorção E emissão coexistem na mesma âncora',
+      !!hit, hit ? ('absorb ' + hit.absorb + ' emissão ' + hit.emiss)
+                 : JSON.stringify(sweep));
+    await page.screenshot({ path: path.join(outDir, 'fprom-limb-cross.png') });
+    await page.close();
+  }
   {
     // D8 — time-lapse: lapse sozinho liga o ciclo e o relógio anda
     // (página sem hold: o tempo corre; ~90 frames bastam p/ medir warp)

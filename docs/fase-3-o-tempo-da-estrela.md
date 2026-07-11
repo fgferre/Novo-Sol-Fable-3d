@@ -196,9 +196,12 @@ ref-02/ref-03 como verdade). Achados convergentes e o que foi feito:
   Medir contra as refs GONG (umbras reais são pontos de 0.005–0.086R,
   ver `reference/images/README.md`; a área escura ao redor é fibrila,
   mas a proporção do conjunto precisa de régua contra ref-03/ref-07).
-- **FPS em iPhone real (SÓ O DONO)**: pendente desde a Fase 0 — abrir
-  `https://fgferre.github.io/Novo-Sol-Fable-3d/?hud=1` no iPhone
-  (depois `?hud=1&tier=high`) e reportar fps / ms avg / p95 / cpu.
+- ~~FPS em iPhone real~~ — **ENCERRADO por decisão do dono (2026-07,
+  fechamento da F3)**: sem medição formal; o auto-tune + o seletor de
+  tier no painel da engrenagem cobrem o caso ("está tudo rodando da
+  forma que o usuário quiser; se estiver lento ele pode sempre ir para
+  um tier mais leve"). O HUD (`?hud=1`) continua disponível para
+  diagnóstico pontual, mas deixa de ser pendência de rodada.
 
 ## Ferramentas da rodada (scratchpad, reproduzíveis)
 

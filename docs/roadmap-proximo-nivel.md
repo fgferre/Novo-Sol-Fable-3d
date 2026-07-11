@@ -102,7 +102,10 @@ piso de largura por foreshortening nos loops face-on (energia
 conservada). Painel de 3 juízes: miolo sólido + meandro + teto cinza
 nos filamentos; preset ganha `fprom:0.55`. `qa:phase3` novo (12 checks
 D/E). Débito estrutural anotado: multiplicidade de manchas no máximo
-(4 slots de região). FPS em iPhone real: segue pendente (dono).
+(4 slots de região). FPS em iPhone real: ENCERRADO por decisão do dono
+no fechamento da F3 — sem medição formal; auto-tune + seletor de tier
+no painel cobrem ("se estiver lento, o usuário baixa o tier"); o HUD
+`?hud=1` fica para diagnóstico pontual.
 
 ### Fase 4 — "A coroa de verdade"
 Coroa volumétrica raymarched com helmet streamers emergindo da topologia

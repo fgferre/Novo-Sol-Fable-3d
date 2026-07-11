@@ -58,8 +58,11 @@ mexer. A janela principal fica para decisões, edições e o registro.
    umbra+fibrilas têm escala realística — umbras reais são pontos de
    0.005–0.086R e em zoom próximo o conjunto lê como "chaga" grande);
    deriva diferencial satura sob lapse pesado (cap 0.35/frame —
-   registrado, ver doc F3); **FPS em iPhone real (SÓ O DONO: `?hud=1`
-   no Pages)** — pendente desde a Fase 0.
+   registrado, ver doc F3). A antiga pendência "FPS em iPhone real"
+   foi ENCERRADA por decisão do dono no fim da F3 (auto-tune + seletor
+   de tier cobrem; não pedir números ao dono) — mas o alvo de
+   performance continua valendo: o raymarch da coroa precisa de A/B de
+   GPU por tier e de respeitar ≥24 fps no mid.
 
 ## CONVENÇÕES (desde o LOOP-5 — não quebrar)
 

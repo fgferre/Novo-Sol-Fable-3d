@@ -69,6 +69,19 @@ Bloom espectral ponderado por corpo negro (R espalha mais que B — difração
 ∝ λ, o halo quente de filme) + halation com peso de temperatura nas
 emissões de plage/flare. Validação de FPS em iPhone real (pendência).
 
+**Entrega (2026-07, ver `docs/fase-2-luz-como-materia.md`)**: knobs novos
+`disp` (bloom espectral: tent por canal na SUBIDA do dual-Kawase — só a
+descida era imperceptível) e `hal` (halação vermelha pesada pelo excesso
+espectral de R no mip largo, ganho acoplado ao flareHDR), ambos default 0
+= paridade provada por A/B com 0 px. Débitos de LOD da F1 fechados: loops
+e arcada viraram FITAS orientadas à câmera (tubo de largura fixa em mundo,
+piso 1px/teto 14px), strands por zoom, arcada gateada fora da fase
+impulsiva (anéis fantasma flagrados pelo painel de juízes). Dívida do
+preset paga: sweep 6×2 + painel de 3 juízes (v1-sutil unânime) →
+`?look=sunshine` liga loops/burst/disp/hal (0.55/0.55/0.40/0.45).
+Experimento honesto: viés de separação no semeador NÃO reduziu rejeição
+(79.7% vs 80.0%), revertido. FPS em iPhone real: segue pendente (dono).
+
 ### Fase 3 — "O tempo da estrela"
 Ciclo de 11 anos: lei de Spörer (emergência 35°→5°), reversão polar,
 flip de Hale entre ciclos — modulando a maquinaria de lifecycle que já

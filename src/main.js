@@ -2212,8 +2212,18 @@ function init(){
       '  vec2 nrm = (dl > 1e-3) ? vec2(-dS.y, dS.x)/dl : vec2(0.0, 1.0);',
       '  float pxScale = 0.5 * uRes.y * projectionMatrix[1][1];',
       '  float rawPx = uLoopW * pxScale / wA;',
-      '  float wpx = clamp(rawPx, 1.0, 14.0);',
-      '  vFade = clamp(rawPx, 0.05, 1.0);',
+      // FASE 3 (débito F2): loop quase FACE-ON degenerava em "rabisco"
+      // de 1px — o piso de largura agora cresce com o encurtamento
+      // perspectivo do segmento (dl projetado vs comprimento esperado
+      // sem foreshortening); de lado nada muda (piso 1px do LOOP-5)
+      '  float expPx = length(aTan) * pxScale / wA;',
+      '  float faceK = 1.0 - clamp(dl / max(expPx, 1e-3), 0.0, 1.0);',
+      '  float wMin = 1.0 + 2.2*faceK*faceK;',
+      '  float wpx = clamp(rawPx, wMin, 14.0);',
+      // energia conservada na largura FORÇADA: o brilho cai na razão
+      // rawPx/wpx (generaliza o fade sub-pixel antigo — para wMin=1 a
+      // expressão é idêntica à do LOOP-5)
+      '  vFade = clamp(rawPx / wpx, 0.05, 1.0);',
       // vWide 0→1 conforme a fita alarga na tela: o fragment usa para
       // AMORTECER o contraste do fluxo (que em 1px lia como cintilação
       // viva, mas numa fita larga vira "salsichas" de brilho)
@@ -2283,7 +2293,37 @@ function init(){
     var m = Math.sqrt(B.x*B.x + B.y*B.y + B.z*B.z) + 1e-9;
     out[0] = B.x/m*side; out[1] = B.y/m*side; out[2] = B.z/m*side;
   }
-  var loopStats = { traces: 0, fails: 0, ms: 0 };
+  var loopStats = { traces: 0, fails: 0, ms: 0, probes: 0, probeRej: 0 };
+  // FASE 3 (débito F2 "semeador perdulário"): pré-validação da
+  // TOPOLOGIA com uma sonda Euler grosseira (~11x mais barata que o
+  // RK4 fino: 64 passos × 1 avaliação de campo vs 176 × 4) — a
+  // rejeição de ~80% é dominada pela topologia do campo multi-carga
+  // (linha aberta/apex fora da faixa), que a sonda enxerga. Margem no
+  // apex em VALOR (±0.012/±0.15), não fração: a 1ª versão usava
+  // minApex*0.88=0.911 < raio inicial 1.004 — nunca rejeitava nada
+  // (medido: probes 80, probeRej 0, fails finos inalterados em 80%).
+  function probeFieldLine(sx, sy, sz, minApex, maxApex){
+    var t0 = performance.now();
+    var px = sx*1.004, py = sy*1.004, pz = sz*1.004;
+    var B0 = bFieldJS(loopFieldP.set(px, py, pz));
+    var side = (B0.x*px + B0.y*py + B0.z*pz) >= 0.0 ? 1.0 : -1.0;
+    var h = 0.045, apex = 0, landed = false;
+    for (var st = 0; st < 88; st++){
+      loopFieldDir(px, py, pz, side, lk1);
+      px += lk1[0]*h; py += lk1[1]*h; pz += lk1[2]*h;
+      var r = Math.sqrt(px*px + py*py + pz*pz);
+      if (r > apex) apex = r;
+      if (r < 1.001){ landed = true; break; }
+      if (r > 2.3) break;
+    }
+    loopStats.probes++;
+    loopStats.ms += performance.now() - t0;
+    if (!landed || st < 2 || apex < minApex || apex > maxApex + 0.12){
+      loopStats.probeRej++;
+      return false;
+    }
+    return true;
+  }
   // traça a linha de campo que passa por (sx,sy,sz) na direção que
   // SOBE; devolve o nº de pontos no scratch, 0 = inválida (linha
   // aberta/rasteira demais). [minApex, maxApex] distingue loops
@@ -2406,8 +2446,14 @@ function init(){
   })();
   var loopSeedOut = new THREE.Vector3();
   function retraceAmbient(slot){
-    for (var tries = 0; tries < 4; tries++){
+    // FASE 3: sonda barata filtra até 12 candidatos; o RK4 fino roda só
+    // nos aprovados (máx 4). Antes: 4 traços finos cegos com ~80% de
+    // rejeição => P(slot vazio) ~0.41; agora o slot quase sempre enche.
+    var fine = 0;
+    for (var tries = 0; tries < 12 && fine < 4; tries++){
       if (!pickLoopSeed(loopSeedOut)) break;
+      if (!probeFieldLine(loopSeedOut.x, loopSeedOut.y, loopSeedOut.z, 1.035, 1.95)) continue;
+      fine++;
       var nP = traceFieldLine(loopSeedOut.x, loopSeedOut.y, loopSeedOut.z, 1.035, 1.95, 0.02);
       if (nP > 0){
         writeLoopSlot(slot, nP);
@@ -3703,6 +3749,7 @@ function init(){
         return { on: LOOP_K, amb: nOk, arc: nArc, queue: arcQueueN,
                  visible: loopMesh.visible,
                  traces: loopStats.traces, fails: loopStats.fails,
+                 probes: loopStats.probes, probeRej: loopStats.probeRej,
                  ms: +loopStats.ms.toFixed(2) };
       };
       window.__solInfo.setLoopLife = function(i, x){

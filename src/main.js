@@ -2171,19 +2171,18 @@ function init(){
     if (Math.abs(ps.lead.w) < 0.25) return false;   // região quase morta não enche loop
     loopSeedTmp.set(ps.lead.x, ps.lead.y, ps.lead.z).normalize();
     loopAxisTmp.set(ps.foll.x, ps.foll.y, ps.foll.z).normalize();
-    // FASE 2 (débito F1): viés pela SEPARAÇÃO do par — o leque de
-    // offsets escala com o ângulo lead→foll em vez de ser fixo. Par
-    // apertado semeia perto (linha fecha baixa), par largo semeia longe
-    // (fecha alta): menos sorteios caem em linha aberta/rasteira.
-    // Medido no probe (high, det=1&seed=7): rejeição 80% → ver doc F2.
-    var sepAng = Math.acos(Math.max(-1, Math.min(1, loopSeedTmp.dot(loopAxisTmp))));
     loopAxisTmp.addScaledVector(loopSeedTmp, -loopAxisTmp.dot(loopSeedTmp));
     if (loopAxisTmp.lengthSq() < 1e-6) return false;
     loopAxisTmp.normalize();
     loopLatTmp.crossVectors(loopSeedTmp, loopAxisTmp);
+    // FASE 2: o viés do leque pela separação do par foi EXPERIMENTADO e
+    // revertido — rejeição medida 79.7% vs 80% do leque fixo (a rejeição
+    // é dominada pela topologia do campo multi-carga, não pelo offset).
+    // Registrado em docs/fase-2; o débito "semeador perdulário" segue
+    // aberto e segue inofensivo (0.01 ms/traço).
     out.copy(loopSeedTmp)
-       .addScaledVector(loopAxisTmp, sepAng*(0.12 + 0.60*loopRand()))
-       .addScaledVector(loopLatTmp, (loopRand() - 0.5)*0.30*sepAng)
+       .addScaledVector(loopAxisTmp, 0.02 + 0.16*loopRand())
+       .addScaledVector(loopLatTmp, (loopRand() - 0.5)*0.16)
        .normalize();
     return true;
   }

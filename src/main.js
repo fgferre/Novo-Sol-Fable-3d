@@ -78,7 +78,9 @@ function init(){
   // ?look=sunshine: preset da camada cinematográfica (Sunshine 2007 —
   // halação, íris, lente); semeia DEFAULTS, então knob individual na
   // URL/painel continua tendo precedência. Sem o preset, tudo em 0.
-  var LOOK = (urlQ.look === 'sunshine') ? {
+  // valores do preset SEMPRE disponíveis (o painel da engrenagem tem um
+  // botão "look Sunshine" que os aplica ao vivo, sem URL)
+  var LOOK_SUNSHINE = {
     // calibrado por sweep de 7 variantes + juiz visual (h2, 8.5/10;
     // fringe>=0.5 gera rebordo verde no limbo — manter <=0.35)
     veil:0.85, adapt:0.55, fringe:0.35, shimmer:0.45, tone:0.65,
@@ -90,7 +92,8 @@ function init(){
     // loops>=0.8 vira "mola de neon", burst>=1.0 vira cunha dura,
     // disp>=0.7 lava o disco p/ ouro, hal>=0.9 véu leitoso.
     loops:0.55, burst:0.55, disp:0.40, hal:0.45
-  } : null;
+  };
+  var LOOK = (urlQ.look === 'sunshine') ? LOOK_SUNSHINE : null;
   function lk(n, base){ return (LOOK && LOOK[n] !== undefined) ? LOOK[n] : base; }
   var IDLE_CINE = urlQ.idle === '1' || (urlQ.idle === undefined && savedKnobs.idle == 1);
   var RENDER_SCALE = (parseFloat(urlQ.scale) > 0)
@@ -3565,7 +3568,19 @@ function init(){
       '#knobReset{margin-top:22px;width:100%;padding:9px 0;border-radius:9px;cursor:pointer;',
       ' border:1px solid rgba(255,170,90,.3);background:transparent;color:#ffb877;font-size:12px;',
       ' letter-spacing:.05em;transition:background .25s}',
-      '#knobReset:hover{background:rgba(255,140,50,.12)}'
+      '#knobReset:hover{background:rgba(255,140,50,.12)}',
+      // botão do preset (mesma linguagem do reset, cheio de laranja)
+      '#lookBtn{margin-top:14px;width:100%;padding:9px 0;border-radius:9px;cursor:pointer;',
+      ' border:1px solid rgba(255,170,90,.45);background:rgba(255,140,50,.16);color:#ffd9a8;',
+      ' font-size:12px;letter-spacing:.05em;transition:background .25s}',
+      '#lookBtn:hover{background:rgba(255,140,50,.28)}',
+      // seletor segmentado de tier (troca exige recarregar — decisão de boot)
+      '#tierRow{display:flex;gap:6px;margin:8px 0 2px}',
+      '#tierRow button{flex:1;padding:7px 0;border-radius:8px;cursor:pointer;font-size:11px;',
+      ' border:1px solid rgba(255,170,90,.25);background:transparent;color:rgba(233,228,218,.75);',
+      ' letter-spacing:.04em;transition:background .25s}',
+      '#tierRow button.cur{background:rgba(255,140,50,.30);color:#ffd9a8;border-color:rgba(255,170,90,.55)}',
+      '#tierNote{font-size:10px;color:rgba(233,228,218,.38);margin:4px 0 0}'
     ].join('\n');
     document.head.appendChild(css);
 
@@ -3697,6 +3712,60 @@ function init(){
     });
     swRow.appendChild(swLab); swRow.appendChild(sw);
     panel.appendChild(swRow);
+
+    // ---- look ----------------------------------------------------
+    // aplica o preset Sunshine AO VIVO pelos setters dos sliders (os
+    // mesmos 14 pares do ?look=sunshine) — pedido do dono: nada de URL
+    var secLook = document.createElement('div'); secLook.className = 'sec';
+    secLook.textContent = 'look'; panel.appendChild(secLook);
+    var lookBtn = document.createElement('button');
+    lookBtn.id = 'lookBtn'; lookBtn.textContent = 'aplicar look Sunshine';
+    lookBtn.addEventListener('click', function(){
+      sliders.forEach(function(s){
+        var v = LOOK_SUNSHINE[s.d.k];
+        if (v === undefined) return;
+        s.d.set(v); s.inp.value = v; s.paint(v); saveKnob(s.d.k, v);
+      });
+    });
+    panel.appendChild(lookBtn);
+
+    // ---- diagnóstico ----------------------------------------------
+    var secDiag = document.createElement('div'); secDiag.className = 'sec';
+    secDiag.textContent = 'diagnóstico'; panel.appendChild(secDiag);
+    var hudRow = document.createElement('div'); hudRow.className = 'switch';
+    var hudLab = document.createElement('span'); hudLab.textContent = 'HUD de FPS';
+    var hudSw = document.createElement('div'); hudSw.className = 'sw' + (hudOn ? ' on' : '');
+    hudSw.addEventListener('click', function(){
+      hudToggle();
+      hudSw.classList.toggle('on', hudOn);
+    });
+    hudRow.appendChild(hudLab); hudRow.appendChild(hudSw);
+    panel.appendChild(hudRow);
+
+    // ---- qualidade (tier) ------------------------------------------
+    // o tier dimensiona buffers/shaders no BOOT — trocar recarrega a
+    // página; a escolha persiste em localStorage (solTier) e o botão
+    // limpa qualquer ?tier= da URL para a persistência valer
+    var secTier = document.createElement('div'); secTier.className = 'sec';
+    secTier.textContent = 'qualidade'; panel.appendChild(secTier);
+    var tierRow = document.createElement('div'); tierRow.id = 'tierRow';
+    TIER_ORDER.forEach(function(t){
+      var tb = document.createElement('button');
+      tb.textContent = t;
+      if (t === TIER) tb.className = 'cur';
+      tb.addEventListener('click', function(){
+        if (t === TIER) return;
+        persistTier(t);
+        var q = (location.search || '').replace(/^\?/, '').split('&')
+          .filter(function(kv){ return kv && kv.indexOf('tier=') !== 0; }).join('&');
+        location.href = location.pathname + (q ? '?' + q : '');
+      });
+      tierRow.appendChild(tb);
+    });
+    panel.appendChild(tierRow);
+    var tierNote = document.createElement('p'); tierNote.id = 'tierNote';
+    tierNote.textContent = 'trocar a qualidade recarrega a cena';
+    panel.appendChild(tierNote);
 
     var reset = document.createElement('button');
     reset.id = 'knobReset'; reset.textContent = 'restaurar padrão';

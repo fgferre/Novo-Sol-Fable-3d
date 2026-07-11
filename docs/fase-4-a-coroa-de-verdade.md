@@ -125,10 +125,29 @@ intacta; o check F3 documenta o comportamento de live-toggle.
 
 ## Calibração visual (painel de juízes)
 
-TODO: sweep 6 variantes × 2 vistas (`setCvolShape`/`setCvolFil`, sem
-rebuild) + painel de 3 juízes (realismo vs refs 09-12 / cinema /
-caça-artefatos). Resultado e decisão do preset `?look=sunshine` entram
-aqui.
+Sweep de 6 variantes × 2 vistas via hooks `setCvolShape`/`setCvolFil`
+(SEM rebuild por variante — melhoria de processo sobre as F2/F3) +
+painel de 3 juízes de lentes distintas (físico solar vs refs 09-12 /
+diretor de fotografia / caçador de artefatos), executado como Workflow.
+
+- **Vencedora: v1-fil-suave** (raias procedurais a 55% do contraste,
+  pesos de densidade default) — mediana 7.8. Cinema: "leitura orgânica
+  de eclipse, preserva a hierarquia disco > coroa interna > streamers,
+  corrige o padrão 'penteado' CG do contraste cheio". Artefatos:
+  "estrutura filamentar com leitura 3D genuína, sem banding nem corte".
+  Aplicada como default (`uFil = 0.55`).
+- Medianas: v0 7.0, **v1 7.8**, v2 6.5, v3-liso 5.5 (banding + "papel
+  de parede"), v4 6.5 (imperceptível), v5-amplo 6.8 (lava o céu na fit).
+- v2-folha-forte venceu a lente FÍSICA ("a única que lê como folhas
+  magnéticas ancoradas") mas foi flagrada quase-invisível pelas outras
+  duas — a tensão fica anotada nos débitos (cúspide).
+- **Preset `?look=sunshine` ganha `cvol: 0.5`** (mediana das 3
+  recomendações: 0.5/0.45/0.5 — "a coroa deve somar textura, não
+  luminância; bloom espectral e halação já carregam o brilho").
+- Veredito limpo do caçador de artefatos em TODAS as variantes: sem
+  anéis concêntricos do raymarch, sem blocos do 64³, sem corte seco na
+  borda do volume, sem dupla exposição contra o plano de raias, costura
+  limpa com proeminências no limbo.
 
 ## Hooks novos (`__solInfo.*`)
 
@@ -154,5 +173,16 @@ afunilando; buracos quase pretos; máximo cheio vs mínimo assimétrico).
   segue aberto.
 - Plumas polares finas dentro dos buracos coronais (ref-09) — o volume
   64³ não as resolve; candidata a modulação procedural no shader.
+- Cúspide de helmet streamer não se forma de verdade (flag do juiz
+  físico, 1/3 mas com nota técnica correta): o proxy de unipolaridade
+  dá a FOLHA, mas a cúspide pontiaguda pediria mais resolução ou um
+  termo de altura no shader. v2-folha-forte (sheet 1.15/base 0.20) é o
+  ponto de partida se for atacada.
+- Os espinhos finos do plano de raias antigo ainda competem visualmente
+  com os streamers volumétricos (flag do juiz físico) — o dim de 0.62
+  via uCvolMix pode não bastar; reavaliar o balanço em rodada futura.
+- Fios de ~1px do fil-suave podem cintilar em MOVIMENTO (flag do
+  caçador de artefatos — o julgamento foi em stills; smoke de vídeo
+  fica para a próxima rodada).
 - Histerese de bake ao alternar meshes ao vivo (anotação acima) — não é
   regressão da F4; investigar em GPU real fica anotado.

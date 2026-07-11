@@ -96,7 +96,12 @@ function init(){
     // juízes: mediana 0.55, mesmo patamar dos loops; >=0.9 vira
     // caricato — núcleo preto). cycle/lapse ficam FORA do preset: são
     // comportamento no tempo, não look.
-    fprom:0.55
+    fprom:0.55,
+    // FASE 4: coroa volumétrica raymarched (mediana do painel: 0.5 —
+    // "somar textura, não luminância"; bloom espectral e halação já
+    // carregam o brilho; >=1.0 lava o céu na vista fit). Nos tiers sem
+    // raymarch (low) é no-op e o plano de raias segue como fallback.
+    cvol:0.5
   };
   var LOOK = (urlQ.look === 'sunshine') ? LOOK_SUNSHINE : null;
   function lk(n, base){ return (LOOK && LOOK[n] !== undefined) ? LOOK[n] : base; }
@@ -1731,9 +1736,12 @@ function init(){
       uCvol: { value: 0 },
       uActivity: { value: 0.5 },
       uTime: { value: 0 },
-      // contraste das raias finas procedurais sobre o volume (1 =
-      // calibrado; 0 = volume liso) — eixo do sweep, via setCvolFil
-      uFil: { value: 1.0 }
+      // contraste das raias finas procedurais sobre o volume (0 =
+      // liso). 0.55 = v1-fil-suave, vencedora do painel de 3 juízes
+      // da F4 (mediana 7.8: leitura orgânica de eclipse, sem o padrão
+      // "penteado" CG do contraste cheio) — sweep 6×2 via
+      // setCvolFil/setCvolShape, sem rebuild por variante
+      uFil: { value: 0.55 }
     };
     var cvolMat = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3,

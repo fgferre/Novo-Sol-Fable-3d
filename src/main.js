@@ -82,7 +82,14 @@ function init(){
     // calibrado por sweep de 7 variantes + juiz visual (h2, 8.5/10;
     // fringe>=0.5 gera rebordo verde no limbo — manter <=0.35)
     veil:0.85, adapt:0.55, fringe:0.35, shimmer:0.45, tone:0.65,
-    streak:0.65, bloom:1.15, grain:1.7, vig:0.85, exposure:1.08
+    streak:0.65, bloom:1.15, grain:1.7, vig:0.85, exposure:1.08,
+    // FASE 2: loops/burst (dívida da F1) + disp/hal calibrados por
+    // sweep de 6 variantes × 2 vistas com painel de 3 juízes (cinema/
+    // realismo/legibilidade) — v1-sutil venceu unânime (8.5/10 nas 3
+    // lentes); valores = mediana das 3 recomendações. Acima disso:
+    // loops>=0.8 vira "mola de neon", burst>=1.0 vira cunha dura,
+    // disp>=0.7 lava o disco p/ ouro, hal>=0.9 véu leitoso.
+    loops:0.55, burst:0.55, disp:0.40, hal:0.45
   } : null;
   function lk(n, base){ return (LOOK && LOOK[n] !== undefined) ? LOOK[n] : base; }
   var IDLE_CINE = urlQ.idle === '1' || (urlQ.idle === undefined && savedKnobs.idle == 1);
@@ -788,7 +795,7 @@ function init(){
     // de recorte (z) — cada flare rasga diferente.
     uFlareGeo: { value: new THREE.Vector4(1, 0, 0, 0.02) },
     uFlarePerp: { value: new THREE.Vector4(0, 0, 1, 0.06) },
-    uFlareRib: { value: new THREE.Vector4(0, 0.010, 0, 0) },
+    uFlareRib: { value: new THREE.Vector4(0, 0.010, 0, 1) },
     uPlageEm: { value: knob('plageglow', 0.35, 0.0, 1.5) },
     // Oscilações p-mode (heliosismologia): o Sol "toca" em modos acústicos
     // de ~5 minutos (harmônicos esféricos de baixo grau, Leighton 1962).
@@ -1308,8 +1315,11 @@ function init(){
     '      float fwob1 = fbend + fbmLight(sp*34.0 + vec3(uFlareRib.z*1.3)) * 0.014;',
     '      float fwob2 = fbend + fbmLight(sp*34.0 + vec3(uFlareRib.z*1.3 + 9.2)) * 0.014;',
     '      float fasy = (fract(uFlareRib.z*0.173) > 0.5) ? 1.0 : -1.0;',
-    '      float frag1 = 0.25 + 0.95*smoothstep(0.25, 0.75, fbmLight(sp*230.0 + vec3(uFlareRib.z))*0.5+0.5);',
-    '      float frag2 = 0.25 + 0.95*smoothstep(0.25, 0.75, fbmLight(sp*230.0 + vec3(uFlareRib.z+4.7))*0.5+0.5);',
+    // FASE 2 (débito LOD): frequência dos strands escalada pelo zoom
+    // (uFlareRib.w, 1 no fit e além, cresce ao aproximar) — o recorte
+    // granula mais fino de perto em vez de virar blobs de aerógrafo
+    '      float frag1 = 0.25 + 0.95*smoothstep(0.25, 0.75, fbmLight(sp*(230.0*uFlareRib.w) + vec3(uFlareRib.z))*0.5+0.5);',
+    '      float frag2 = 0.25 + 0.95*smoothstep(0.25, 0.75, fbmLight(sp*(230.0*uFlareRib.w) + vec3(uFlareRib.z+4.7))*0.5+0.5);',
     '      float fd1 = (fdy + fwob1 - uFlareGeo.w)/(uFlareRib.y*(1.0 - 0.15*fasy));',
     '      float fd2 = (fdy + fwob2 + uFlareGeo.w)/(uFlareRib.y*(1.0 + 0.15*fasy));',
     '      flareRibG = uFlareRib.x * falong * (exp(-fd1*fd1)*frag1*(1.0 + 0.24*fasy)',
@@ -1904,55 +1914,110 @@ function init(){
     t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }
-  var LOOP_K = knob('loops', 0.0, 0.0, 1.5);
+  var LOOP_K = knob('loops', lk('loops', 0), 0.0, 1.5);
   var LOOP_AMB = TP.loops, LOOP_ARC = TP.larc, LOOP_N = LOOP_AMB + LOOP_ARC;
   var LOOP_SEG = TP.lseg;
-  var loopPositions = new Float32Array(LOOP_N * LOOP_SEG * 2 * 3);
-  var loopParamAttr = new Float32Array(LOOP_N * LOOP_SEG * 2);
-  var loopIdxAttr = new Float32Array(LOOP_N * LOOP_SEG * 2);
+  // FASE 2 (débito LOD da Fase 1): fitas orientadas à câmera no lugar de
+  // LineSegments de 1px. Cada ponto da linha central vira DOIS vértices
+  // (aSide ±1) expandidos no vertex shader perpendicular à direção
+  // projetada do segmento — tubo de meia-largura FIXA EM MUNDO com piso
+  // de 1px na tela (longe continua fino como antes; perto vira fita, não
+  // wireframe). Mesma filosofia de buffer: um único conjunto pré-alocado
+  // no tamanho máximo, nunca realocado; só position/aTan mudam no re-traço.
+  var LOOP_VPTS = LOOP_SEG + 1;                       // pontos da linha central
+  var loopPositions = new Float32Array(LOOP_N * LOOP_VPTS * 2 * 3);
+  var loopTanAttr = new Float32Array(LOOP_N * LOOP_VPTS * 2 * 3);
+  var loopParamAttr = new Float32Array(LOOP_N * LOOP_VPTS * 2);
+  var loopIdxAttr = new Float32Array(LOOP_N * LOOP_VPTS * 2);
+  var loopSideAttr = new Float32Array(LOOP_N * LOOP_VPTS * 2);
+  var loopIndex = new Uint16Array(LOOP_N * LOOP_SEG * 6);
   (function fillLoopStatics(){
-    // aParam (0..1 ao longo do arco) e aLoop (índice do slot) são
-    // ESTÁTICOS: só as posições mudam quando um loop é re-traçado
+    // aParam (0..1 ao longo do arco), aLoop (slot) e aSide (±1) são
+    // ESTÁTICOS; o índice (2 triângulos por segmento) também
     for (var li = 0; li < LOOP_N; li++){
-      var base = li*LOOP_SEG*2;
-      for (var s = 0; s < LOOP_SEG; s++){
-        loopParamAttr[base + s*2]     = s/LOOP_SEG;
-        loopParamAttr[base + s*2 + 1] = (s+1)/LOOP_SEG;
-        loopIdxAttr[base + s*2]     = li;
-        loopIdxAttr[base + s*2 + 1] = li;
+      var vbase = li*LOOP_VPTS*2;
+      for (var s = 0; s <= LOOP_SEG; s++){
+        var v = vbase + s*2;
+        loopParamAttr[v]     = s/LOOP_SEG;
+        loopParamAttr[v + 1] = s/LOOP_SEG;
+        loopIdxAttr[v]     = li;
+        loopIdxAttr[v + 1] = li;
+        loopSideAttr[v]     = -1;
+        loopSideAttr[v + 1] =  1;
+      }
+      for (var g = 0; g < LOOP_SEG; g++){
+        var v0 = vbase + g*2, o = (li*LOOP_SEG + g)*6;
+        loopIndex[o]   = v0;     loopIndex[o+1] = v0 + 1; loopIndex[o+2] = v0 + 2;
+        loopIndex[o+3] = v0 + 2; loopIndex[o+4] = v0 + 1; loopIndex[o+5] = v0 + 3;
       }
     }
   })();
   var loopGeo = new THREE.BufferGeometry();
   loopGeo.setAttribute('position', new THREE.BufferAttribute(loopPositions, 3));
+  loopGeo.setAttribute('aTan', new THREE.BufferAttribute(loopTanAttr, 3));
   loopGeo.setAttribute('aParam', new THREE.BufferAttribute(loopParamAttr, 1));
   loopGeo.setAttribute('aLoop', new THREE.BufferAttribute(loopIdxAttr, 1));
+  loopGeo.setAttribute('aSide', new THREE.BufferAttribute(loopSideAttr, 1));
+  loopGeo.setIndex(new THREE.BufferAttribute(loopIndex, 1));
   var loopEnvArr = new Float32Array(LOOP_N);   // intensidade final por loop
   var loopHotArr = new Float32Array(LOOP_N);   // 1 = recém-reconectado (branco)
   var loopUniforms = {
     uTime: { value: 0 },
     uLoopEnv: { value: loopEnvArr },
-    uLoopHot: { value: loopHotArr }
+    uLoopHot: { value: loopHotArr },
+    // FASE 2 — fitas com espessura de tela: resolução do viewport (px)
+    // e meia-largura do tubo em unidades de MUNDO (~0.006 R☉ visual)
+    uRes: { value: new THREE.Vector2(2, 2) },
+    uLoopW: { value: SUN_RADIUS * 0.0060 }
   };
   var loopMaterial = new THREE.ShaderMaterial({
     uniforms: loopUniforms,
     vertexShader: [
       'attribute float aParam;',
       'attribute float aLoop;',
+      'attribute float aSide;',
+      'attribute vec3 aTan;',
       // lookup do envelope no VERTEX shader (indexação dinâmica de
       // uniform é garantida lá, não no fragment em ES baixo)
       'uniform float uLoopEnv[' + LOOP_N + '];',
       'uniform float uLoopHot[' + LOOP_N + '];',
+      'uniform vec2 uRes;',
+      'uniform float uLoopW;',
       'varying float vParam;',
       'varying float vEnv;',
       'varying float vHot;',
       'varying float vId;',
+      'varying float vSide;',
+      'varying float vFade;',
+      'varying float vWide;',
       'void main(){',
-      '  vParam = aParam; vId = aLoop;',
+      '  vParam = aParam; vId = aLoop; vSide = aSide;',
       '  int li = int(aLoop + 0.5);',
       '  vEnv = uLoopEnv[li];',
       '  vHot = uLoopHot[li];',
-      '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
+      // fita orientada à câmera: expande o vértice perpendicular à
+      // DIREÇÃO PROJETADA do segmento (espaço de tela). Largura = tubo
+      // de meia-largura fixa em mundo projetado para pixels, com PISO
+      // de 1px (longe a fita degenera na linha fina de antes — o brilho
+      // sub-pixel vira fade de energia em vFade, sem cintilar) e teto
+      // de 22px (perto é fita larga, não wireframe).
+      '  vec4 clipA = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
+      '  vec4 clipB = projectionMatrix * modelViewMatrix * vec4(position + aTan, 1.0);',
+      '  float wA = max(clipA.w, 0.01);',
+      '  float wB = max(clipB.w, 0.01);',
+      '  vec2 dS = (clipB.xy/wB - clipA.xy/wA) * uRes;',
+      '  float dl = length(dS);',
+      '  vec2 nrm = (dl > 1e-3) ? vec2(-dS.y, dS.x)/dl : vec2(0.0, 1.0);',
+      '  float pxScale = 0.5 * uRes.y * projectionMatrix[1][1];',
+      '  float rawPx = uLoopW * pxScale / wA;',
+      '  float wpx = clamp(rawPx, 1.0, 14.0);',
+      '  vFade = clamp(rawPx, 0.05, 1.0);',
+      // vWide 0→1 conforme a fita alarga na tela: o fragment usa para
+      // AMORTECER o contraste do fluxo (que em 1px lia como cintilação
+      // viva, mas numa fita larga vira "salsichas" de brilho)
+      '  vWide = clamp((rawPx - 1.0)/13.0, 0.0, 1.0);',
+      '  clipA.xy += nrm * (aSide * wpx * 2.0 / uRes) * wA;',
+      '  gl_Position = clipA;',
       '}'
     ].join('\n'),
     fragmentShader: [
@@ -1961,29 +2026,41 @@ function init(){
       'varying float vEnv;',
       'varying float vHot;',
       'varying float vId;',
+      'varying float vSide;',
+      'varying float vFade;',
+      'varying float vWide;',
       'void main(){',
       '  if (vEnv < 0.002) discard;',
       // plasma escoando pelo tubo (condensação coronal): 2 harmônicas
-      // incomensuráveis em sentidos opostos — vivo, sem período audível
+      // incomensuráveis em sentidos opostos — vivo, sem período audível.
+      // De perto (fita larga, vWide→1) o contraste do fluxo amortece:
+      // o brilho pulsante que anima um fio de 1px quebraria a fita em
+      // salsichas (visto no smoke ribbons-close da Fase 2)
       '  float f1 = sin(vParam*18.85 - uTime*1.9 + vId*7.31);',
       '  float f2 = sin(vParam*40.84 + uTime*1.23 + vId*3.17);',
-      '  float flow = 0.62 + 0.26*f1 + 0.14*f2;',
+      '  float fAmp = 1.0 - 0.62*vWide;',
+      '  float flow = 0.62 + (0.26*f1 + 0.14*f2)*fAmp;',
       // pés mais brilhantes (coluna emissiva mais densa na base, como
       // o "moss" das imagens TRACE/AIA)
       '  float foot = 1.0 - vParam*(1.0 - vParam)*2.0;',
       '  float bright = flow * (0.55 + 0.45*foot*foot);',
+      // perfil transversal do tubo: coluna de emissão máxima no eixo,
+      // caindo suave na borda (integral de um cilindro oco fino leria
+      // como 2 riscos; o cheio lê como tubo de plasma)
+      '  float prof = 1.0 - vSide*vSide;',
       '  vec3 col = mix(vec3(1.0, 0.40, 0.12), vec3(1.0, 0.74, 0.40), flow*0.6);',
       // arcada recém-reconectada é quase branca e ESFRIA para a paleta
       '  col = mix(col, vec3(1.25, 1.05, 0.85), vHot);',
-      '  gl_FragColor = vec4(col * (bright * vEnv), 1.0);',
+      '  gl_FragColor = vec4(col * (bright * vEnv * prof * vFade), 1.0);',
       '}'
     ].join('\n'),
     transparent: true,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
-    depthTest: true          // o disco OCULTA loops atrás do limbo
+    depthTest: true,         // o disco OCULTA loops atrás do limbo
+    side: THREE.DoubleSide   // a fita gira com a câmera; sem lado "de trás"
   });
-  var loopMesh = new THREE.LineSegments(loopGeo, loopMaterial);
+  var loopMesh = new THREE.Mesh(loopGeo, loopMaterial);
   loopMesh.frustumCulled = false;   // posições mudam; a esfera de 2.2R sempre enquadra
   loopMesh.visible = false;
   var loopGroup = new THREE.Group();
@@ -2058,17 +2135,29 @@ function init(){
       loopPtsBuf[s*3+1] = (loopTraceBuf[j*3+1] + (loopTraceBuf[j*3+4] - loopTraceBuf[j*3+1])*f) * SUN_RADIUS;
       loopPtsBuf[s*3+2] = (loopTraceBuf[j*3+2] + (loopTraceBuf[j*3+5] - loopTraceBuf[j*3+2])*f) * SUN_RADIUS;
     }
-    var base = slot*LOOP_SEG*2*3;
-    for (var g = 0; g < LOOP_SEG; g++){
-      var o = base + g*6, p3 = g*3;
+    // FASE 2 — fitas: cada ponto central vira 2 vértices (lados ±1);
+    // a tangente (diferença central dos vizinhos) vai junto para o
+    // vertex shader orientar a fita à câmera
+    var base = slot*LOOP_VPTS*2*3;
+    for (var g = 0; g <= LOOP_SEG; g++){
+      var p3 = g*3;
+      var pn = (g < LOOP_SEG ? g + 1 : LOOP_SEG)*3;
+      var pp = (g > 0 ? g - 1 : 0)*3;
+      var tx = loopPtsBuf[pn]   - loopPtsBuf[pp];
+      var ty = loopPtsBuf[pn+1] - loopPtsBuf[pp+1];
+      var tz = loopPtsBuf[pn+2] - loopPtsBuf[pp+2];
+      var o = base + g*6;
       loopPositions[o]   = loopPtsBuf[p3];
       loopPositions[o+1] = loopPtsBuf[p3+1];
       loopPositions[o+2] = loopPtsBuf[p3+2];
-      loopPositions[o+3] = loopPtsBuf[p3+3];
-      loopPositions[o+4] = loopPtsBuf[p3+4];
-      loopPositions[o+5] = loopPtsBuf[p3+5];
+      loopPositions[o+3] = loopPtsBuf[p3];
+      loopPositions[o+4] = loopPtsBuf[p3+1];
+      loopPositions[o+5] = loopPtsBuf[p3+2];
+      loopTanAttr[o]   = tx; loopTanAttr[o+1] = ty; loopTanAttr[o+2] = tz;
+      loopTanAttr[o+3] = tx; loopTanAttr[o+4] = ty; loopTanAttr[o+5] = tz;
     }
     loopGeo.attributes.position.needsUpdate = true;
+    loopGeo.attributes.aTan.needsUpdate = true;
   }
   // semeia perto do pé LÍDER de uma região viva (sorteio ∝ |w|), num
   // leque voltado ao seguidor: as linhas traçadas viram a arcada da
@@ -2093,6 +2182,11 @@ function init(){
     if (loopAxisTmp.lengthSq() < 1e-6) return false;
     loopAxisTmp.normalize();
     loopLatTmp.crossVectors(loopSeedTmp, loopAxisTmp);
+    // FASE 2: o viés do leque pela separação do par foi EXPERIMENTADO e
+    // revertido — rejeição medida 79.7% vs 80% do leque fixo (a rejeição
+    // é dominada pela topologia do campo multi-carga, não pelo offset).
+    // Registrado em docs/fase-2; o débito "semeador perdulário" segue
+    // aberto e segue inofensivo (0.01 ms/traço).
     out.copy(loopSeedTmp)
        .addScaledVector(loopAxisTmp, 0.02 + 0.16*loopRand())
        .addScaledVector(loopLatTmp, (loopRand() - 0.5)*0.16)
@@ -2211,7 +2305,14 @@ function init(){
       if (st.ok){
         var ta = surfFlareT - st.delay;
         if (ta > 0){
-          envA = flareEnvGrad(ta) * 1.25 * surfFlareAmp;
+          // FASE 2: a arcada NÃO aparece durante o flash impulsivo —
+          // fisicamente os laços pós-reconexão crescem na fase gradual,
+          // e visualmente a arcada de frente lia como "anéis fantasma"
+          // ao redor do core (flagrado unânime pelo painel de juízes,
+          // presente até no controle sem knobs). Gate 0.55→1.05 no
+          // relógio do evento; em t>=2.5 (check B4) já vale 1.
+          var arcGate = Math.min(1, Math.max(0, (surfFlareT - 0.55)/0.5));
+          envA = flareEnvGrad(ta) * 1.25 * surfFlareAmp * arcGate;
           loopHotArr[LOOP_AMB + i] = Math.exp(-ta*0.30);
         }
       }
@@ -2229,6 +2330,7 @@ function init(){
       loopHotArr[i] = 0;
     }
     loopUniforms.uTime.value = elapsed;
+    loopUniforms.uRes.value.set(renderer.domElement.width, renderer.domElement.height);
     loopMesh.visible = subToggle.loops && (loopsOn || arcMax > 0 || arcQueueN > 0);
   }
 
@@ -2477,12 +2579,38 @@ function init(){
   var thresholdMaterial = new THREE.ShaderMaterial({ uniforms: thresholdUniforms, vertexShader: quadVertex, fragmentShader: thresholdFragment });
   var thresholdScene = makeFullscreenScene(thresholdMaterial);
 
-  var downsampleUniforms = { tDiffuse:{value:null}, uTexel:{value:new THREE.Vector2(1,1)} };
+  var downsampleUniforms = { tDiffuse:{value:null}, uTexel:{value:new THREE.Vector2(1,1)}, uDisp:{value:0.0} };
   var downsampleFragment = [
     'uniform sampler2D tDiffuse;',
     'uniform vec2 uTexel;',
+    'uniform float uDisp;',
     'varying vec2 vUv;',
     'void main(){',
+    // FASE 2 — bloom espectral ponderado por corpo negro: raio de blur
+    // POR CANAL (difração ∝ λ — R borra mais largo, B mais estreito;
+    // razão ancorada em λ_R/λ_B ≈ 700/450). Este é o termo da DESCIDA;
+    // o grosso do espalhamento diferencial acontece na subida (tent por
+    // canal no upsampleFragment). Sem passes novos: só taps a mais, e
+    // só quando o knob liga.
+    '  if (uDisp > 0.001){',
+    '    vec2 oR = uTexel * (1.0 + 0.35*uDisp);',
+    '    vec2 oB = uTexel * (1.0 - 0.25*uDisp);',
+    '    vec3 cS;',
+    '    cS.r = texture2D(tDiffuse, vUv+vec2( oR.x, oR.y)).r',
+    '         + texture2D(tDiffuse, vUv+vec2(-oR.x, oR.y)).r',
+    '         + texture2D(tDiffuse, vUv+vec2( oR.x,-oR.y)).r',
+    '         + texture2D(tDiffuse, vUv+vec2(-oR.x,-oR.y)).r;',
+    '    cS.g = texture2D(tDiffuse, vUv+vec2( uTexel.x, uTexel.y)).g',
+    '         + texture2D(tDiffuse, vUv+vec2(-uTexel.x, uTexel.y)).g',
+    '         + texture2D(tDiffuse, vUv+vec2( uTexel.x,-uTexel.y)).g',
+    '         + texture2D(tDiffuse, vUv+vec2(-uTexel.x,-uTexel.y)).g;',
+    '    cS.b = texture2D(tDiffuse, vUv+vec2( oB.x, oB.y)).b',
+    '         + texture2D(tDiffuse, vUv+vec2(-oB.x, oB.y)).b',
+    '         + texture2D(tDiffuse, vUv+vec2( oB.x,-oB.y)).b',
+    '         + texture2D(tDiffuse, vUv+vec2(-oB.x,-oB.y)).b;',
+    '    gl_FragColor = vec4(cS*0.25, 1.0);',
+    '    return;',
+    '  }',
     '  vec3 c = texture2D(tDiffuse, vUv+vec2(uTexel.x,uTexel.y)).rgb;',
     '  c += texture2D(tDiffuse, vUv+vec2(-uTexel.x,uTexel.y)).rgb;',
     '  c += texture2D(tDiffuse, vUv+vec2(uTexel.x,-uTexel.y)).rgb;',
@@ -2493,11 +2621,40 @@ function init(){
   var downsampleMaterial = new THREE.ShaderMaterial({ uniforms: downsampleUniforms, vertexShader: quadVertex, fragmentShader: downsampleFragment });
   var downsampleScene = makeFullscreenScene(downsampleMaterial);
 
-  var upsampleUniforms = { tDiffuse:{value:null} };
+  var upsampleUniforms = { tDiffuse:{value:null}, uTexel:{value:new THREE.Vector2(1,1)}, uDisp:{value:0.0} };
   var upsampleFragment = [
     'uniform sampler2D tDiffuse;',
+    'uniform vec2 uTexel;',
+    'uniform float uDisp;',
     'varying vec2 vUv;',
     'void main(){',
+    // FASE 2 — bloom espectral: o grosso do raio do dual-Kawase vem da
+    // pirâmide em si (downsample bilinear), que é acromática; para o R
+    // espalhar DE VERDADE mais que o B, a subida troca o passthrough
+    // por um tent de 4 taps com raio POR CANAL a cada nível — o
+    // espalhamento diferencial compõe sobre o sinal acumulado inteiro
+    // (só o downsample espectral era imperceptível: ΔR médio +0.2/255
+    // no smoke; medido 2026-07).
+    '  if (uDisp > 0.001){',
+    '    vec2 oR = uTexel * (0.5 + 1.70*uDisp);',
+    '    vec2 oG = uTexel * 0.5;',
+    '    vec2 oB = uTexel * max(0.5 - 0.34*uDisp, 0.0);',
+    '    vec3 cS;',
+    '    cS.r = texture2D(tDiffuse, vUv+vec2( oR.x, oR.y)).r',
+    '         + texture2D(tDiffuse, vUv+vec2(-oR.x, oR.y)).r',
+    '         + texture2D(tDiffuse, vUv+vec2( oR.x,-oR.y)).r',
+    '         + texture2D(tDiffuse, vUv+vec2(-oR.x,-oR.y)).r;',
+    '    cS.g = texture2D(tDiffuse, vUv+vec2( oG.x, oG.y)).g',
+    '         + texture2D(tDiffuse, vUv+vec2(-oG.x, oG.y)).g',
+    '         + texture2D(tDiffuse, vUv+vec2( oG.x,-oG.y)).g',
+    '         + texture2D(tDiffuse, vUv+vec2(-oG.x,-oG.y)).g;',
+    '    cS.b = texture2D(tDiffuse, vUv+vec2( oB.x, oB.y)).b',
+    '         + texture2D(tDiffuse, vUv+vec2(-oB.x, oB.y)).b',
+    '         + texture2D(tDiffuse, vUv+vec2( oB.x,-oB.y)).b',
+    '         + texture2D(tDiffuse, vUv+vec2(-oB.x,-oB.y)).b;',
+    '    gl_FragColor = vec4(cS*0.25, 1.0);',
+    '    return;',
+    '  }',
     '  gl_FragColor = vec4(texture2D(tDiffuse, vUv).rgb, 1.0);',
     '}'
   ].join('\n');
@@ -2563,6 +2720,7 @@ function init(){
 
     for (var j=bloomMips.length-2;j>=0;j--){
       upsampleUniforms.tDiffuse.value = bloomMips[j+1].rt.texture;
+      upsampleUniforms.uTexel.value.set(1/bloomMips[j+1].w, 1/bloomMips[j+1].h);
       renderer.setRenderTarget(bloomMips[j].rt);
       renderer.autoClear = false;
       renderer.render(upsampleScene, quadCamera);
@@ -2581,6 +2739,12 @@ function init(){
   // brilho HDR REAL que chega à lente (envelope × visibilidade do
   // ponto no hemisfério voltado à câmera). Default 0 = sem efeito.
   var BURST_K = knob('burst', lk('burst', 0), 0.0, 1.5);
+  // FASE 2 — a luz como matéria: dispersão espectral do bloom (raios de
+  // blur por canal no dual-Kawase, ver downsampleFragment) e halação com
+  // peso de temperatura (só as altas QUENTES sangram para o vermelho,
+  // ver branch uHal no compFragment). Defaults 0 = frame pixel-idêntico.
+  var DISP_K = knob('disp', lk('disp', 0), 0.0, 1.5);
+  var HAL_K = knob('hal', lk('hal', 0), 0.0, 1.5);
   // hand: linguagem de câmera do Sunshine — o Sol é filmado em lente
   // longa com deriva lenta e micro-tremor de operador (0.1-0.3 Hz + um
   // harmônico rápido fraco). Soma de senos incomensuráveis = pseudo-
@@ -2602,6 +2766,8 @@ function init(){
     uVig:{value: knob('vig', lk('vig', 0.55), 0.0, 1.5)},
     uGrain:{value: knob('grain', lk('grain', 1.0), 0.0, 5.0)},
     uVeil:{value: 0.0},
+    // FASE 2 — halação com peso de temperatura (0 = ramo desligado)
+    uHal:{value: 0.0},
     uAdapt:{value: 1.0},
     uFringe:{value: knob('fringe', lk('fringe', 0), 0.0, 1.5)},
     uShimmer:{value: knob('shimmer', lk('shimmer', 0), 0.0, 1.5)},
@@ -2632,6 +2798,7 @@ function init(){
     'uniform float uVig;',
     'uniform float uGrain;',
     'uniform float uVeil;',
+    'uniform float uHal;',
     'uniform float uAdapt;',
     'uniform float uFringe;',
     'uniform float uShimmer;',
@@ -2729,6 +2896,17 @@ function init(){
     // sombras ao redor do disco ("knife edge" do Sunshine)
     '  if (uVeil > 0.001){',
     '    color += texture2D(tVeil, uv).rgb * (uVeil * 0.55) * uExposure * uAdapt;',
+    '  }',
+    // FASE 2 — halação com peso de temperatura (corpo negro): no filme a
+    // camada anti-halation absorve o λ curto; o que sangra de volta pela
+    // base é o VERMELHO. Peso = excesso espectral de R no mip largo —
+    // plage (1.0,0.70,0.32) e limbo quente (1.0,0.30,0.10) pesam muito,
+    // altas NEUTRAS pesam ~0. As fontes quentes avermelham a vizinhança;
+    // o veil neutro acima continua intocado (uHal=0 ⇒ ramo morto).
+    '  if (uHal > 0.001){',
+    '    vec3 hv = texture2D(tVeil, uv).rgb;',
+    '    float hw = max(hv.r - 0.5*(hv.g + hv.b), 0.0);',
+    '    color += vec3(1.0, 0.38, 0.14) * (hw * uHal * 0.9) * uExposure * uAdapt;',
     '  }',
     // streak anamórfico: risco horizontal frio (assinatura de lente
     // anamórfica; os flares do Sunshine eram de lente REAL)
@@ -3281,7 +3459,8 @@ function init(){
                  sep: sunUniforms.uFlareGeo.value.w,
                  dir: [surfFlareDir.x, surfFlareDir.y, surfFlareDir.z],
                  tan: [flareTanDir.x, flareTanDir.y, flareTanDir.z],
-                 hdr: lastFlareHDR, burst: compUniforms.uBurst.value };
+                 hdr: lastFlareHDR, burst: compUniforms.uBurst.value,
+                 disp: DISP_K, hal: compUniforms.uHal.value };
       };
       // QA FASE 1: estado dos loops coronais (traçados, arcada viva,
       // custo acumulado do traçador) e salto de fase p/ fotografia
@@ -3429,6 +3608,10 @@ function init(){
         get:function(){ return STREAK_K; }, set:function(v){ STREAK_K = v; } },
       { k:'burst', label:'Starburst (difração)', lo:0, hi:1.5, step:0.05, dflt:0,
         get:function(){ return BURST_K; }, set:function(v){ BURST_K = v; } },
+      { k:'disp', label:'Bloom espectral (dispersão)', lo:0, hi:1.5, step:0.05, dflt:0,
+        get:function(){ return DISP_K; }, set:function(v){ DISP_K = v; } },
+      { k:'hal', label:'Halação quente (corpo negro)', lo:0, hi:1.5, step:0.05, dflt:0,
+        get:function(){ return HAL_K; }, set:function(v){ HAL_K = v; } },
       { k:'adapt', label:'Olho (adaptação)', lo:0, hi:1, step:0.05, dflt:0,
         get:function(){ return ADAPT_K; }, set:function(v){ ADAPT_K = v; } },
       { k:'fringe', label:'Franja da lente', lo:0, hi:1.5, step:0.05, dflt:0,
@@ -3752,7 +3935,12 @@ function init(){
     sunUniforms.uFlare.value.set(surfFlareDir.x, surfFlareDir.y, surfFlareDir.z, sfEnv);
     sunUniforms.uFlareGeo.value.set(flareTanDir.x, flareTanDir.y, flareTanDir.z, sfSep);
     sunUniforms.uFlarePerp.value.set(flarePerpDir.x, flarePerpDir.y, flarePerpDir.z, sfLen);
-    sunUniforms.uFlareRib.value.set(sfRib, 0.010, flareSeedVal, 0);
+    // FASE 2 (débito LOD): w = fator de zoom dos STRANDS das fitas — de
+    // perto (camDist < fit) o ruído de recorte fica proporcionalmente
+    // mais fino, mantendo a densidade de strands EM TELA; de longe fica
+    // 1.0 (look calibrado da Fase 1 intocado)
+    sunUniforms.uFlareRib.value.set(sfRib, 0.010, flareSeedVal,
+      Math.min(2.6, Math.max(1.0, fitDist/camDist)));
     // loops coronais + arcada pós-flare (FASE 1): ciclo de vida,
     // traços amortizados e envelopes — tudo sem alocação
     updateLoops(delta);
@@ -3864,6 +4052,9 @@ function init(){
     renderer.setRenderTarget(sceneRT);
     renderer.render(scene, camera);
 
+    // FASE 2 — dispersão espectral do bloom (lida ANTES do renderBloom)
+    downsampleUniforms.uDisp.value = DISP_K;
+    upsampleUniforms.uDisp.value = DISP_K;
     if (subToggle.bloom) renderBloom();
     compUniforms.uBloomStrength.value = subToggle.bloom ? BLOOM_STRENGTH_BASE : 0.0;
 
@@ -3894,6 +4085,10 @@ function init(){
     fvis = fvis*fvis*(3.0 - 2.0*fvis);
     var flareHDR = (sfEnv + 0.5*sfRib) * fvis;
     lastFlareHDR = flareHDR;
+    // FASE 2 — halação quente: além do peso espectral por pixel (shader),
+    // o ganho global SURGE com o flash do flare — o mesmo escalar físico
+    // que dirige íris e starburst ("uma estrela, um estado")
+    compUniforms.uHal.value = subToggle.bloom ? HAL_K * (1.0 + 1.6*flareHDR) : 0.0;
     // adaptação de exposição (olho/íris): fecha rápido no claro, reabre
     // devagar; flare estoura o quadro ANTES de a íris correr atrás
     if (ADAPT_K > 0.001){

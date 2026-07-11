@@ -91,7 +91,12 @@ function init(){
     // lentes); valores = mediana das 3 recomendações. Acima disso:
     // loops>=0.8 vira "mola de neon", burst>=1.0 vira cunha dura,
     // disp>=0.7 lava o disco p/ ouro, hal>=0.9 véu leitoso.
-    loops:0.55, burst:0.55, disp:0.40, hal:0.45
+    loops:0.55, burst:0.55, disp:0.40, hal:0.45,
+    // FASE 3: filamentos escuros como âncora de escala (painel de 3
+    // juízes: mediana 0.55, mesmo patamar dos loops; >=0.9 vira
+    // caricato — núcleo preto). cycle/lapse ficam FORA do preset: são
+    // comportamento no tempo, não look.
+    fprom:0.55
   };
   var LOOK = (urlQ.look === 'sunshine') ? LOOK_SUNSHINE : null;
   function lk(n, base){ return (LOOK && LOOK[n] !== undefined) ? LOOK[n] : base; }
@@ -707,9 +712,12 @@ function init(){
     cycleN = Math.floor(tot);
     cyclePhase01 = tot - cycleN;
     cycleHale = ((cycleN % 2) + 2) % 2 === 0 ? 1 : -1;
-    // atividade: sobe rápido ao máximo (~0.35), decai lento; piso 0.18
-    // no mínimo (o sol calmo da ref GONG 2026 ainda tem rede fraca)
-    var amp = 0.18 + 0.98 * Math.pow(Math.sin(Math.PI * cyclePhase01), 1.3);
+    // atividade: sobe rápido ao máximo (~0.35), decai lento. Piso 0.10
+    // e swing maior (painel de juízes F3: max↔min a "~1 stop" não
+    // contava a história — o mínimo precisa de disco quase limpo, ver
+    // ref-06 vs ref-07); em fase 0.35 vale ~1.03 (ligar o knob não dá
+    // pop perceptível nas regiões vivas)
+    var amp = 0.10 + 1.06 * Math.pow(Math.sin(Math.PI * cyclePhase01), 1.15);
     cycleAmpK = 1.0 + (amp - 1.0) * d;
     // dipolo polar: cruza zero na fase 0.45 (reversão no máximo) e
     // satura invertido no fim do ciclo; contínuo na virada de ciclo
@@ -1930,13 +1938,22 @@ function init(){
       'uniform float uAbsorb;\nvarying vec3 vWPos;\nvoid main(){')
     // yc = afastamento do CENTRO do canal (a PIL corre no meio do
     // cartão deitado); o y do ruído fica ASSINADO — espelhar o noise
-    // com abs() gerava "renda" simétrica ornamental (QA F3)
+    // com abs() gerava "renda" simétrica ornamental (QA F3). O centro
+    // MEANDRA com a longitude (painel de juízes F3: "reto demais lê
+    // como risco geométrico" — filamentos reais serpenteiam, ref-03)
     .replace('  float y = vUv.y;',
-      '  float y = vUv.y;\n  float yc = abs(y*2.0 - 1.0);')
+      '  float y = vUv.y;\n' +
+      '  float yc = abs(y*2.0 - 1.0 + 0.38*snoise(vec3(xn*2.1, uSeed*2.9, 1.5)));')
     // a largura do canal usa yc (o perfil yTop da cortina vira a
     // meia-largura do filamento — as reentrâncias são os barbs)
     .replace('  float body = smoothstep(0.02, 0.16, yTop - y);',
       '  float body = smoothstep(0.02, 0.16, yTop - yc);')
+    // miolo SÓLIDO: o gate de wisp da cortina abre buracos até zero, e
+    // visto de cima o canal virava picote/dithering (flag unânime do
+    // painel de juízes F3 — filamento GONG é absorção contínua e macia,
+    // fios só nas bordas). O wisp vira modulação suave, não gate.
+    .replace('  float a = wisp * body * uIntensity;',
+      '  float a = (0.60 + 0.40*wisp) * body * uIntensity;')
     // o corte "abaixo da superfície" do cartão em pé mataria um lado
     // inteiro do canal deitado — fora
     .replace('  a *= smoothstep(0.0, 0.07, y);', '')
@@ -4374,7 +4391,10 @@ function init(){
         fu.uAgit.value = ps.agit;
         fu.uPTime.value = ps.drift;
         fu.uTime.value = elapsed;
-        fu.uAbsorb.value = Math.min(1.0, FPROM_K) * 0.55 * sF * ps.fieldK;
+        // teto 0.45 com fieldK saturado: filamento GONG é cinza-escuro
+        // sobre o disco, nunca preto (juiz de realismo F3 — o teto
+        // antigo 0.55·fieldK1.2=0.66 saturava o núcleo para preto)
+        fu.uAbsorb.value = Math.min(1.0, FPROM_K) * 0.45 * sF * Math.min(1.0, ps.fieldK);
       } else if (ps.flat.visible) ps.flat.visible = false;
     });
     prominenceMeshes.forEach(function(m){

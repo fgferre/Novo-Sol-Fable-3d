@@ -96,6 +96,16 @@ function init(){
   var LOOK = (urlQ.look === 'sunshine') ? LOOK_SUNSHINE : null;
   function lk(n, base){ return (LOOK && LOOK[n] !== undefined) ? LOOK[n] : base; }
   var IDLE_CINE = urlQ.idle === '1' || (urlQ.idle === undefined && savedKnobs.idle == 1);
+  // FASE 3 — o tempo da estrela: cycle liga o ciclo de 11 anos (0 = o
+  // sol "de meio de ciclo" eterno de sempre; frame default intocado;
+  // >1 acelera o relógio natural do ciclo). lapse é o time-lapse
+  // documental da camada cinema: multiplica o relógio do ciclo E o
+  // tempo de vida das regiões ativas (só a maquinaria de manchas —
+  // rotação, granulação e proeminências seguem no tempo normal, a
+  // mesma honestidade de VFX de p-modes/convecção). lapse>0 com
+  // cycle=0 liga o ciclo sozinho (modo documental de um toque).
+  var CYCLE_K = knob('cycle', lk('cycle', 0), 0.0, 1.5);
+  var LAPSE_K = knob('lapse', lk('lapse', 0), 0.0, 1.5);
   var RENDER_SCALE = (parseFloat(urlQ.scale) > 0)
     ? Math.min(2.0, Math.max(0.3, parseFloat(urlQ.scale))) : 1.0;
 
@@ -652,12 +662,80 @@ function init(){
   function sphDir(lo, la){
     return new THREE.Vector3(Math.cos(la)*Math.cos(lo), Math.sin(la), Math.cos(la)*Math.sin(lo));
   }
+  // ---------------------------------------------------------------
+  // FASE 3 — CICLO DE 11 ANOS. Um escalar de fase (cyclePhase01) modula
+  // a maquinaria de lifecycle que já existe:
+  //  - lei de Spörer: a banda de emergência migra de ±35° para ±5° ao
+  //    longo do ciclo (diagrama borboleta) — placePair reaproveita o
+  //    MESMO sorteio de latitude (o stream do srand não desloca);
+  //  - envelope de atividade: |q| das regiões cresce ao máximo (~fase
+  //    0.35) e definha no mínimo — uActivity (coroa, cooldown de flare,
+  //    íris) segue de graça ("uma estrela, um estado");
+  //  - flip de Hale: a polaridade líder/seguidor inverte por ciclo
+  //    (ps.polSign, aplicado na emergência — regiões vivas não trocam);
+  //  - reversão polar: o dipolo de fundo cruza zero perto do máximo
+  //    (fase ~0.45) e renasce invertido (cargas polares moduladas).
+  // Tempo comprimido com honestidade de VFX: 11 anos ~ CYCLE_PERIOD
+  // unidades simuladas (~30 min a speed=1); lapse acelera até ~×40.
+  // Com cycle=0 NADA disto roda: fase congelada em 0.35 (meio de
+  // ciclo), polSign=1, ampK=1, cargas polares intocadas — o frame
+  // default é pixel-idêntico ao baseline (gate qa:parity + A/B 0px).
+  // ---------------------------------------------------------------
+  var CYCLE_PERIOD = 1800;    // unidades de tempo simulado por ciclo
+  var CYCLE_PHASE0 = 0.35;    // fase do sol default (meio de ciclo)
+  var CYCLE_LAPSE_MUL = 26.0; // lapse=1.5 => relógio ~×40
+  var cycleTime = 0;          // só anda com o ciclo ligado
+  var cycleWarp = 0;          // tempo EXTRA acumulado p/ as regiões (lapse)
+  var cyclePhase01 = CYCLE_PHASE0;
+  var cycleN = 0;             // índice do ciclo (paridade => Hale)
+  var cycleHale = 1;          // sinal de Hale do ciclo corrente
+  var cycleAmpK = 1;          // ganho global de atividade
+  var cyclePolF = 1;          // fator do dipolo polar (1 = default)
+  var cyclePolarN = null, cyclePolarS = null;
+  function cycleDepth(){
+    // lapse sozinho liga o ciclo (modo documental de um toque)
+    return (LAPSE_K > 0.001 && CYCLE_K < 0.001) ? 1.0 : Math.min(1.0, CYCLE_K);
+  }
+  function updateCycleState(){
+    var d = cycleDepth();
+    var tot = CYCLE_PHASE0 + cycleTime / CYCLE_PERIOD;
+    cycleN = Math.floor(tot);
+    cyclePhase01 = tot - cycleN;
+    cycleHale = ((cycleN % 2) + 2) % 2 === 0 ? 1 : -1;
+    // atividade: sobe rápido ao máximo (~0.35), decai lento; piso 0.18
+    // no mínimo (o sol calmo da ref GONG 2026 ainda tem rede fraca)
+    var amp = 0.18 + 0.98 * Math.pow(Math.sin(Math.PI * cyclePhase01), 1.3);
+    cycleAmpK = 1.0 + (amp - 1.0) * d;
+    // dipolo polar: cruza zero na fase 0.45 (reversão no máximo) e
+    // satura invertido no fim do ciclo; contínuo na virada de ciclo
+    // porque o sinal de Hale flipa junto
+    var pol = Math.cos(Math.PI * Math.min(1.0, cyclePhase01 / 0.9)) * cycleHale;
+    cyclePolF = 1.0 + (pol - 1.0) * d;
+    if (cyclePolarN){
+      cyclePolarN.w =  0.5 * cyclePolF;
+      cyclePolarS.w = -0.5 * cyclePolF;
+    }
+  }
+  // lei de Spörer: banda de emergência na fase corrente. latR é o MESMO
+  // sorteio uniforme que o caminho default consome — sem chamadas novas
+  // de srand(). defLat entra p/ o blend suave de profundidade do knob.
+  function cycleEmergenceLat(latR, hemi, defLat){
+    var d = cycleDepth();
+    var latC = (35.0 - 30.0 * cyclePhase01) * (Math.PI / 180.0);
+    var latW = (8.0 - 4.0 * cyclePhase01) * (Math.PI / 180.0);
+    var lat = Math.max(0.035, latC + (latR * 2.0 - 1.0) * latW);
+    return defLat + (hemi * lat - defLat) * d;
+  }
   function placePair(ps){
     // rejeição: regiões ativas independentes não nascem sobrepostas —
     // exige distância angular mínima dos líderes das outras regiões
     var lat, lon, lead;
     for (var attempt = 0; attempt < 24; attempt++){
-      lat = ps.hemi * (0.24 + srand()*0.30);
+      var latR = srand();
+      lat = ps.hemi * (0.24 + latR*0.30);
+      // FASE 3 — lei de Spörer: com o ciclo ligado a banda migra
+      // 35°→5°; reaproveita latR (stream do srand intocado)
+      if (cycleDepth() > 0.001) lat = cycleEmergenceLat(latR, ps.hemi, lat);
       lon = srand()*Math.PI*2;
       lead = sphDir(lon, lat);
       var minAng = Math.PI, minLon = Math.PI;
@@ -685,6 +763,10 @@ function init(){
     var foll = sphDir(lon+sep, follLat).multiplyScalar(0.88);
     ps.lead.set(lead.x, lead.y, lead.z, ps.lead.w);
     ps.foll.set(foll.x, foll.y, foll.z, ps.foll.w);
+    // FASE 3 — flip de Hale: a região que EMERGE carrega a polaridade
+    // do ciclo corrente (regiões vivas não trocam de sinal no meio da
+    // vida). Com o ciclo desligado, polSign=1 = comportamento de sempre.
+    ps.polSign = (cycleDepth() > 0.001) ? cycleHale : 1;
   }
   (function buildCharges(){
     for (var i=0;i<4;i++){
@@ -698,15 +780,18 @@ function init(){
       var ps = {
         lead: lead, foll: foll, baseQ: q, hemi: hemi,
         period: 150 + srand()*90,
-        phase: 0, reborn: false
+        phase: 0, reborn: false, polSign: 1
       };
       ps.phase = (i/4 + srand()*0.1) * ps.period;
       placePair(ps);
       pairStates.push(ps);
     }
-    charges.push(new THREE.Vector4(0,  0.55, 0,  0.5));
-    charges.push(new THREE.Vector4(0, -0.55, 0, -0.5));
+    charges.push(cyclePolarN = new THREE.Vector4(0,  0.55, 0,  0.5));
+    charges.push(cyclePolarS = new THREE.Vector4(0, -0.55, 0, -0.5));
   })();
+  // FASE 3: com ?cycle/?lapse na URL o estado do ciclo (amp, dipolo
+  // polar) vale desde o primeiro frame/seed do sim; com knob=0 é no-op
+  updateCycleState();
   simUniforms.uChargesSim.value = charges;
   seedSimulation();
   function lifeEnvelope(x){   // x em 0..1 dentro do período
@@ -734,8 +819,11 @@ function init(){
       } else {
         ps.reborn = false;
       }
-      ps.lead.w =  ps.baseQ * Math.max(env, 0.03);
-      ps.foll.w = -ps.baseQ * 0.85 * Math.max(env, 0.03);
+      // FASE 3: polSign (flip de Hale) e cycleAmpK (envelope de
+      // atividade do ciclo) valem 1 com o ciclo desligado — o produto
+      // por 1.0 é bit-exato, o caminho default não muda
+      ps.lead.w =  ps.baseQ * ps.polSign * Math.max(env, 0.03) * cycleAmpK;
+      ps.foll.w = -ps.baseQ * ps.polSign * 0.85 * Math.max(env, 0.03) * cycleAmpK;
       // MACRO_SLOW: a advecção do sim desacelera junto (SIM_DT) — as
       // cargas derivam na mesma escala para as manchas não descolarem
       // da plage (família do bug 4 da auditoria de movimento)
@@ -3343,6 +3431,8 @@ function init(){
                  hand: HAND_K,
                  loops: LOOP_K,
                  burst: BURST_K,
+                 cycle: CYCLE_K,
+                 lapse: LAPSE_K,
                  adaptMul: compUniforms.uAdapt.value,
                  look: LOOK ? 'sunshine' : '' };
       };
@@ -3367,8 +3457,35 @@ function init(){
       };
       window.__solInfo.regions = function(){
         return pairStates.map(function(ps){
-          return { lead: [ps.lead.x, ps.lead.y, ps.lead.z], w: ps.lead.w, baseQ: ps.baseQ };
+          return { lead: [ps.lead.x, ps.lead.y, ps.lead.z], w: ps.lead.w, baseQ: ps.baseQ,
+                   // FASE 3: latitude do líder em graus (o raio das cargas
+                   // é 0.88) e sinal de Hale — p/ o QA da borboleta
+                   lat: Math.asin(Math.max(-1, Math.min(1, ps.lead.y/0.88)))*180/Math.PI,
+                   pol: ps.polSign };
         });
+      };
+      // FASE 3 — QA do ciclo de 11 anos: fase/índice/sinais correntes...
+      window.__solInfo.cycleInfo = function(){
+        return { cycle: CYCLE_K, lapse: LAPSE_K, depth: cycleDepth(),
+                 phase: cyclePhase01, n: cycleN, hale: cycleHale,
+                 amp: cycleAmpK, pol: cyclePolF, polNorth: cyclePolarN.w,
+                 warp: cycleWarp,
+                 latC: 35 - 30*cyclePhase01, latW: 8 - 4*cyclePhase01 };
+      };
+      // ...e salto determinístico de fase (sob ?det&hold o tempo congela;
+      // p em CICLOS — 1.3 = ciclo ímpar na fase 0.3, testa o flip de
+      // Hale). reseed=true re-emerge os 4 pares JÁ na banda da fase nova
+      // (fotografa a borboleta sem esperar renascimentos naturais).
+      window.__solInfo.setCyclePhase = function(p, reseed){
+        cycleTime = (p - CYCLE_PHASE0) * CYCLE_PERIOD;
+        updateCycleState();
+        if (reseed){
+          for (var i = 0; i < pairStates.length; i++){
+            pairStates[i].reborn = false;
+            placePair(pairStates[i]);
+          }
+        }
+        return window.__solInfo.cycleInfo();
       };
       window.__solInfo.prominences = function(){
         return prominenceMeshes.map(function(m){
@@ -3597,6 +3714,10 @@ function init(){
       { k:'pmode', label:'Oscilações (p-modes)', lo:0, hi:1, step:0.05, dflt:0,
         get:function(){ return sunUniforms.uPmode.value; },
         set:function(v){ sunUniforms.uPmode.value = v; } },
+      { k:'cycle', label:'Ciclo de 11 anos', lo:0, hi:1.5, step:0.05, dflt:0,
+        get:function(){ return CYCLE_K; }, set:function(v){ CYCLE_K = v; } },
+      { k:'lapse', label:'Time-lapse do ciclo', lo:0, hi:1.5, step:0.05, dflt:0,
+        get:function(){ return LAPSE_K; }, set:function(v){ LAPSE_K = v; } },
       { sec: 'luz & cor' },
       { k:'bloom', label:'Bloom', lo:0, hi:2.5, step:0.05, dflt:1,
         get:function(){ return BLOOM_STRENGTH_BASE/BLOOM_BASE0; },
@@ -3979,8 +4100,19 @@ function init(){
     loopGroup.rotation.y = sunMesh.rotation.y;
     spiculeUniforms.uTime.value = elapsed;
 
+    // FASE 3 — relógio do ciclo de 11 anos: só anda com cycle/lapse
+    // ligados. cycle>1 acelera o relógio natural; lapse (time-lapse
+    // documental) multiplica o relógio do ciclo E o tempo das regiões
+    // (cycleWarp), sem tocar rotação/sim/proeminências. Default 0:
+    // warp fica 0.0 e elapsed+0.0 é bit-exato — baseline intocado.
+    if (cycleDepth() > 0.001){
+      var cycMul = Math.max(1.0, CYCLE_K) + LAPSE_K * CYCLE_LAPSE_MUL;
+      cycleTime += delta * cycMul;
+      if (cycMul > 1.0) cycleWarp += delta * (cycMul - 1.0);
+      updateCycleState();
+    }
     // ciclo de vida das regiões ativas (o bake absorve as mudanças a ~8Hz)
-    updateActiveRegions(elapsed);
+    updateActiveRegions(elapsed + cycleWarp);
     // flare de superfície: ataque rápido, decaimento lento
     surfFlareCooldown -= delta;
     if (surfFlareCooldown <= 0){

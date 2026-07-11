@@ -159,7 +159,7 @@ function init(){
     // ULTRA (desktop com GPU dedicada): DPR até 3, malha/sim/estrelas
     // maiores e 5 níveis de bloom. Nunca é escolhido no primeiro load —
     // só o auto-tune promove (p95 < limiar por 30s no high) ou ?tier=ultra.
-    ultra:{ fbm:6, seg:192, stars:10000, bright:320, simW:1024, simH:512, simStep:1/30, bloom:5, prom:8, chromo:2048, granFreq:36.0, lic7:true, loops:22, larc:12, lseg:52 }
+    ultra:{ fbm:6, seg:192, stars:10000, bright:320, simW:1024, simH:512, simStep:1/30, bloom:5, prom:8, chromo:2048, granFreq:36.0, lic7:true, loops:22, larc:12, lseg:52, cstep:48 }
   };
   // T3.2: partida por HARDWARE + memória de sessões anteriores. A
   // heurística antiga (toque/tela pequena => low) rebaixava iPhones Pro;
@@ -1631,7 +1631,7 @@ function init(){
   // FASE 4 — "a coroa de verdade": coroa volumétrica raymarched.
   // A densidade coronal vive num sampler3D 64³ (payoff do WebGL2)
   // bakeado na CPU pelo MESMO campo de cargas (bFieldJS), fatiado como
-  // o bake da cromosfera (2 fatias z/frame, snapshot de cargas no
+  // o bake da cromosfera (1 fatia z/frame, snapshot de cargas no
   // início do ciclo, upload atômico no fim — sem tearing). A topologia
   // aberta/fechada sai de um proxy físico barato, a UNIPOLARIDADE
   // |B·r̂|/|B|: folhas de helmet streamer nascem na superfície neutra
@@ -4828,8 +4828,12 @@ function init(){
           cvolStep = 0; cvolAccum = 0; snapshotCvolCharges();
         }
         if (cvolStep >= 0){
-          bakeCvolSlice(cvolStep); bakeCvolSlice(cvolStep + 1);
-          cvolStep += 2;
+          // 1 fatia/frame: 2 fatias custavam ~2.9ms de busy p95 no mid
+          // (A/B da rodada; orçamento CPU ≤1ms/frame). O ciclo vira
+          // ~64 frames + folga de 0.9s — cadência de sobra para a
+          // deriva das cargas (~150s) e para o lapse (ciclo em ~45s)
+          bakeCvolSlice(cvolStep);
+          cvolStep += 1;
           if (cvolStep >= CVOL_N){
             cvolStep = -1; cvolCycles++;
             cvolData.set(cvolStage);        // upload atômico: sem tearing

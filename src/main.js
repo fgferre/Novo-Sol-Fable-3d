@@ -1771,11 +1771,12 @@ function init(){
         '  float sq = sqrt(disc);',
         '  float t0 = max(-b - sq, 0.0);',
         '  float t1 = -b + sq;',
-        // o raio que fura o disco para no ponto de entrada: a coroa de
-        // trás não brilha na frente do disco (o disco opaco, desenhado
-        // depois, cobre o resto — renderOrder -1)
-        '  float di = b*b - (dot(ro,ro) - SUN_R*SUN_R*1.0201);',
-        '  if (di > 0.0) t1 = min(t1, -b - sqrt(di));',
+        // raio que atinge o DISCO não contribui: a coroa à frente do
+        // disco é ~1e-6 do brilho dele (invisível na realidade), e os
+        // transparentes desenham DEPOIS dos opacos — sem este corte o
+        // segmento frontal somaria brilho por cima do disco (QA G1)
+        '  float di = b*b - (dot(ro,ro) - SUN_R*SUN_R);',
+        '  if (di > 0.0){ fragColor = vec4(0.0); return; }',
         '  if (t1 <= t0 + 1e-4){ fragColor = vec4(0.0); return; }',
         '  float dt = (t1 - t0) / float(CVOL_STEPS);',
         // jitter determinístico por pixel (esconde banding; det=ok)
@@ -4816,8 +4817,11 @@ function init(){
         cvolUniforms.uCvol.value = CVOL_K;
         cvolUniforms.uTime.value = elapsed;
         cvolUniforms.uActivity.value = coronaRaysUniforms.uActivity.value;
-        // mundo -> objeto: transposta da rotação do sunMesh (tilt+spin)
-        sunMesh.updateMatrixWorld();
+        // mundo -> objeto: transposta da rotação do sunMesh (tilt+spin).
+        // Usa o matrixWorld da última renderização (defasagem de 1
+        // frame de spin, ~4e-4 rad — invisível): chamar
+        // updateMatrixWorld() aqui mudava o timing de update da cena
+        // e deixava resíduo de 1 LSB nos ciclos de bake (QA F3)
         cvolInvRot.setFromMatrix4(sunMesh.matrixWorld).transpose();
         cvolAccum += delta;
         if (cvolStep < 0 && cvolAccum >= 0.9){

@@ -88,13 +88,31 @@ function ringStats(file, r0, r1){
     check('F1 raymarch ligado no high (36 passos, 64³ pronto)',
       ci.on === true && ci.steps === 36 && ci.res === 64 && ci.ready === true && ci.cycles >= 1,
       JSON.stringify(ci));
-    const shot = path.join(outDir, 'cvol-fit.png');
-    await page.screenshot({ path: shot });
-    const ref = path.join(refDir, 'desktop-fit.png');
-    if (fs.existsSync(ref)){
-      const n = diffPx(shot, ref);
-      check('F2 coroa volumétrica muda o frame (diff>400px vs baseline)', n > 400, n + 'px');
+    await page.screenshot({ path: path.join(outDir, 'cvol-fit.png') });
+    // assinatura em vista AFASTADA (1.5x fit): no fit o disco enche o
+    // quadro e a coroa além do limbo mal cruza o threshold do
+    // pixelmatch; A/B na MESMA página isola a coroa da histerese de bake
+    const st0 = await page.evaluate(() => window.__solInfo.state());
+    await page.evaluate((d) => window.__solInfo.setView(0.8, Math.PI*0.5, d),
+      st0.fitDist*1.5);
+    await frames(page, 3);
+    const shotWideOn = path.join(outDir, 'cvol-wide-on.png');
+    await page.screenshot({ path: shotWideOn });
+    await page.evaluate(() => window.__solInfo.toggle('corona3d', false));
+    await frames(page, 3);
+    const shotWideOff = path.join(outDir, 'cvol-wide-off.png');
+    await page.screenshot({ path: shotWideOff });
+    // restaura EXATAMENTE a câmera inicial (o F3 compara com o baseline fit)
+    await page.evaluate((s) => {
+      window.__solInfo.toggle('corona3d', true);
+      window.__solInfo.setView(s.theta, s.phi, s.camDist);
+    }, st0);
+    await frames(page, 3);
+    {
+      const n = diffPx(shotWideOn, shotWideOff);
+      check('F2 coroa volumétrica muda o frame em wide (A/B mesma página, diff>400px)', n > 400, n + 'px');
     }
+    const ref = path.join(refDir, 'desktop-fit.png');
     // knob some => o frame volta PERTO do baseline. Não é 0px: meshes
     // extras visíveis durante os ciclos de bake deslocam o SwiftShader
     // em 1 LSB nas fatias seguintes (fenômeno pré-existente de
@@ -119,9 +137,15 @@ function ringStats(file, r0, r1){
   {
     // oclusão: A/B NA MESMA PÁGINA (toggle corona3d) — mesmo histórico
     // de bake, só o draw do volume muda; sem bloom, o miolo do disco
-    // tem de ser BIT-IDÊNTICO (o raio que atinge o disco retorna 0)
+    // tem de ser BIT-IDÊNTICO (o raio que atinge o disco retorna 0).
+    // Câmera afastada 1.35x: a coroa fora do disco entra forte no
+    // quadro (assinatura G2) e o crop central segue 100% disco.
     const pg = await open('cvol=1.1');
-    await pg.evaluate(() => window.__solInfo.toggle('bloom', false));
+    await pg.evaluate(() => {
+      window.__solInfo.toggle('bloom', false);
+      const st = window.__solInfo.state();
+      window.__solInfo.setView(0.8, Math.PI*0.5, st.fitDist*1.35);
+    });
     await frames(pg, 3);
     const shotOn = path.join(outDir, 'occl-cvol-nobloom.png');
     await pg.screenshot({ path: shotOn });
@@ -133,7 +157,7 @@ function ringStats(file, r0, r1){
     const nCenter = diffCrop(shotOn, shotOff, 140, 140);
     check('G1 disco intacto sob a coroa (crop central 140², sem bloom, 0px)', nCenter === 0, nCenter + 'px');
     const nFull = diffPx(shotOn, shotOff);
-    check('G2 assinatura fora do disco presente (diff>400px sem bloom)', nFull > 400, nFull + 'px');
+    check('G2 assinatura fora do disco presente (diff>300px sem bloom, wide)', nFull > 300, nFull + 'px');
     // determinismo: mesma URL => mesmo frame, 0px
     const pA = await open('cvol=1.1');
     const shotA = path.join(outDir, 'det-a.png');

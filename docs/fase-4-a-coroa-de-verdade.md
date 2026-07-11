@@ -76,8 +76,25 @@ mínimo; razão polar/equatorial cai 26% no mínimo.
   (`cvolKilled`) e a coroa volta ao fallback. É o gate do piso de 24 fps
   do mid (limiar 42ms p95) como MECANISMO — nenhuma medição é pedida ao
   dono, por decisão do dono no fim da F3.
-- A/B de GPU por tier (SwiftShader, relativo): TODO preencher com a
-  medição em máquina ociosa.
+- **A/B de GPU por tier** (perf()/perfReset por página, 45 frames,
+  cvol=1.1 = pior caso, SwiftShader — render por software é o limite
+  SUPERIOR do custo relativo; GPUs reais executam o loop de texture
+  fetch muito melhor):
+
+  | tier | passos | frame p95 on/off | razão |
+  |---|---|---|---|
+  | mid | 22 | 1311.5 / 1159.9 ms | **×1.131** |
+  | high | 36 | 1696.2 / 1385.1 ms | ×1.225 |
+  | ultra | 48 | 1797.8 / 1596.0 ms | ×1.126 |
+
+  CPU (busy p95, mid): 2.5ms on vs 1.3ms off — o bake de 1 fatia/frame
+  (+ uniforms) cabe no orçamento de ≤1ms/frame do projeto. A primeira
+  medição (2 fatias/frame) deu 4.9ms e motivou a redução; também
+  flagrou o `cstep` do ultra faltando (steps=0). No mid, +13% de frame
+  no PIOR caso mantém folga dentro do limiar de 42ms p95 (24fps) para
+  aparelhos que já rodam o tier — e se não mantiver, o kill-switch do
+  auto-tune derruba o raymarch antes de rebaixar o tier. O gate é o
+  MECANISMO, não uma medição pedida ao dono.
 
 ## Débito pago: arcada escura pós-esfriamento (F1/F2/F3)
 

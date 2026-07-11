@@ -39,6 +39,7 @@ npm run qa:motion      # evolução temporal (com tools/motion-check.py)
 npm run qa:shot        # screenshots desktop/portrait/zoom
 npm run qa:phase1      # Fase 1: loops, flare two-ribbon, starburst/íris
 npm run qa:phase3      # Fase 3: ciclo de 11 anos + filamento↔proeminência
+npm run qa:phase4      # Fase 4: coroa volumétrica raymarched + arcada escura
 ```
 
 O modo determinístico (`?det=1&seed=N&hold=F`) fixa RNG e dt e congela o

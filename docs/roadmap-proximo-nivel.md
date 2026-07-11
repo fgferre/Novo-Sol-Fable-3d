@@ -114,6 +114,21 @@ aberta/fechada do campo (payoff do WebGL2: densidade bakeada em
 integrada ao auto-tune; o plano de gradiente atual permanece como
 fallback dos tiers baixos.
 
+**Entrega (2026-07, ver `docs/fase-4-a-coroa-de-verdade.md`)**: knob
+novo `cvol` (default 0 = paridade provada por A/B worktree 0px em 5/5);
+Data3DTexture 64³ bakeada na CPU (1 fatia/frame, snapshot de cargas,
+upload atômico) com topologia por proxy de UNIPOLARIDADE |B·r̂|/|B| —
+streamers na superfície neutra e buracos coronais unipolares EMERGEM do
+campo (máximo cheio / mínimo com buracos polares, sem heurística nova);
+raymarch GLSL3 com passos por tier (`cstep` 0/22/36/48; low = fallback)
+e kill-switch no auto-tune (o gate de 24fps como código); débito da
+arcada escura pós-esfriamento pago (gêmeo multiplicativo da fita, mesmo
+mecanismo do fprom); preset sunshine ganha `cvol:0.5` (painel de 3
+juízes, v1-fil-suave 7.8); refs novas de coroa (eclipse/LASCO/buraco
+coronal); `qa:phase4` novo (13 checks). A/B de GPU por tier no
+SwiftShader: mid ×1.13 no pior caso. Débitos anotados: cúspide real,
+plumas polares, multiplicidade de manchas (herdado F3).
+
 ### Fase 5 — "Erupção"
 CME: casca de flux-rope que se desprende em flares grandes (brilho de
 espalhamento Thomson no limbo) + partículas por transform feedback +

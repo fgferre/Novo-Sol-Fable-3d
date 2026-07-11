@@ -23,7 +23,8 @@ baselines de paridade.
 ## Parâmetros de URL
 
 `?look=sunshine` (preset cinematográfico) · `?speed=` · `?tier=low|mid|high|ultra`
-· `?scale=` · `?idle=1` · knobs individuais (`?film=1&pmode=0.6&hand=0.5`…).
+· `?scale=` · `?idle=1` · knobs individuais
+(`?film=1&pmode=0.6&hand=0.5&loops=1&burst=0.8`…).
 Painel de ajustes no ⚙ (salvo em localStorage).
 
 ## QA
@@ -33,6 +34,7 @@ npm run qa:controls    # controles (teclado/drag/zoom) via __solInfo
 npm run qa:parity      # paridade visual determinística vs qa/baselines
 npm run qa:motion      # evolução temporal (com tools/motion-check.py)
 npm run qa:shot        # screenshots desktop/portrait/zoom
+npm run qa:phase1      # Fase 1: loops, flare two-ribbon, starburst/íris
 ```
 
 O modo determinístico (`?det=1&seed=N&hold=F`) fixa RNG e dt e congela o

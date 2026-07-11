@@ -109,14 +109,17 @@ function init(){
   var smallScreen = Math.max(window.innerWidth, window.innerHeight) < 820;
   // Tiers NOMEADOS (low/mid/high); MID é o alvo do iPhone 15 Pro:
   // bake 1024, SIM 768x384, LIC 7 taps, 4 níveis de bloom.
+  // FASE 1: loops = nº de loops coronais ambientes, larc = slots de
+  // arcada pós-flare, lseg = segmentos por loop (o traço RK4 é CPU
+  // amortizado — os contadores escalam com o tier, não o custo/frame).
   var TIER_PARAMS = {
-    low:  { fbm:4, seg:96,  stars:3500, bright:130, simW:384, simH:192, simStep:1/16, bloom:3, prom:4, chromo:512,  granFreq:22.0, lic7:false },
-    mid:  { fbm:5, seg:128, stars:5000, bright:200, simW:768, simH:384, simStep:1/22, bloom:4, prom:6, chromo:1024, granFreq:30.0, lic7:true  },
-    high: { fbm:5, seg:128, stars:7000, bright:240, simW:768, simH:384, simStep:1/26, bloom:4, prom:7, chromo:2048, granFreq:34.0, lic7:true  },
+    low:  { fbm:4, seg:96,  stars:3500, bright:130, simW:384, simH:192, simStep:1/16, bloom:3, prom:4, chromo:512,  granFreq:22.0, lic7:false, loops:8,  larc:5,  lseg:28 },
+    mid:  { fbm:5, seg:128, stars:5000, bright:200, simW:768, simH:384, simStep:1/22, bloom:4, prom:6, chromo:1024, granFreq:30.0, lic7:true,  loops:12, larc:7,  lseg:36 },
+    high: { fbm:5, seg:128, stars:7000, bright:240, simW:768, simH:384, simStep:1/26, bloom:4, prom:7, chromo:2048, granFreq:34.0, lic7:true,  loops:16, larc:9,  lseg:44 },
     // ULTRA (desktop com GPU dedicada): DPR até 3, malha/sim/estrelas
     // maiores e 5 níveis de bloom. Nunca é escolhido no primeiro load —
     // só o auto-tune promove (p95 < limiar por 30s no high) ou ?tier=ultra.
-    ultra:{ fbm:6, seg:192, stars:10000, bright:320, simW:1024, simH:512, simStep:1/30, bloom:5, prom:8, chromo:2048, granFreq:36.0, lic7:true }
+    ultra:{ fbm:6, seg:192, stars:10000, bright:320, simW:1024, simH:512, simStep:1/30, bloom:5, prom:8, chromo:2048, granFreq:36.0, lic7:true, loops:22, larc:12, lseg:52 }
   };
   // T3.2: partida por HARDWARE + memória de sessões anteriores. A
   // heurística antiga (toque/tela pequena => low) rebaixava iPhones Pro;
@@ -778,6 +781,14 @@ function init(){
     uCamDist: { value: 6.0 },
     uCharges: { value: charges },
     uFlare: { value: new THREE.Vector4(0, 0, 1, 0) },
+    // FASE 1 — moldura das fitas two-ribbon (tudo zero fora de flare):
+    // uFlareGeo = tangente da PIL (xyz) + meia-separação das fitas (w);
+    // uFlarePerp = através da PIL (xyz) + meio-comprimento da fita (w);
+    // uFlareRib = amplitude das fitas (x), largura (y), fase do ruído
+    // de recorte (z) — cada flare rasga diferente.
+    uFlareGeo: { value: new THREE.Vector4(1, 0, 0, 0.02) },
+    uFlarePerp: { value: new THREE.Vector4(0, 0, 1, 0.06) },
+    uFlareRib: { value: new THREE.Vector4(0, 0.010, 0, 0) },
     uPlageEm: { value: knob('plageglow', 0.35, 0.0, 1.5) },
     // Oscilações p-mode (heliosismologia): o Sol "toca" em modos acústicos
     // de ~5 minutos (harmônicos esféricos de baixo grau, Leighton 1962).
@@ -1127,6 +1138,9 @@ function init(){
     'uniform float uCamDist;',
     'uniform float uPlageEm;',
     'uniform vec4 uFlare;',
+    'uniform vec4 uFlareGeo;',
+    'uniform vec4 uFlarePerp;',
+    'uniform vec4 uFlareRib;',
     'uniform sampler2D uSimTex;',
     'uniform vec2 uSimTexel;',
     'varying vec3 vNormalW;',
@@ -1257,18 +1271,51 @@ function init(){
     // 0.34 (era 0.22): sweep T2.2 — plage mais quente SEM mover o spread
     // do sol calmo (gate G ficou em 0.29, contraste localizado)
     '  heat = heat*(1.0 - umbra*0.96 - pen*0.38) + clamp(plage, 0.0, 1.0)*0.34;',
-    // --- flare: laço brilhante efêmero perto do pé de uma carga forte;
-    // o pico vai direto na cor (HDR) para o bloom capturar ---
+    // --- flare TWO-RIBBON (FASE 1, pendência audit-loop6 ref-08):
+    // flash IMPULSIVO compacto no topo do laço (uFlare.w, a reconexão
+    // em si) + DUAS fitas cromosféricas paralelas à PIL local que se
+    // AFASTAM na fase gradual (uFlareGeo.w cresce) — a assinatura
+    // clássica dos flares em H-alfa. A moldura tangente/perp vem do
+    // PRÓPRIO campo de cargas (setFlareFrame). Fora de flare os dois
+    // gates são 0 e o bloco inteiro é pulado (frame = baseline). ---
     '  float flareGlow = 0.0;',
-    '  if (uFlare.w > 0.004){',
+    '  float flareRibG = 0.0;',
+    '  if (uFlare.w + uFlareRib.x > 0.004){',
     '    float fdist = acos(clamp(dot(sp, uFlare.xyz), -1.0, 1.0));',
-    '    float frib = 0.55 + 0.45*(fbmLight(sp*26.0 + vec3(3.9))*0.5+0.5);',
-    '    flareGlow = uFlare.w * exp(-fdist*fdist*700.0) * frib;',
+    // máscara de localidade: mata o eco antipodal das coords do plano
+    // tangente (dot com a tangente volta a ~0 do outro lado da esfera)
+    '    float floc = 1.0 - smoothstep(0.22, 0.32, fdist);',
+    '    if (floc > 0.002){',
+    '      float frib = 0.55 + 0.45*(fbmLight(sp*26.0 + vec3(3.9))*0.5+0.5);',
     // laço ~4x mais forte (backlog M2 nº5): o flash local era +3% por
     // 1 frame — "lâmpada" que perdia para o escurecimento da íris e o
     // evento lia INVERTIDO (o mundo escurecia mais do que o flare
     // brilhava). O pico agora domina a leitura; a íris responde menos.
-    '    heat += flareGlow*0.9;',
+    '      flareGlow = uFlare.w * exp(-fdist*fdist*700.0) * frib * floc;',
+    // fitas: coordenadas angulares no plano tangente da PIL (válidas
+    // localmente; floc já limitou o domínio)
+    '      float fdx = dot(sp, uFlareGeo.xyz);',
+    '      float fdy = dot(sp, uFlarePerp.xyz);',
+    '      float falong = exp(-fdx*fdx/(uFlarePerp.w*uFlarePerp.w));',
+    // fitas reais NÃO são barras de aerógrafo (reality-check vs o X17
+    // de 2003-10-28 em H-alfa): o PAR curva junto (dobra de baixa freq
+    // compartilhada), cada fita ainda ondula POR CONTA PRÓPRIA (kinks
+    // independentes — fitas reais não são paralelas perfeitas), o
+    // brilho quebra em STRANDS com vãos, e o par é ASSIMÉTRICO — uma
+    // fita mais brilhante/estreita que a outra (lado sorteado por
+    // evento via a fase uFlareRib.z)
+    '      float fbend = fbmLight(sp*12.0 + vec3(uFlareRib.z*0.7)) * 0.022;',
+    '      float fwob1 = fbend + fbmLight(sp*34.0 + vec3(uFlareRib.z*1.3)) * 0.014;',
+    '      float fwob2 = fbend + fbmLight(sp*34.0 + vec3(uFlareRib.z*1.3 + 9.2)) * 0.014;',
+    '      float fasy = (fract(uFlareRib.z*0.173) > 0.5) ? 1.0 : -1.0;',
+    '      float frag1 = 0.25 + 0.95*smoothstep(0.25, 0.75, fbmLight(sp*230.0 + vec3(uFlareRib.z))*0.5+0.5);',
+    '      float frag2 = 0.25 + 0.95*smoothstep(0.25, 0.75, fbmLight(sp*230.0 + vec3(uFlareRib.z+4.7))*0.5+0.5);',
+    '      float fd1 = (fdy + fwob1 - uFlareGeo.w)/(uFlareRib.y*(1.0 - 0.15*fasy));',
+    '      float fd2 = (fdy + fwob2 + uFlareGeo.w)/(uFlareRib.y*(1.0 + 0.15*fasy));',
+    '      flareRibG = uFlareRib.x * falong * (exp(-fd1*fd1)*frag1*(1.0 + 0.24*fasy)',
+    '                                        + exp(-fd2*fd2)*frag2*(1.0 - 0.24*fasy)) * floc;',
+    '      heat += flareGlow*0.9 + flareRibG*0.55;',
+    '    }',
     '  }',
     // --- filamentos (linhas neutras) vêm do bake; exclusão de manchas aqui ---
     '  float fil = st.g * clamp(1.0 - umbra - pen, 0.0, 1.0);',
@@ -1286,6 +1333,10 @@ function init(){
     '  color = mix(color, vec3(1.0, 0.86, 0.62), 0.55 * smoothstep(0.55, 1.0, clamp(plage, 0.0, 1.0)) * smoothstep(0.72, 1.12, heat));',
     '  color *= mix(0.16, 1.42, smoothstep(0.04, 1.08, heat));',
     '  color += vec3(1.0, 0.55, 0.22) * flareGlow * 3.6;',   // pico HDR do flare (~4x, backlog M2 nº5)
+    // fitas: cromosfera aquecida a ~branco (mais neutra que o flash);
+    // HDR um degrau abaixo do núcleo (2.2: acima disso o ACES achata os
+    // strands num oval liso) — o bloom desenha o par de riscos
+    '  color += vec3(1.0, 0.74, 0.46) * flareRibG * 2.2;',
     // --- escurecimento + avermelhamento de limbo (lei linear, u=0.72) ---
     '  float limbU = 0.30;',   // núcleo H-alfa: u≈0.25-0.30 na literatura (bem mais suave que contínuo)
     '  color *= (1.0-limbU) + limbU*mu;',
@@ -1829,6 +1880,359 @@ function init(){
   scene.add(prominenceGroup);
 
   // ---------------------------------------------------------------
+  // FASE 1 — LOOPS CORONAIS: linhas de campo do MESMO modelo de cargas
+  // (bFieldJS = espelho JS do BFIELD_GLSL/uCharges) traçadas por RK4 na
+  // CPU e amortizadas como o bake fatiado (≤1 traço por frame; arcada
+  // de flare ≤2). O traço vive no espaço do OBJETO e gira com a esfera.
+  // Renderização: um único LineSegments aditivo com brilho HDR (o bloom
+  // faz o glow) e envelope por loop via uniform array — zero alocações
+  // por frame. Knob `loops` default 0 = frame idêntico ao baseline
+  // (convenção LOOP-5); os slots de ARCADA PÓS-FLARE são reusados pelo
+  // flare two-ribbon e acendem em qualquer default DURANTE um flare
+  // (pendência do audit-loop6 — flares já eram um evento default).
+  // ---------------------------------------------------------------
+  // RNG PRÓPRIO (mesmo mulberry32 do modo det, stream separado): os
+  // sorteios novos NÃO tocam o stream do srand — a paridade
+  // determinística dos elementos pré-existentes (proeminências,
+  // estrelas, flares) fica intacta por construção.
+  var loopRandState = DET ? ((((parseInt(urlQ.seed, 10) || 1) >>> 0) ^ 0x5EEDC0DE) >>> 0)
+                          : ((Math.random()*4294967296) >>> 0);
+  function loopRand(){
+    loopRandState = (loopRandState + 0x6D2B79F5) >>> 0;
+    var t = loopRandState;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+  var LOOP_K = knob('loops', 0.0, 0.0, 1.5);
+  var LOOP_AMB = TP.loops, LOOP_ARC = TP.larc, LOOP_N = LOOP_AMB + LOOP_ARC;
+  var LOOP_SEG = TP.lseg;
+  var loopPositions = new Float32Array(LOOP_N * LOOP_SEG * 2 * 3);
+  var loopParamAttr = new Float32Array(LOOP_N * LOOP_SEG * 2);
+  var loopIdxAttr = new Float32Array(LOOP_N * LOOP_SEG * 2);
+  (function fillLoopStatics(){
+    // aParam (0..1 ao longo do arco) e aLoop (índice do slot) são
+    // ESTÁTICOS: só as posições mudam quando um loop é re-traçado
+    for (var li = 0; li < LOOP_N; li++){
+      var base = li*LOOP_SEG*2;
+      for (var s = 0; s < LOOP_SEG; s++){
+        loopParamAttr[base + s*2]     = s/LOOP_SEG;
+        loopParamAttr[base + s*2 + 1] = (s+1)/LOOP_SEG;
+        loopIdxAttr[base + s*2]     = li;
+        loopIdxAttr[base + s*2 + 1] = li;
+      }
+    }
+  })();
+  var loopGeo = new THREE.BufferGeometry();
+  loopGeo.setAttribute('position', new THREE.BufferAttribute(loopPositions, 3));
+  loopGeo.setAttribute('aParam', new THREE.BufferAttribute(loopParamAttr, 1));
+  loopGeo.setAttribute('aLoop', new THREE.BufferAttribute(loopIdxAttr, 1));
+  var loopEnvArr = new Float32Array(LOOP_N);   // intensidade final por loop
+  var loopHotArr = new Float32Array(LOOP_N);   // 1 = recém-reconectado (branco)
+  var loopUniforms = {
+    uTime: { value: 0 },
+    uLoopEnv: { value: loopEnvArr },
+    uLoopHot: { value: loopHotArr }
+  };
+  var loopMaterial = new THREE.ShaderMaterial({
+    uniforms: loopUniforms,
+    vertexShader: [
+      'attribute float aParam;',
+      'attribute float aLoop;',
+      // lookup do envelope no VERTEX shader (indexação dinâmica de
+      // uniform é garantida lá, não no fragment em ES baixo)
+      'uniform float uLoopEnv[' + LOOP_N + '];',
+      'uniform float uLoopHot[' + LOOP_N + '];',
+      'varying float vParam;',
+      'varying float vEnv;',
+      'varying float vHot;',
+      'varying float vId;',
+      'void main(){',
+      '  vParam = aParam; vId = aLoop;',
+      '  int li = int(aLoop + 0.5);',
+      '  vEnv = uLoopEnv[li];',
+      '  vHot = uLoopHot[li];',
+      '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
+      '}'
+    ].join('\n'),
+    fragmentShader: [
+      'uniform float uTime;',
+      'varying float vParam;',
+      'varying float vEnv;',
+      'varying float vHot;',
+      'varying float vId;',
+      'void main(){',
+      '  if (vEnv < 0.002) discard;',
+      // plasma escoando pelo tubo (condensação coronal): 2 harmônicas
+      // incomensuráveis em sentidos opostos — vivo, sem período audível
+      '  float f1 = sin(vParam*18.85 - uTime*1.9 + vId*7.31);',
+      '  float f2 = sin(vParam*40.84 + uTime*1.23 + vId*3.17);',
+      '  float flow = 0.62 + 0.26*f1 + 0.14*f2;',
+      // pés mais brilhantes (coluna emissiva mais densa na base, como
+      // o "moss" das imagens TRACE/AIA)
+      '  float foot = 1.0 - vParam*(1.0 - vParam)*2.0;',
+      '  float bright = flow * (0.55 + 0.45*foot*foot);',
+      '  vec3 col = mix(vec3(1.0, 0.40, 0.12), vec3(1.0, 0.74, 0.40), flow*0.6);',
+      // arcada recém-reconectada é quase branca e ESFRIA para a paleta
+      '  col = mix(col, vec3(1.25, 1.05, 0.85), vHot);',
+      '  gl_FragColor = vec4(col * (bright * vEnv), 1.0);',
+      '}'
+    ].join('\n'),
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    depthTest: true          // o disco OCULTA loops atrás do limbo
+  });
+  var loopMesh = new THREE.LineSegments(loopGeo, loopMaterial);
+  loopMesh.frustumCulled = false;   // posições mudam; a esfera de 2.2R sempre enquadra
+  loopMesh.visible = false;
+  var loopGroup = new THREE.Group();
+  loopGroup.add(loopMesh);
+  scene.add(loopGroup);
+
+  // Traçador RK4 com passo de ARCO fixo sobre o campo unitário B/|B|
+  // (o comprimento do passo independe de |B| — estável perto das
+  // cargas). Scratch pré-alocado: zero alocações nos re-traços.
+  var LOOP_TRACE_MAX = 176;
+  var loopTraceBuf = new Float32Array((LOOP_TRACE_MAX + 1)*3);
+  var loopTraceLen = new Float32Array(LOOP_TRACE_MAX + 1);
+  var loopPtsBuf = new Float32Array((LOOP_SEG + 1)*3);
+  var loopFieldP = new THREE.Vector3();
+  var lk1 = [0,0,0], lk2 = [0,0,0], lk3 = [0,0,0], lk4 = [0,0,0];
+  function loopFieldDir(x, y, z, side, out){
+    var B = bFieldJS(loopFieldP.set(x, y, z));
+    var m = Math.sqrt(B.x*B.x + B.y*B.y + B.z*B.z) + 1e-9;
+    out[0] = B.x/m*side; out[1] = B.y/m*side; out[2] = B.z/m*side;
+  }
+  var loopStats = { traces: 0, fails: 0, ms: 0 };
+  // traça a linha de campo que passa por (sx,sy,sz) na direção que
+  // SOBE; devolve o nº de pontos no scratch, 0 = inválida (linha
+  // aberta/rasteira demais). [minApex, maxApex] distingue loops
+  // ambientes (altos) de arcadas pós-flare — compactas POR FÍSICA: o
+  // laço recém-reconectado nasce baixo, logo acima das fitas.
+  function traceFieldLine(sx, sy, sz, minApex, maxApex, h){
+    var t0 = performance.now();
+    var half = h*0.5, sixth = h/6.0;
+    var px = sx*1.004, py = sy*1.004, pz = sz*1.004;
+    var B0 = bFieldJS(loopFieldP.set(px, py, pz));
+    var side = (B0.x*px + B0.y*py + B0.z*pz) >= 0.0 ? 1.0 : -1.0;
+    var n = 0, apex = 0, landed = false;
+    loopTraceBuf[0] = px; loopTraceBuf[1] = py; loopTraceBuf[2] = pz;
+    loopTraceLen[0] = 0;
+    for (var st = 0; st < LOOP_TRACE_MAX; st++){
+      loopFieldDir(px, py, pz, side, lk1);
+      loopFieldDir(px + lk1[0]*half, py + lk1[1]*half, pz + lk1[2]*half, side, lk2);
+      loopFieldDir(px + lk2[0]*half, py + lk2[1]*half, pz + lk2[2]*half, side, lk3);
+      loopFieldDir(px + lk3[0]*h,    py + lk3[1]*h,    pz + lk3[2]*h,    side, lk4);
+      px += (lk1[0] + 2.0*(lk2[0] + lk3[0]) + lk4[0]) * sixth;
+      py += (lk1[1] + 2.0*(lk2[1] + lk3[1]) + lk4[1]) * sixth;
+      pz += (lk1[2] + 2.0*(lk2[2] + lk3[2]) + lk4[2]) * sixth;
+      n++;
+      loopTraceBuf[n*3] = px; loopTraceBuf[n*3+1] = py; loopTraceBuf[n*3+2] = pz;
+      loopTraceLen[n] = loopTraceLen[n-1] + h;
+      var r = Math.sqrt(px*px + py*py + pz*pz);
+      if (r > apex) apex = r;
+      if (r < 1.001){ landed = true; break; }   // pousou na outra polaridade
+      if (r > 2.3) break;                        // linha ABERTA (polar): descarta
+    }
+    loopStats.ms += performance.now() - t0;
+    loopStats.traces++;
+    if (!landed || n < 8 || apex < minApex || apex > maxApex){
+      loopStats.fails++;
+      return 0;
+    }
+    return n + 1;
+  }
+  // reamostra o traço em LOOP_SEG+1 pontos EQUIDISTANTES em arco (a
+  // fase do fluxo no shader precisa de param uniforme) e grava o slot
+  // como pares de segmento, já em escala de mundo (SUN_RADIUS)
+  function writeLoopSlot(slot, nPts){
+    var total = loopTraceLen[nPts-1];
+    var j = 0;
+    for (var s = 0; s <= LOOP_SEG; s++){
+      var target = total * s / LOOP_SEG;
+      while (j < nPts - 2 && loopTraceLen[j+1] < target) j++;
+      var l0 = loopTraceLen[j], l1 = loopTraceLen[j+1];
+      var f = (l1 > l0) ? (target - l0)/(l1 - l0) : 0.0;
+      loopPtsBuf[s*3]   = (loopTraceBuf[j*3]   + (loopTraceBuf[j*3+3] - loopTraceBuf[j*3])  *f) * SUN_RADIUS;
+      loopPtsBuf[s*3+1] = (loopTraceBuf[j*3+1] + (loopTraceBuf[j*3+4] - loopTraceBuf[j*3+1])*f) * SUN_RADIUS;
+      loopPtsBuf[s*3+2] = (loopTraceBuf[j*3+2] + (loopTraceBuf[j*3+5] - loopTraceBuf[j*3+2])*f) * SUN_RADIUS;
+    }
+    var base = slot*LOOP_SEG*2*3;
+    for (var g = 0; g < LOOP_SEG; g++){
+      var o = base + g*6, p3 = g*3;
+      loopPositions[o]   = loopPtsBuf[p3];
+      loopPositions[o+1] = loopPtsBuf[p3+1];
+      loopPositions[o+2] = loopPtsBuf[p3+2];
+      loopPositions[o+3] = loopPtsBuf[p3+3];
+      loopPositions[o+4] = loopPtsBuf[p3+4];
+      loopPositions[o+5] = loopPtsBuf[p3+5];
+    }
+    loopGeo.attributes.position.needsUpdate = true;
+  }
+  // semeia perto do pé LÍDER de uma região viva (sorteio ∝ |w|), num
+  // leque voltado ao seguidor: as linhas traçadas viram a arcada da
+  // região ativa — alturas variadas conforme o offset do pé
+  var loopSeedTmp = new THREE.Vector3();
+  var loopAxisTmp = new THREE.Vector3();
+  var loopLatTmp = new THREE.Vector3();
+  function pickLoopSeed(out){
+    var tot = 0, i, ps = null;
+    for (i = 0; i < pairStates.length; i++) tot += Math.abs(pairStates[i].lead.w);
+    if (tot < 0.05) return false;
+    var r = loopRand()*tot;
+    for (i = 0; i < pairStates.length; i++){
+      r -= Math.abs(pairStates[i].lead.w);
+      if (r <= 0){ ps = pairStates[i]; break; }
+    }
+    if (!ps) ps = pairStates[pairStates.length-1];
+    if (Math.abs(ps.lead.w) < 0.25) return false;   // região quase morta não enche loop
+    loopSeedTmp.set(ps.lead.x, ps.lead.y, ps.lead.z).normalize();
+    loopAxisTmp.set(ps.foll.x, ps.foll.y, ps.foll.z).normalize();
+    loopAxisTmp.addScaledVector(loopSeedTmp, -loopAxisTmp.dot(loopSeedTmp));
+    if (loopAxisTmp.lengthSq() < 1e-6) return false;
+    loopAxisTmp.normalize();
+    loopLatTmp.crossVectors(loopSeedTmp, loopAxisTmp);
+    out.copy(loopSeedTmp)
+       .addScaledVector(loopAxisTmp, 0.02 + 0.16*loopRand())
+       .addScaledVector(loopLatTmp, (loopRand() - 0.5)*0.16)
+       .normalize();
+    return true;
+  }
+  // ciclo de vida dos loops ambientes: mesmo padrão das regiões ativas
+  // (idade/período/lifeEnvelope); no fim do ciclo o slot é re-traçado
+  // no campo DO MOMENTO — loops acompanham a evolução das cargas
+  var loopStatesA = [];
+  (function initLoopStates(){
+    for (var i = 0; i < LOOP_AMB; i++){
+      loopStatesA.push({ age: 0, period: 34 + loopRand()*36, ok: false });
+    }
+  })();
+  var loopSeedOut = new THREE.Vector3();
+  function retraceAmbient(slot){
+    for (var tries = 0; tries < 4; tries++){
+      if (!pickLoopSeed(loopSeedOut)) break;
+      var nP = traceFieldLine(loopSeedOut.x, loopSeedOut.y, loopSeedOut.z, 1.035, 1.95, 0.02);
+      if (nP > 0){
+        writeLoopSlot(slot, nP);
+        var st = loopStatesA[slot];
+        st.ok = true; st.age = 0; st.period = 34 + loopRand()*36;
+        return true;
+      }
+    }
+    return false;
+  }
+  // ARCADA PÓS-FLARE: slots extras re-semeados a cada flare ao longo da
+  // tangente da PIL; acendem em SEQUÊNCIA (o "zíper" da reconexão
+  // propagando pela linha neutra), com o envelope GRADUAL do flare, e
+  // esfriam de branco-quente para a paleta coronal
+  var arcStates = [];
+  (function initArcStates(){
+    for (var i = 0; i < LOOP_ARC; i++) arcStates.push({ ok: false, delay: 0, off: 0 });
+  })();
+  var arcQueueN = 0;
+  var arcSeedBase = new THREE.Vector3();
+  var arcSeedTan = new THREE.Vector3();
+  var arcSeedPerp = new THREE.Vector3();
+  var arcSeedOut = new THREE.Vector3();
+  function scheduleFlareArcade(){
+    // congela a moldura da PIL do EVENTO (o Sol gira; a arcada não
+    // pode escorregar para outra moldura no meio do rescaldo)
+    arcSeedBase.copy(surfFlareDir);
+    arcSeedTan.copy(flareTanDir);
+    arcSeedPerp.copy(flarePerpDir);
+    for (var i = 0; i < LOOP_ARC; i++){
+      var st = arcStates[i];
+      st.ok = false;
+      st.off = ((LOOP_ARC > 1 ? i/(LOOP_ARC-1) : 0.5) - 0.5) * 0.16 + (loopRand() - 0.5)*0.015;
+      st.delay = i*0.10 + loopRand()*0.05;
+      loopEnvArr[LOOP_AMB + i] = 0;
+    }
+    arcQueueN = LOOP_ARC;
+  }
+  // uma linha só é ARCADA se pousar PERTO do flare (≤ ~23°): a PIL de
+  // sol calmo pode conectar o ponto a outra região/polo — laço gigante
+  // que leria como raio saindo do disco, não como arcada pós-flare
+  function arcTraceCompact(nP){
+    if (nP === 0) return false;
+    var e0 = (nP - 1)*3;
+    var ex = loopTraceBuf[e0], ey = loopTraceBuf[e0+1], ez = loopTraceBuf[e0+2];
+    var em = Math.sqrt(ex*ex + ey*ey + ez*ez) + 1e-9;
+    return (ex*arcSeedBase.x + ey*arcSeedBase.y + ez*arcSeedBase.z)/em > 0.92;
+  }
+  function traceArcadeJob(){
+    var i = LOOP_ARC - arcQueueN;
+    arcQueueN--;
+    var st = arcStates[i];
+    // parte do lado de UMA polaridade (offset ATRAVÉS da PIL ~ onde a
+    // fita estaciona na fase gradual): a linha sobe, cruza a linha
+    // neutra e pousa do outro lado. Sondagem numérica (2026-07): a
+    // linha pelo ponto médio a 1.004 é o próprio ápice (rasteira);
+    // across 0.06–0.12 dá ápice 1.03–1.17 com pouso ≤ ~10° — a arcada
+    // baixa clássica. Passo fino (h=0.01): arcos curtos com pontos
+    // suficientes p/ curvar. Se o campo local não fechar compacto, o
+    // slot fica apagado ("não houve arcada" é resultado físico válido).
+    for (var att = 0; att < 3; att++){
+      var across = -0.06 - 0.03*att;
+      arcSeedOut.copy(arcSeedBase)
+        .addScaledVector(arcSeedTan, st.off + (att > 0 ? (loopRand() - 0.5)*0.02 : 0))
+        .addScaledVector(arcSeedPerp, across)
+        .normalize();
+      var nP = traceFieldLine(arcSeedOut.x, arcSeedOut.y, arcSeedOut.z, 1.025, 1.35, 0.01);
+      if (arcTraceCompact(nP)){
+        writeLoopSlot(LOOP_AMB + i, nP);
+        st.ok = true;
+        return;
+      }
+    }
+  }
+  // atualização por frame (chamada no animate): laços de índice, sem
+  // closures — zero alocações. Orçamento de traço: 2 jobs de arcada OU
+  // 1 re-traço ambiente por frame (nunca ambos).
+  function updateLoops(delta){
+    var loopsOn = subToggle.loops && LOOP_K > 0.001;
+    var act = coronaRaysUniforms.uActivity.value;
+    var i, st;
+    if (arcQueueN > 0){ traceArcadeJob(); if (arcQueueN > 0) traceArcadeJob(); }
+    else if (loopsOn){
+      // re-traço ambiente amortizado: acha O PRIMEIRO slot vencido
+      for (i = 0; i < LOOP_AMB; i++){
+        st = loopStatesA[i];
+        if (!st.ok || st.age >= st.period*0.90){
+          retraceAmbient(i);
+          break;
+        }
+      }
+    }
+    var arcMax = 0;
+    for (i = 0; i < LOOP_ARC; i++){
+      st = arcStates[i];
+      var envA = 0;
+      if (st.ok){
+        var ta = surfFlareT - st.delay;
+        if (ta > 0){
+          envA = flareEnvGrad(ta) * 1.25 * surfFlareAmp;
+          loopHotArr[LOOP_AMB + i] = Math.exp(-ta*0.30);
+        }
+      }
+      if (envA < 0.004) envA = 0;
+      loopEnvArr[LOOP_AMB + i] = envA;
+      if (envA > arcMax) arcMax = envA;
+    }
+    for (i = 0; i < LOOP_AMB; i++){
+      st = loopStatesA[i];
+      if (!loopsOn || !st.ok){ loopEnvArr[i] = 0; continue; }
+      st.age += delta;
+      // brilho = ciclo de vida × knob × atividade global do ciclo
+      // ("uma estrela, um estado": sol ativo tem coroa mais cheia)
+      loopEnvArr[i] = lifeEnvelope(st.age/st.period) * LOOP_K * (0.65 + 0.55*act);
+      loopHotArr[i] = 0;
+    }
+    loopUniforms.uTime.value = elapsed;
+    loopMesh.visible = subToggle.loops && (loopsOn || arcMax > 0 || arcQueueN > 0);
+  }
+
+  // ---------------------------------------------------------------
   // Campo de estrelas — cor por classe de temperatura estelar real
   // (a maioria das estrelas visíveis é fria/avermelhada; poucas são
   // quentes/azuis), usando a mesma função de corpo negro.
@@ -2009,6 +2413,7 @@ function init(){
   sunMesh.rotation.z = 0.1265;
   prominenceGroup.rotation.z = 0.1265;
   spiculeMesh.rotation.z = 0.1265;
+  loopGroup.rotation.z = 0.1265;
 
   // ---------------------------------------------------------------
   // Bloom multi-escala (cadeia de downsample + threshold, depois
@@ -2172,6 +2577,10 @@ function init(){
   var VEIL_BASE = knob('veil', lk('veil', 0), 0.0, 1.5);
   var STREAK_K = knob('streak', lk('streak', 0), 0.0, 1.5);
   var ADAPT_K = knob('adapt', lk('adapt', 0), 0.0, 1.0);
+  // FASE 1 — starburst de difração no ponto do flare, dirigido pelo
+  // brilho HDR REAL que chega à lente (envelope × visibilidade do
+  // ponto no hemisfério voltado à câmera). Default 0 = sem efeito.
+  var BURST_K = knob('burst', lk('burst', 0), 0.0, 1.5);
   // hand: linguagem de câmera do Sunshine — o Sol é filmado em lente
   // longa com deriva lenta e micro-tremor de operador (0.1-0.3 Hz + um
   // harmônico rápido fraco). Soma de senos incomensuráveis = pseudo-
@@ -2179,6 +2588,11 @@ function init(){
   var HAND_K = knob('hand', lk('hand', 0), 0.0, 1.5);
   var adaptCur = 1.0;
   var cineProj = new THREE.Vector3();
+  // FASE 1: flare em espaço de MUNDO (p/ visibilidade) + projeção do
+  // starburst — temporários reutilizados, zero alocação por frame
+  var flareWorldTmp = new THREE.Vector3();
+  var burstProj = new THREE.Vector3();
+  var lastFlareHDR = 0;
   var compUniforms = {
     tScene:{value:null}, tBloom:{value:null}, tVeil:{value:null}, tStreak:{value:null},
     uStreak:{value: 0.0},
@@ -2200,7 +2614,11 @@ function init(){
     uCTime:{value: 0.0},
     uSunC:{value: new THREE.Vector2(0.5, 0.5)},
     uSunR:{value: 0.33},
-    uAspect:{value: 1.0}
+    uAspect:{value: 1.0},
+    // FASE 1 — starburst de difração (0 fora de flare/knob desligado)
+    uBurst:{value: 0.0},
+    uBurstPos:{value: new THREE.Vector2(0.5, 0.5)},
+    uBurstRot:{value: 0.0}
   };
   var compFragment = [
     'uniform sampler2D tScene;',
@@ -2223,6 +2641,9 @@ function init(){
     'uniform vec2 uSunC;',
     'uniform float uSunR;',
     'uniform float uAspect;',
+    'uniform float uBurst;',
+    'uniform vec2 uBurstPos;',
+    'uniform float uBurstRot;',
     'varying vec2 vUv;',
     'vec3 ACESFilm(vec3 x){',
     '  float a=2.51; float b=0.03; float c=2.43; float d=0.59; float e=0.14;',
@@ -2313,6 +2734,22 @@ function init(){
     // anamórfica; os flares do Sunshine eram de lente REAL)
     '  if (uStreak > 0.001){',
     '    color += texture2D(tStreak, uv).rgb * (uStreak * 0.70) * vec3(0.80,0.88,1.12) * uExposure * uAdapt;',
+    '  }',
+    // FASE 1 — starburst de difração das lâminas da íris, cravado na
+    // POSIÇÃO PROJETADA do flare: 6 braços |cos(3θ)|^n com alcance
+    // ESPECTRAL (difração ∝ λ — o R alcança mais longe que o B, ponta
+    // avermelhada como em lente real) + núcleo quente. uBurst já chega
+    // multiplicado pelo brilho HDR real do flare (JS): flare atrás do
+    // limbo => 0 => a lente não inventa luz que não recebeu.
+    '  if (uBurst > 0.001){',
+    '    vec2 relB = (vUv - uBurstPos) * vec2(uAspect, 1.0);',
+    '    float rB = length(relB);',
+    '    float angB = atan(relB.y, relB.x);',
+    '    float arms = pow(abs(cos((angB - uBurstRot)*3.0)), 18.0);',
+    '    vec3 armFall = exp(vec3(-5.0, -7.5, -11.0) * rB);',
+    '    vec3 burst = vec3(1.0, 0.72, 0.45) * arms * armFall;',
+    '    burst += vec3(1.0, 0.85, 0.62) * exp(-rB*30.0);',
+    '    color += burst * (uBurst * 0.85) * uExposure * uAdapt;',
     '  }',
     '  vec3 aces = ACESFilm(color);',
     '  color = (uFilm > 0.001) ? mix(aces, AgXFilm(color), uFilm) : aces;',
@@ -2597,7 +3034,7 @@ function init(){
   var perfIdx = 0, perfN = 0, perfLastT = 0, perfCalls = 0;
   var perfBakes = [];
   var subToggle = { sim:true, bake:true, bloom:true, spicules:true,
-                    corona:true, prominences:true, stars:true };
+                    corona:true, prominences:true, stars:true, loops:true };
 
   // HUD de perf on-device: ?hud=1 liga na carga; segurar um dedo PARADO
   // ~1s alterna (o arquivo aberto localmente no iPhone não tem como
@@ -2723,6 +3160,8 @@ function init(){
                  film: compUniforms.uFilm.value,
                  pmode: sunUniforms.uPmode.value,
                  hand: HAND_K,
+                 loops: LOOP_K,
+                 burst: BURST_K,
                  adaptMul: compUniforms.uAdapt.value,
                  look: LOOK ? 'sunshine' : '' };
       };
@@ -2812,7 +3251,52 @@ function init(){
         surfFlareDir.copy(promStates[i].meshes[0].userData.dir).normalize();
         surfFlareT = 0;
         surfFlareAmp = 1.2;   // QA: o gatilho natural seta via |w|; o forçado usa amp fixa
+        setFlareFrame(surfFlareDir);
+        scheduleFlareArcade();
         return !!agitateNearestProm(surfFlareDir);
+      };
+      // QA FASE 1: flare no ponto MÉDIO do par i — o mesmo alvo do
+      // gatilho natural (é onde a arcada fecha compacta; forceFlareAt
+      // ancora em PIL de sol calmo, onde pode nem haver arcada)
+      window.__solInfo.forceFlarePair = function(i){
+        var ps = pairStates[i];
+        surfFlareDir.set(
+          (ps.lead.x + ps.foll.x)*0.5,
+          (ps.lead.y + ps.foll.y)*0.5,
+          (ps.lead.z + ps.foll.z)*0.5).normalize();
+        surfFlareT = 0;
+        surfFlareAmp = 1.2;
+        setFlareFrame(surfFlareDir);
+        scheduleFlareArcade();
+        agitateNearestProm(surfFlareDir);
+        return [surfFlareDir.x, surfFlareDir.y, surfFlareDir.z];
+      };
+      // QA FASE 1: sob ?det&hold o tempo congela (delta=0) e surfFlareT
+      // não avança — fixar o relógio do flare fotografa qualquer fase
+      // (impulsiva/gradual) de forma determinística
+      window.__solInfo.setFlareClock = function(t){ surfFlareT = t; };
+      window.__solInfo.flareInfo = function(){
+        return { t: surfFlareT, amp: surfFlareAmp,
+                 imp: flareEnvImp(surfFlareT), grad: flareEnvGrad(surfFlareT),
+                 sep: sunUniforms.uFlareGeo.value.w,
+                 dir: [surfFlareDir.x, surfFlareDir.y, surfFlareDir.z],
+                 tan: [flareTanDir.x, flareTanDir.y, flareTanDir.z],
+                 hdr: lastFlareHDR, burst: compUniforms.uBurst.value };
+      };
+      // QA FASE 1: estado dos loops coronais (traçados, arcada viva,
+      // custo acumulado do traçador) e salto de fase p/ fotografia
+      window.__solInfo.loopInfo = function(){
+        var nOk = 0, nArc = 0, i;
+        for (i = 0; i < LOOP_AMB; i++) if (loopStatesA[i].ok) nOk++;
+        for (i = 0; i < LOOP_ARC; i++) if (arcStates[i].ok && loopEnvArr[LOOP_AMB+i] > 0.004) nArc++;
+        return { on: LOOP_K, amb: nOk, arc: nArc, queue: arcQueueN,
+                 visible: loopMesh.visible,
+                 traces: loopStats.traces, fails: loopStats.fails,
+                 ms: +loopStats.ms.toFixed(2) };
+      };
+      window.__solInfo.setLoopLife = function(i, x){
+        var st = loopStatesA[i];
+        if (st && st.ok) st.age = x*st.period;
       };
       // QA T1.1: modo/candidatos da última amostragem de PIL, leitura do
       // Br evoluído numa direção, e re-amostragem forçada de uma slot
@@ -2943,6 +3427,8 @@ function init(){
         get:function(){ return VEIL_BASE; }, set:function(v){ VEIL_BASE = v; } },
       { k:'streak', label:'Flare anamórfico', lo:0, hi:1.5, step:0.05, dflt:0,
         get:function(){ return STREAK_K; }, set:function(v){ STREAK_K = v; } },
+      { k:'burst', label:'Starburst (difração)', lo:0, hi:1.5, step:0.05, dflt:0,
+        get:function(){ return BURST_K; }, set:function(v){ BURST_K = v; } },
       { k:'adapt', label:'Olho (adaptação)', lo:0, hi:1, step:0.05, dflt:0,
         get:function(){ return ADAPT_K; }, set:function(v){ ADAPT_K = v; } },
       { k:'fringe', label:'Franja da lente', lo:0, hi:1.5, step:0.05, dflt:0,
@@ -2969,6 +3455,8 @@ function init(){
       { k:'cact', label:'Resposta à atividade', lo:0, hi:1.5, step:0.05, dflt:0.5,
         get:function(){ return coronaRaysUniforms.uActGain.value; },
         set:function(v){ coronaRaysUniforms.uActGain.value = v; } },
+      { k:'loops', label:'Loops coronais', lo:0, hi:1.5, step:0.05, dflt:0,
+        get:function(){ return LOOP_K; }, set:function(v){ LOOP_K = v; } },
       { sec: 'céu' },
       { k:'stars', label:'Estrelas', lo:0, hi:2, step:0.05, dflt:1,
         get:function(){ return stars.material.opacity/STARS_OP0; },
@@ -3098,14 +3586,42 @@ function init(){
   var SIM_DT = 0.6*MACRO_SLOW;
   var ROT_SPEED = 0.042;
 
-  function flareEnvelope(ft){
-    return (1.0 - Math.exp(-ft*9.0)) * Math.exp(-ft*1.15);
+  // FASE 1 — envelope de DUAS FASES (pendência do audit-loop6, ref-08):
+  //  - IMPULSIVA: o flash da reconexão no topo do laço — sobe em ~0.25s
+  //    e morre em ~2s (era o único envelope antes);
+  //  - GRADUAL: fitas + arcada pós-flare — sobe em ~2s e decai com
+  //    τ≈6s, o rescaldo que flares reais mostram em H-alfa por minutos.
+  function flareEnvImp(ft){
+    return (1.0 - Math.exp(-ft*10.0)) * Math.exp(-ft*1.6);
+  }
+  function flareEnvGrad(ft){
+    return ft <= 0 ? 0 : (1.0 - Math.exp(-ft*1.4)) * Math.exp(-ft*0.16);
   }
   // flare de SUPERFÍCIE: laço brilhante na plage de uma região madura
   var surfFlareT = 999;
   var surfFlareAmp = 1.0;
   var surfFlareCooldown = 8 + srand()*10;
   var surfFlareDir = new THREE.Vector3(0, 0, 1);
+  // moldura da PIL no ponto do flare: na linha neutra o campo
+  // HORIZONTAL aponta ATRAVÉS dela (da polaridade + para a −) — o
+  // "perp" sai direto do próprio campo de cargas e a tangente fecha o
+  // triedro. Vale para o gatilho natural E para o forceFlareAt de QA.
+  var flareTanDir = new THREE.Vector3(1, 0, 0);
+  var flarePerpDir = new THREE.Vector3(0, 0, 1);
+  var flareSeedVal = 0;
+  var flareBtmp = new THREE.Vector3();
+  function setFlareFrame(dir){
+    var B = bFieldJS(dir);
+    flareBtmp.copy(B).addScaledVector(dir, -B.dot(dir));
+    if (flareBtmp.lengthSq() < 1e-8){
+      // campo degenerado: qualquer perpendicular estável serve
+      flareBtmp.set(-dir.y, dir.x, 0);
+      if (flareBtmp.lengthSq() < 1e-8) flareBtmp.set(0, -dir.z, dir.y);
+    }
+    flarePerpDir.copy(flareBtmp).normalize();
+    flareTanDir.crossVectors(dir, flarePerpDir).normalize();
+    flareSeedVal = loopRand()*100.0;   // recorte das fitas muda por evento
+  }
   // flare <-> proeminência: a reconexão que ilumina a superfície também
   // injeta energia no plasma suspenso — o flare AGITA/ERGUE a proeminência
   // madura ancorada mais perto (< ~60°); as outras não sentem nada
@@ -3131,6 +3647,8 @@ function init(){
     ).normalize();
     // amplitude ∝ |w| da região que flareia (X-class só em região forte)
     surfFlareAmp = Math.min(1.5, 0.55 + 0.55*Math.abs(ps.lead.w));
+    setFlareFrame(surfFlareDir);   // moldura das fitas na PIL local
+    scheduleFlareArcade();         // arcada re-semeada para ESTE evento
     agitateNearestProm(surfFlareDir);
     return true;
   }
@@ -3206,6 +3724,7 @@ function init(){
     sunMesh.rotation.y += ROT_SPEED * delta;
     prominenceGroup.rotation.y = sunMesh.rotation.y;
     spiculeMesh.rotation.y = sunMesh.rotation.y;
+    loopGroup.rotation.y = sunMesh.rotation.y;
     spiculeUniforms.uTime.value = elapsed;
 
     // ciclo de vida das regiões ativas (o bake absorve as mudanças a ~8Hz)
@@ -3218,9 +3737,25 @@ function init(){
       surfFlareCooldown = (12 + srand()*14) / (0.5 + 1.1*coronaRaysUniforms.uActivity.value);
     }
     surfFlareT += delta;
-    var sfEnv = flareEnvelope(surfFlareT) * 1.7 * surfFlareAmp;
+    // FASE 1 — duas fases: núcleo impulsivo + fitas (impulso curto e
+    // rescaldo gradual) que se SEPARAM da PIL a ritmo saturante, e a
+    // fita alonga junto — a geometria toda deriva de surfFlareT
+    var sfImp = flareEnvImp(surfFlareT);
+    var sfGrad = flareEnvGrad(surfFlareT);
+    var sfEnv = sfImp * 1.7 * surfFlareAmp;
+    var sfRib = (0.45*sfImp + 0.85*sfGrad) * 1.7 * surfFlareAmp;
+    if (sfEnv < 0.004) sfEnv = 0;
+    if (sfRib < 0.004) sfRib = 0;
+    var sfSep = 0.018 + 0.050*(1.0 - Math.exp(-surfFlareT*0.45));
+    var sfLen = 0.055 + 0.040*(1.0 - Math.exp(-surfFlareT*0.45));
     // uFlare.xyz em espaço do OBJETO (o mesmo das cargas/sp no shader)
-    sunUniforms.uFlare.value.set(surfFlareDir.x, surfFlareDir.y, surfFlareDir.z, sfEnv < 0.004 ? 0 : sfEnv);
+    sunUniforms.uFlare.value.set(surfFlareDir.x, surfFlareDir.y, surfFlareDir.z, sfEnv);
+    sunUniforms.uFlareGeo.value.set(flareTanDir.x, flareTanDir.y, flareTanDir.z, sfSep);
+    sunUniforms.uFlarePerp.value.set(flarePerpDir.x, flarePerpDir.y, flarePerpDir.z, sfLen);
+    sunUniforms.uFlareRib.value.set(sfRib, 0.010, flareSeedVal, 0);
+    // loops coronais + arcada pós-flare (FASE 1): ciclo de vida,
+    // traços amortizados e envelopes — tudo sem alocação
+    updateLoops(delta);
     camDirN.copy(camera.position).normalize();
     // estado por proeminência (uma vez por PAR de cartões, não por mesh)
     promStates.forEach(function(ps){
@@ -3347,6 +3882,18 @@ function init(){
     var cineAng = Math.asin(Math.min(1, SUN_RADIUS / Math.max(camDist, SUN_RADIUS*1.001)));
     compUniforms.uSunR.value = 0.5 * Math.tan(cineAng) / Math.tan(cineHalf);
     compUniforms.uAspect.value = renderer.domElement.width / Math.max(1, renderer.domElement.height);
+    // FASE 1 — brilho HDR REAL do flare na lente: envelope (2 fases) ×
+    // visibilidade do ponto do flare no hemisfério voltado à câmera
+    // (espaço de mundo). Antes a íris respondia a sfEnv mesmo com o
+    // flare ATRÁS do Sol — efeito desacoplado do estado físico. Agora
+    // flare no limbo/lado oculto ⇒ lente não reage ("uma estrela, um
+    // estado"); o MESMO escalar dirige íris e starburst.
+    flareWorldTmp.copy(surfFlareDir).applyQuaternion(sunMesh.quaternion);
+    var flareFacing = flareWorldTmp.dot(camDirN);
+    var fvis = Math.min(1, Math.max(0, (flareFacing - 0.04)/0.26));
+    fvis = fvis*fvis*(3.0 - 2.0*fvis);
+    var flareHDR = (sfEnv + 0.5*sfRib) * fvis;
+    lastFlareHDR = flareHDR;
     // adaptação de exposição (olho/íris): fecha rápido no claro, reabre
     // devagar; flare estoura o quadro ANTES de a íris correr atrás
     if (ADAPT_K > 0.001){
@@ -3355,11 +3902,21 @@ function init(){
       // quadro TODO -26% enquanto o flash local era +3% — o evento lia
       // invertido; com o laço 4x mais forte, o flare ganha a leitura
       var aTarget = 1.0 / (1.0 + ADAPT_K*(0.42*cover
-        + 0.20*coronaRaysUniforms.uActivity.value*cover + 0.25*sfEnv));
+        + 0.20*coronaRaysUniforms.uActivity.value*cover + 0.25*flareHDR));
       var aTau = (aTarget < adaptCur) ? 0.5 : 3.0;
       adaptCur += (aTarget - adaptCur) * (1.0 - Math.exp(-rawDelta/aTau));
-      compUniforms.uAdapt.value = adaptCur * (1.0 + ADAPT_K*0.85*sfEnv);
+      compUniforms.uAdapt.value = adaptCur * (1.0 + ADAPT_K*0.85*flareHDR);
     } else { adaptCur = 1.0; compUniforms.uAdapt.value = 1.0; }
+    // starburst de difração: cravado na posição PROJETADA do flare e
+    // dirigido pelo mesmo flareHDR — nasce, cresce e some com o brilho
+    // físico (impulsivo forte, rescaldo fraco), nunca com um timer
+    if (BURST_K > 0.001 && flareHDR > 0.004){
+      burstProj.copy(flareWorldTmp).multiplyScalar(SUN_RADIUS).project(camera);
+      compUniforms.uBurstPos.value.set(burstProj.x*0.5 + 0.5, burstProj.y*0.5 + 0.5);
+      compUniforms.uBurst.value = (burstProj.z < 1.0) ? BURST_K * flareHDR : 0.0;
+      // rotação: assinatura fixa por EVENTO + deriva ínfima (lente viva)
+      compUniforms.uBurstRot.value = flareSeedVal*0.7 + Math.sin(elapsed*0.9 + flareSeedVal)*0.03;
+    } else compUniforms.uBurst.value = 0.0;
     // ----------------------------------------------------------------
 
     compUniforms.tScene.value = sceneRT.texture;

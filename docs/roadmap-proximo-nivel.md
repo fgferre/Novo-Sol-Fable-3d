@@ -49,13 +49,20 @@ linguagem de câmera Sunshine (knob `hand`).
 mecânico grande sobre um closure com muito estado compartilhado, e o
 gate de paridade determinística já existe para fazê-lo com segurança.
 
-### Fase 1 — "A estrela magnetizada"
+### Fase 1 — "A estrela magnetizada" (entregue nesta branch)
 Loops coronais traçados por RK4 sobre o campo de cargas existente
 (reuso direto de `BFIELD_GLSL`/`uCharges`; traço na CPU amortizado como o
 bake fatiado) + flares two-ribbon na PIL com arcadas pós-flare (pendência
 do audit-loop6). Cinema acoplado: starburst de difração e fechamento de
 íris dirigidos pelo brilho HDR real do flare. **É a feature que faz o Sol
 parecer uma estrela magnetizada.**
+
+**Entrega (2026-07, ver `docs/fase-1-estrela-magnetizada.md`)**: knobs
+novos `loops` e `burst` (default 0 = paridade provada por A/B com 0 px);
+flare two-ribbon com envelope de 2 fases e arcada pós-flare são o NOVO
+comportamento default do evento de flare; QA dedicado em
+`tools/qa-phase1.js` (12 checks). Débito consciente: `loops`/`burst`
+fora do preset `?look=sunshine` até um sweep com juiz visual.
 
 ### Fase 2 — "A luz como matéria"
 Bloom espectral ponderado por corpo negro (R espalha mais que B — difração

@@ -89,6 +89,21 @@ existe. Continuidade filamento↔proeminência no limbo (a mesma estrutura
 escura no disco e vermelha além do limbo). Cinema: modo time-lapse
 documental do ciclo.
 
+**Entrega (2026-07, ver `docs/fase-3-o-tempo-da-estrela.md`)**: knobs
+novos `cycle` (fase do ciclo modulando Spörer/Hale/reversão polar/
+atividade — o sorteio de latitude REUSA o srand do caminho default, sem
+deslocar o stream), `lapse` (time-lapse documental: ciclo completo em
+~45 s, só a maquinaria de manchas acelera) e `fprom` (gêmeo de ABSORÇÃO
+multiplicativa deitado sobre a esfera, mesmo uSeed/âncora da
+proeminência — a estrutura atravessa o limbo sem trocar de identidade),
+todos default 0 = paridade A/B 0 px em 5/5. Débitos F2 fechados: sonda
+de topologia no semeador (rejeição fina 80%→53%, 16/16 slots cheios) e
+piso de largura por foreshortening nos loops face-on (energia
+conservada). Painel de 3 juízes: miolo sólido + meandro + teto cinza
+nos filamentos; preset ganha `fprom:0.55`. `qa:phase3` novo (12 checks
+D/E). Débito estrutural anotado: multiplicidade de manchas no máximo
+(4 slots de região). FPS em iPhone real: segue pendente (dono).
+
 ### Fase 4 — "A coroa de verdade"
 Coroa volumétrica raymarched com helmet streamers emergindo da topologia
 aberta/fechada do campo (payoff do WebGL2: densidade bakeada em

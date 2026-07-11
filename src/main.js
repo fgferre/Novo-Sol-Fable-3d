@@ -91,11 +91,31 @@ function init(){
     // lentes); valores = mediana das 3 recomendações. Acima disso:
     // loops>=0.8 vira "mola de neon", burst>=1.0 vira cunha dura,
     // disp>=0.7 lava o disco p/ ouro, hal>=0.9 véu leitoso.
-    loops:0.55, burst:0.55, disp:0.40, hal:0.45
+    loops:0.55, burst:0.55, disp:0.40, hal:0.45,
+    // FASE 3: filamentos escuros como âncora de escala (painel de 3
+    // juízes: mediana 0.55, mesmo patamar dos loops; >=0.9 vira
+    // caricato — núcleo preto). cycle/lapse ficam FORA do preset: são
+    // comportamento no tempo, não look.
+    fprom:0.55
   };
   var LOOK = (urlQ.look === 'sunshine') ? LOOK_SUNSHINE : null;
   function lk(n, base){ return (LOOK && LOOK[n] !== undefined) ? LOOK[n] : base; }
   var IDLE_CINE = urlQ.idle === '1' || (urlQ.idle === undefined && savedKnobs.idle == 1);
+  // FASE 3 — o tempo da estrela: cycle liga o ciclo de 11 anos (0 = o
+  // sol "de meio de ciclo" eterno de sempre; frame default intocado;
+  // >1 acelera o relógio natural do ciclo). lapse é o time-lapse
+  // documental da camada cinema: multiplica o relógio do ciclo E o
+  // tempo de vida das regiões ativas (só a maquinaria de manchas —
+  // rotação, granulação e proeminências seguem no tempo normal, a
+  // mesma honestidade de VFX de p-modes/convecção). lapse>0 com
+  // cycle=0 liga o ciclo sozinho (modo documental de um toque).
+  var CYCLE_K = knob('cycle', lk('cycle', 0), 0.0, 1.5);
+  var LAPSE_K = knob('lapse', lk('lapse', 0), 0.0, 1.5);
+  // FASE 3 — continuidade filamento↔proeminência: a MESMA estrutura
+  // escura contra o disco (filamento, absorção) e vermelha além do
+  // limbo (proeminência, emissão). Default 0 = gêmeos de absorção
+  // invisíveis, frame e custo idênticos ao baseline.
+  var FPROM_K = knob('fprom', lk('fprom', 0), 0.0, 1.5);
   var RENDER_SCALE = (parseFloat(urlQ.scale) > 0)
     ? Math.min(2.0, Math.max(0.3, parseFloat(urlQ.scale))) : 1.0;
 
@@ -652,12 +672,83 @@ function init(){
   function sphDir(lo, la){
     return new THREE.Vector3(Math.cos(la)*Math.cos(lo), Math.sin(la), Math.cos(la)*Math.sin(lo));
   }
+  // ---------------------------------------------------------------
+  // FASE 3 — CICLO DE 11 ANOS. Um escalar de fase (cyclePhase01) modula
+  // a maquinaria de lifecycle que já existe:
+  //  - lei de Spörer: a banda de emergência migra de ±35° para ±5° ao
+  //    longo do ciclo (diagrama borboleta) — placePair reaproveita o
+  //    MESMO sorteio de latitude (o stream do srand não desloca);
+  //  - envelope de atividade: |q| das regiões cresce ao máximo (~fase
+  //    0.35) e definha no mínimo — uActivity (coroa, cooldown de flare,
+  //    íris) segue de graça ("uma estrela, um estado");
+  //  - flip de Hale: a polaridade líder/seguidor inverte por ciclo
+  //    (ps.polSign, aplicado na emergência — regiões vivas não trocam);
+  //  - reversão polar: o dipolo de fundo cruza zero perto do máximo
+  //    (fase ~0.45) e renasce invertido (cargas polares moduladas).
+  // Tempo comprimido com honestidade de VFX: 11 anos ~ CYCLE_PERIOD
+  // unidades simuladas (~30 min a speed=1); lapse acelera até ~×40.
+  // Com cycle=0 NADA disto roda: fase congelada em 0.35 (meio de
+  // ciclo), polSign=1, ampK=1, cargas polares intocadas — o frame
+  // default é pixel-idêntico ao baseline (gate qa:parity + A/B 0px).
+  // ---------------------------------------------------------------
+  var CYCLE_PERIOD = 1800;    // unidades de tempo simulado por ciclo
+  var CYCLE_PHASE0 = 0.35;    // fase do sol default (meio de ciclo)
+  var CYCLE_LAPSE_MUL = 26.0; // lapse=1.5 => relógio ~×40
+  var cycleTime = 0;          // só anda com o ciclo ligado
+  var cycleWarp = 0;          // tempo EXTRA acumulado p/ as regiões (lapse)
+  var cyclePhase01 = CYCLE_PHASE0;
+  var cycleN = 0;             // índice do ciclo (paridade => Hale)
+  var cycleHale = 1;          // sinal de Hale do ciclo corrente
+  var cycleAmpK = 1;          // ganho global de atividade
+  var cyclePolF = 1;          // fator do dipolo polar (1 = default)
+  var cyclePolarN = null, cyclePolarS = null;
+  function cycleDepth(){
+    // lapse sozinho liga o ciclo (modo documental de um toque)
+    return (LAPSE_K > 0.001 && CYCLE_K < 0.001) ? 1.0 : Math.min(1.0, CYCLE_K);
+  }
+  function updateCycleState(){
+    var d = cycleDepth();
+    var tot = CYCLE_PHASE0 + cycleTime / CYCLE_PERIOD;
+    cycleN = Math.floor(tot);
+    cyclePhase01 = tot - cycleN;
+    cycleHale = ((cycleN % 2) + 2) % 2 === 0 ? 1 : -1;
+    // atividade: sobe rápido ao máximo (~0.35), decai lento. Piso 0.10
+    // e swing maior (painel de juízes F3: max↔min a "~1 stop" não
+    // contava a história — o mínimo precisa de disco quase limpo, ver
+    // ref-06 vs ref-07); em fase 0.35 vale ~1.03 (ligar o knob não dá
+    // pop perceptível nas regiões vivas)
+    var amp = 0.10 + 1.06 * Math.pow(Math.sin(Math.PI * cyclePhase01), 1.15);
+    cycleAmpK = 1.0 + (amp - 1.0) * d;
+    // dipolo polar: cruza zero na fase 0.45 (reversão no máximo) e
+    // satura invertido no fim do ciclo; contínuo na virada de ciclo
+    // porque o sinal de Hale flipa junto
+    var pol = Math.cos(Math.PI * Math.min(1.0, cyclePhase01 / 0.9)) * cycleHale;
+    cyclePolF = 1.0 + (pol - 1.0) * d;
+    if (cyclePolarN){
+      cyclePolarN.w =  0.5 * cyclePolF;
+      cyclePolarS.w = -0.5 * cyclePolF;
+    }
+  }
+  // lei de Spörer: banda de emergência na fase corrente. latR é o MESMO
+  // sorteio uniforme que o caminho default consome — sem chamadas novas
+  // de srand(). defLat entra p/ o blend suave de profundidade do knob.
+  function cycleEmergenceLat(latR, hemi, defLat){
+    var d = cycleDepth();
+    var latC = (35.0 - 30.0 * cyclePhase01) * (Math.PI / 180.0);
+    var latW = (8.0 - 4.0 * cyclePhase01) * (Math.PI / 180.0);
+    var lat = Math.max(0.035, latC + (latR * 2.0 - 1.0) * latW);
+    return defLat + (hemi * lat - defLat) * d;
+  }
   function placePair(ps){
     // rejeição: regiões ativas independentes não nascem sobrepostas —
     // exige distância angular mínima dos líderes das outras regiões
     var lat, lon, lead;
     for (var attempt = 0; attempt < 24; attempt++){
-      lat = ps.hemi * (0.24 + srand()*0.30);
+      var latR = srand();
+      lat = ps.hemi * (0.24 + latR*0.30);
+      // FASE 3 — lei de Spörer: com o ciclo ligado a banda migra
+      // 35°→5°; reaproveita latR (stream do srand intocado)
+      if (cycleDepth() > 0.001) lat = cycleEmergenceLat(latR, ps.hemi, lat);
       lon = srand()*Math.PI*2;
       lead = sphDir(lon, lat);
       var minAng = Math.PI, minLon = Math.PI;
@@ -685,6 +776,10 @@ function init(){
     var foll = sphDir(lon+sep, follLat).multiplyScalar(0.88);
     ps.lead.set(lead.x, lead.y, lead.z, ps.lead.w);
     ps.foll.set(foll.x, foll.y, foll.z, ps.foll.w);
+    // FASE 3 — flip de Hale: a região que EMERGE carrega a polaridade
+    // do ciclo corrente (regiões vivas não trocam de sinal no meio da
+    // vida). Com o ciclo desligado, polSign=1 = comportamento de sempre.
+    ps.polSign = (cycleDepth() > 0.001) ? cycleHale : 1;
   }
   (function buildCharges(){
     for (var i=0;i<4;i++){
@@ -698,15 +793,18 @@ function init(){
       var ps = {
         lead: lead, foll: foll, baseQ: q, hemi: hemi,
         period: 150 + srand()*90,
-        phase: 0, reborn: false
+        phase: 0, reborn: false, polSign: 1
       };
       ps.phase = (i/4 + srand()*0.1) * ps.period;
       placePair(ps);
       pairStates.push(ps);
     }
-    charges.push(new THREE.Vector4(0,  0.55, 0,  0.5));
-    charges.push(new THREE.Vector4(0, -0.55, 0, -0.5));
+    charges.push(cyclePolarN = new THREE.Vector4(0,  0.55, 0,  0.5));
+    charges.push(cyclePolarS = new THREE.Vector4(0, -0.55, 0, -0.5));
   })();
+  // FASE 3: com ?cycle/?lapse na URL o estado do ciclo (amp, dipolo
+  // polar) vale desde o primeiro frame/seed do sim; com knob=0 é no-op
+  updateCycleState();
   simUniforms.uChargesSim.value = charges;
   seedSimulation();
   function lifeEnvelope(x){   // x em 0..1 dentro do período
@@ -734,8 +832,11 @@ function init(){
       } else {
         ps.reborn = false;
       }
-      ps.lead.w =  ps.baseQ * Math.max(env, 0.03);
-      ps.foll.w = -ps.baseQ * 0.85 * Math.max(env, 0.03);
+      // FASE 3: polSign (flip de Hale) e cycleAmpK (envelope de
+      // atividade do ciclo) valem 1 com o ciclo desligado — o produto
+      // por 1.0 é bit-exato, o caminho default não muda
+      ps.lead.w =  ps.baseQ * ps.polSign * Math.max(env, 0.03) * cycleAmpK;
+      ps.foll.w = -ps.baseQ * ps.polSign * 0.85 * Math.max(env, 0.03) * cycleAmpK;
       // MACRO_SLOW: a advecção do sim desacelera junto (SIM_DT) — as
       // cargas derivam na mesma escala para as manchas não descolarem
       // da plage (família do bug 4 da auditoria de movimento)
@@ -1655,6 +1756,16 @@ function init(){
       mm.userData.dir = anchor.clone();
       mm.material.uniforms.uSeed.value = srand()*100;
     });
+    // FASE 3 — o gêmeo de absorção (filamento deitado) segue o cartão
+    // 0: mesma âncora, mesma orientação (x ao longo da PIL) e o MESMO
+    // uSeed — a estrutura escura no disco é a mesma cortina do limbo.
+    // Nenhum sorteio novo: o stream do srand não desloca.
+    if (ps.flat){
+      ps.flat.quaternion.copy(ps.meshes[0].quaternion);
+      ps.flat.position.copy(ps.meshes[0].position);
+      ps.flat.userData.dir = ps.meshes[0].userData.dir;
+      ps.flat.material.uniforms.uSeed.value = ps.meshes[0].material.uniforms.uSeed.value;
+    }
   }
   // uniforms comuns aos três shaders de proeminência (ciclo de vida,
   // agitação por flare e "tempo do plasma" são a mesma interface)
@@ -1797,6 +1908,67 @@ function init(){
     '  gl_FragColor = vec4(col, a*2.0);',
     '}'
   ].join('\n');
+  // FASE 3 — CONTINUIDADE FILAMENTO↔PROEMINÊNCIA. Proeminência e
+  // filamento são o MESMO objeto visto de ângulos diferentes: a cortina
+  // de plasma vermelha de perfil (limbo) é o canal escuro de absorção
+  // visto de cima (disco). O cartão radial em pé degenera em linha de
+  // 0px visto de cima, então o gêmeo escuro é um cartão DEITADO sobre a
+  // esfera, na mesma âncora/tangente de PIL e com o MESMO uSeed — o
+  // perfil yTop que recorta o topo da cortina vira a meia-largura do
+  // canal (as reentrâncias são os "barbs" dos filamentos reais, ver
+  // ref-07). Blending multiplicativo dst*(1-src): absorção de verdade,
+  // não aditivo — o mesmo mecanismo que o débito da arcada escura pede.
+  // O crossfade usa o MESMO facing que apaga a emissão contra o disco:
+  // escuro ∝ s, vermelho ∝ (1-s) — no limbo a estrutura troca de cara
+  // sem trocar de identidade.
+  // vertex do gêmeo: igual ao uvMeshVertex + posição de MUNDO por
+  // varying — o gate por-pixel do limbo precisa saber onde o ponto da
+  // superfície está em relação à borda visível do disco
+  var promAbsorbVertex = [
+    'varying vec2 vUv;',
+    'varying vec3 vWPos;',
+    'void main(){',
+    '  vUv = uv;',
+    '  vWPos = (modelMatrix * vec4(position,1.0)).xyz;',
+    '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);',
+    '}'
+  ].join('\n');
+  var promAbsorbFragment = hedgerowFragment
+    .replace('void main(){',
+      'uniform float uAbsorb;\nvarying vec3 vWPos;\nvoid main(){')
+    // yc = afastamento do CENTRO do canal (a PIL corre no meio do
+    // cartão deitado); o y do ruído fica ASSINADO — espelhar o noise
+    // com abs() gerava "renda" simétrica ornamental (QA F3). O centro
+    // MEANDRA com a longitude (painel de juízes F3: "reto demais lê
+    // como risco geométrico" — filamentos reais serpenteiam, ref-03)
+    .replace('  float y = vUv.y;',
+      '  float y = vUv.y;\n' +
+      '  float yc = abs(y*2.0 - 1.0 + 0.38*snoise(vec3(xn*2.1, uSeed*2.9, 1.5)));')
+    // a largura do canal usa yc (o perfil yTop da cortina vira a
+    // meia-largura do filamento — as reentrâncias são os barbs)
+    .replace('  float body = smoothstep(0.02, 0.16, yTop - y);',
+      '  float body = smoothstep(0.02, 0.16, yTop - yc);')
+    // miolo SÓLIDO: o gate de wisp da cortina abre buracos até zero, e
+    // visto de cima o canal virava picote/dithering (flag unânime do
+    // painel de juízes F3 — filamento GONG é absorção contínua e macia,
+    // fios só nas bordas). O wisp vira modulação suave, não gate.
+    .replace('  float a = wisp * body * uIntensity;',
+      '  float a = (0.60 + 0.40*wisp) * body * uIntensity;')
+    // o corte "abaixo da superfície" do cartão em pé mataria um lado
+    // inteiro do canal deitado — fora
+    .replace('  a *= smoothstep(0.0, 0.07, y);', '')
+    .replace('  gl_FragColor = vec4(col, a*1.05);',
+      // fade por-pixel do limbo: a absorção escala com mu (a luz que
+      // RESTA para absorver — sobre o anel escurecido do limbo um
+      // multiply forte lia como renda flutuante, QA F3) e um taper mata
+      // o resíduo perto da borda: filamentos H-alfa reais somem por
+      // projeção ao se aproximarem do limbo (ρ>0.9) e é a proeminência
+      // vermelha do cartão em pé que assume dali em diante. mu usa o
+      // horizonte verdadeiro (ponto→câmera, não o eixo da câmera).
+      '  float mu = dot(normalize(vWPos), normalize(cameraPosition - vWPos));\n' +
+      '  float ab = clamp(a*1.3, 0.0, 1.0) * uAbsorb' +
+      ' * mu * smoothstep(0.25, 0.45, mu);\n' +
+      '  gl_FragColor = vec4(vec3(ab), 1.0);');
   (function buildProminences(){
     for(var i=0;i<PROMINENCE_COUNT;i++){
       // âncora na superfície + plano vertical (local +Y = radial para fora).
@@ -1886,6 +2058,50 @@ function init(){
         prominenceMeshes.push(mm);
         prominenceGroup.add(mm);
       });
+      // FASE 3 — gêmeo de absorção (filamento): cartão DEITADO drapejado
+      // sobre a esfera, largura máxima ~0.05R (canais reais 0.005-0.012R,
+      // gigantes com barbs mais largos — ref-07). Sem sorteios novos: a
+      // geometria não consome srand e o uSeed é copiado do cartão em pé.
+      (function buildFlatTwin(){
+        var hF = SUN_RADIUS*0.05;
+        var geoF = new THREE.PlaneGeometry(w, hF, 48, 6);
+        var posF = geoF.attributes.position;
+        var cDist = SUN_RADIUS*0.995;
+        var lift = SUN_RADIUS*0.012;   // acima da superfície, sem z-fight
+        for (var vi=0; vi<posF.count; vi++){
+          // plano xy -> xz (deitado), depois drapeja no raio da esfera
+          var vx = posF.getX(vi), vz = posF.getY(vi);
+          var dl = Math.sqrt(vx*vx + cDist*cDist + vz*vz);
+          var rr = (cDist + lift)/dl;
+          posF.setXYZ(vi, vx*rr, cDist*rr - cDist, vz*rr);
+        }
+        geoF.computeBoundingSphere();
+        var matF = new THREE.ShaderMaterial({
+          uniforms: {
+            uTime: { value: 0 }, uSeed: { value: 0 },
+            // uAspect do cartão EM PÉ (não w/hF): a frequência dos fios
+            // do shader escala com o aspect — com w/hF (~11-23) o canal
+            // virava picote; com w/h a fibra tem a MESMA escala da
+            // cortina do limbo (identidade de textura, não só de seed)
+            uIntensity: { value: 1.0 }, uAspect: { value: w/h },
+            uLife: { value: 0.0 }, uAgit: { value: 0.0 },
+            uPTime: { value: 0.0 }, uAbsorb: { value: 0.0 }
+          },
+          vertexShader: promAbsorbVertex,
+          fragmentShader: promAbsorbFragment,
+          transparent: true,
+          blending: THREE.CustomBlending,
+          blendSrc: THREE.ZeroFactor,
+          blendDst: THREE.OneMinusSrcColorFactor,
+          depthWrite: false,
+          side: THREE.DoubleSide
+        });
+        var flat = new THREE.Mesh(geoF, matF);
+        flat.renderOrder = -1;   // escurece o disco ANTES das emissões
+        flat.visible = false;    // knob fprom=0: nem entra no draw
+        ps.flat = flat;
+        prominenceGroup.add(flat);
+      })();
       placeProminence(ps, anchor);
       promStates.push(ps);
     }
@@ -2013,8 +2229,18 @@ function init(){
       '  vec2 nrm = (dl > 1e-3) ? vec2(-dS.y, dS.x)/dl : vec2(0.0, 1.0);',
       '  float pxScale = 0.5 * uRes.y * projectionMatrix[1][1];',
       '  float rawPx = uLoopW * pxScale / wA;',
-      '  float wpx = clamp(rawPx, 1.0, 14.0);',
-      '  vFade = clamp(rawPx, 0.05, 1.0);',
+      // FASE 3 (débito F2): loop quase FACE-ON degenerava em "rabisco"
+      // de 1px — o piso de largura agora cresce com o encurtamento
+      // perspectivo do segmento (dl projetado vs comprimento esperado
+      // sem foreshortening); de lado nada muda (piso 1px do LOOP-5)
+      '  float expPx = length(aTan) * pxScale / wA;',
+      '  float faceK = 1.0 - clamp(dl / max(expPx, 1e-3), 0.0, 1.0);',
+      '  float wMin = 1.0 + 2.2*faceK*faceK;',
+      '  float wpx = clamp(rawPx, wMin, 14.0);',
+      // energia conservada na largura FORÇADA: o brilho cai na razão
+      // rawPx/wpx (generaliza o fade sub-pixel antigo — para wMin=1 a
+      // expressão é idêntica à do LOOP-5)
+      '  vFade = clamp(rawPx / wpx, 0.05, 1.0);',
       // vWide 0→1 conforme a fita alarga na tela: o fragment usa para
       // AMORTECER o contraste do fluxo (que em 1px lia como cintilação
       // viva, mas numa fita larga vira "salsichas" de brilho)
@@ -2084,7 +2310,37 @@ function init(){
     var m = Math.sqrt(B.x*B.x + B.y*B.y + B.z*B.z) + 1e-9;
     out[0] = B.x/m*side; out[1] = B.y/m*side; out[2] = B.z/m*side;
   }
-  var loopStats = { traces: 0, fails: 0, ms: 0 };
+  var loopStats = { traces: 0, fails: 0, ms: 0, probes: 0, probeRej: 0 };
+  // FASE 3 (débito F2 "semeador perdulário"): pré-validação da
+  // TOPOLOGIA com uma sonda Euler grosseira (~11x mais barata que o
+  // RK4 fino: 64 passos × 1 avaliação de campo vs 176 × 4) — a
+  // rejeição de ~80% é dominada pela topologia do campo multi-carga
+  // (linha aberta/apex fora da faixa), que a sonda enxerga. Margem no
+  // apex em VALOR (±0.012/±0.15), não fração: a 1ª versão usava
+  // minApex*0.88=0.911 < raio inicial 1.004 — nunca rejeitava nada
+  // (medido: probes 80, probeRej 0, fails finos inalterados em 80%).
+  function probeFieldLine(sx, sy, sz, minApex, maxApex){
+    var t0 = performance.now();
+    var px = sx*1.004, py = sy*1.004, pz = sz*1.004;
+    var B0 = bFieldJS(loopFieldP.set(px, py, pz));
+    var side = (B0.x*px + B0.y*py + B0.z*pz) >= 0.0 ? 1.0 : -1.0;
+    var h = 0.045, apex = 0, landed = false;
+    for (var st = 0; st < 88; st++){
+      loopFieldDir(px, py, pz, side, lk1);
+      px += lk1[0]*h; py += lk1[1]*h; pz += lk1[2]*h;
+      var r = Math.sqrt(px*px + py*py + pz*pz);
+      if (r > apex) apex = r;
+      if (r < 1.001){ landed = true; break; }
+      if (r > 2.3) break;
+    }
+    loopStats.probes++;
+    loopStats.ms += performance.now() - t0;
+    if (!landed || st < 2 || apex < minApex || apex > maxApex + 0.12){
+      loopStats.probeRej++;
+      return false;
+    }
+    return true;
+  }
   // traça a linha de campo que passa por (sx,sy,sz) na direção que
   // SOBE; devolve o nº de pontos no scratch, 0 = inválida (linha
   // aberta/rasteira demais). [minApex, maxApex] distingue loops
@@ -2207,8 +2463,14 @@ function init(){
   })();
   var loopSeedOut = new THREE.Vector3();
   function retraceAmbient(slot){
-    for (var tries = 0; tries < 4; tries++){
+    // FASE 3: sonda barata filtra até 12 candidatos; o RK4 fino roda só
+    // nos aprovados (máx 4). Antes: 4 traços finos cegos com ~80% de
+    // rejeição => P(slot vazio) ~0.41; agora o slot quase sempre enche.
+    var fine = 0;
+    for (var tries = 0; tries < 12 && fine < 4; tries++){
       if (!pickLoopSeed(loopSeedOut)) break;
+      if (!probeFieldLine(loopSeedOut.x, loopSeedOut.y, loopSeedOut.z, 1.035, 1.95)) continue;
+      fine++;
       var nP = traceFieldLine(loopSeedOut.x, loopSeedOut.y, loopSeedOut.z, 1.035, 1.95, 0.02);
       if (nP > 0){
         writeLoopSlot(slot, nP);
@@ -3343,6 +3605,9 @@ function init(){
                  hand: HAND_K,
                  loops: LOOP_K,
                  burst: BURST_K,
+                 cycle: CYCLE_K,
+                 lapse: LAPSE_K,
+                 fprom: FPROM_K,
                  adaptMul: compUniforms.uAdapt.value,
                  look: LOOK ? 'sunshine' : '' };
       };
@@ -3367,8 +3632,35 @@ function init(){
       };
       window.__solInfo.regions = function(){
         return pairStates.map(function(ps){
-          return { lead: [ps.lead.x, ps.lead.y, ps.lead.z], w: ps.lead.w, baseQ: ps.baseQ };
+          return { lead: [ps.lead.x, ps.lead.y, ps.lead.z], w: ps.lead.w, baseQ: ps.baseQ,
+                   // FASE 3: latitude do líder em graus (o raio das cargas
+                   // é 0.88) e sinal de Hale — p/ o QA da borboleta
+                   lat: Math.asin(Math.max(-1, Math.min(1, ps.lead.y/0.88)))*180/Math.PI,
+                   pol: ps.polSign };
         });
+      };
+      // FASE 3 — QA do ciclo de 11 anos: fase/índice/sinais correntes...
+      window.__solInfo.cycleInfo = function(){
+        return { cycle: CYCLE_K, lapse: LAPSE_K, depth: cycleDepth(),
+                 phase: cyclePhase01, n: cycleN, hale: cycleHale,
+                 amp: cycleAmpK, pol: cyclePolF, polNorth: cyclePolarN.w,
+                 warp: cycleWarp,
+                 latC: 35 - 30*cyclePhase01, latW: 8 - 4*cyclePhase01 };
+      };
+      // ...e salto determinístico de fase (sob ?det&hold o tempo congela;
+      // p em CICLOS — 1.3 = ciclo ímpar na fase 0.3, testa o flip de
+      // Hale). reseed=true re-emerge os 4 pares JÁ na banda da fase nova
+      // (fotografa a borboleta sem esperar renascimentos naturais).
+      window.__solInfo.setCyclePhase = function(p, reseed){
+        cycleTime = (p - CYCLE_PHASE0) * CYCLE_PERIOD;
+        updateCycleState();
+        if (reseed){
+          for (var i = 0; i < pairStates.length; i++){
+            pairStates[i].reborn = false;
+            placePair(pairStates[i]);
+          }
+        }
+        return window.__solInfo.cycleInfo();
       };
       window.__solInfo.prominences = function(){
         return prominenceMeshes.map(function(m){
@@ -3474,6 +3766,7 @@ function init(){
         return { on: LOOP_K, amb: nOk, arc: nArc, queue: arcQueueN,
                  visible: loopMesh.visible,
                  traces: loopStats.traces, fails: loopStats.fails,
+                 probes: loopStats.probes, probeRej: loopStats.probeRej,
                  ms: +loopStats.ms.toFixed(2) };
       };
       window.__solInfo.setLoopLife = function(i, x){
@@ -3494,6 +3787,22 @@ function init(){
         return { br: pilBrAt(x, y),
                  crossLon: pilBrAt(x-2, y)*pilBrAt(x+2, y) < 0.0,
                  crossLat: pilBrAt(x, y-2)*pilBrAt(x, y+2) < 0.0 };
+      };
+      // FASE 3 — QA da continuidade filamento↔proeminência: estado dos
+      // gêmeos de absorção (visibilidade, força, identidade de seed)
+      window.__solInfo.fpromInfo = function(){
+        camera.updateMatrixWorld(true);
+        var cd = camera.position.clone().normalize();
+        return promStates.map(function(ps){
+          var facing = ps.flat.userData.dir.clone()
+            .applyQuaternion(prominenceGroup.quaternion).dot(cd);
+          return { vis: ps.flat.visible,
+                   absorb: ps.flat.material.uniforms.uAbsorb.value,
+                   facing: facing,
+                   seedMatch: ps.flat.material.uniforms.uSeed.value ===
+                              ps.meshes[0].material.uniforms.uSeed.value,
+                   env: ps.env };
+        });
       };
       window.__solInfo.resampleProm = function(i){
         var a = sampleProminenceAnchor();
@@ -3597,6 +3906,10 @@ function init(){
       { k:'pmode', label:'Oscilações (p-modes)', lo:0, hi:1, step:0.05, dflt:0,
         get:function(){ return sunUniforms.uPmode.value; },
         set:function(v){ sunUniforms.uPmode.value = v; } },
+      { k:'cycle', label:'Ciclo de 11 anos', lo:0, hi:1.5, step:0.05, dflt:0,
+        get:function(){ return CYCLE_K; }, set:function(v){ CYCLE_K = v; } },
+      { k:'lapse', label:'Time-lapse do ciclo', lo:0, hi:1.5, step:0.05, dflt:0,
+        get:function(){ return LAPSE_K; }, set:function(v){ LAPSE_K = v; } },
       { sec: 'luz & cor' },
       { k:'bloom', label:'Bloom', lo:0, hi:2.5, step:0.05, dflt:1,
         get:function(){ return BLOOM_STRENGTH_BASE/BLOOM_BASE0; },
@@ -3655,6 +3968,8 @@ function init(){
         set:function(v){ coronaRaysUniforms.uActGain.value = v; } },
       { k:'loops', label:'Loops coronais', lo:0, hi:1.5, step:0.05, dflt:0,
         get:function(){ return LOOP_K; }, set:function(v){ LOOP_K = v; } },
+      { k:'fprom', label:'Filamento ↔ proeminência', lo:0, hi:1.5, step:0.05, dflt:0,
+        get:function(){ return FPROM_K; }, set:function(v){ FPROM_K = v; } },
       { sec: 'céu' },
       { k:'stars', label:'Estrelas', lo:0, hi:2, step:0.05, dflt:1,
         get:function(){ return stars.material.opacity/STARS_OP0; },
@@ -3979,8 +4294,19 @@ function init(){
     loopGroup.rotation.y = sunMesh.rotation.y;
     spiculeUniforms.uTime.value = elapsed;
 
+    // FASE 3 — relógio do ciclo de 11 anos: só anda com cycle/lapse
+    // ligados. cycle>1 acelera o relógio natural; lapse (time-lapse
+    // documental) multiplica o relógio do ciclo E o tempo das regiões
+    // (cycleWarp), sem tocar rotação/sim/proeminências. Default 0:
+    // warp fica 0.0 e elapsed+0.0 é bit-exato — baseline intocado.
+    if (cycleDepth() > 0.001){
+      var cycMul = Math.max(1.0, CYCLE_K) + LAPSE_K * CYCLE_LAPSE_MUL;
+      cycleTime += delta * cycMul;
+      if (cycMul > 1.0) cycleWarp += delta * (cycMul - 1.0);
+      updateCycleState();
+    }
     // ciclo de vida das regiões ativas (o bake absorve as mudanças a ~8Hz)
-    updateActiveRegions(elapsed);
+    updateActiveRegions(elapsed + cycleWarp);
     // flare de superfície: ataque rápido, decaimento lento
     surfFlareCooldown -= delta;
     if (surfFlareCooldown <= 0){
@@ -4050,6 +4376,26 @@ function init(){
         ps.orient[oi] = (1.0 - 0.5*nv) * ek*ek*(3 - 2*ek);
       }
       ps.orientNorm = 1.05 / Math.max(0.45, ps.orient[0] + ps.orient[1]);
+      // FASE 3 — gêmeo de absorção: escuro ∝ s (o MESMO smoothstep de
+      // facing que apaga a emissão contra o disco usa 1-s) — no limbo
+      // os dois se cruzam e a estrutura continua através da borda.
+      // Teto 0.55 = a mesma absorção máxima dos filamentos do bake.
+      if (FPROM_K > 0.001){
+        ps.flat.visible = true;
+        var facingF = promWorldTmp.copy(ps.flat.userData.dir)
+          .applyQuaternion(prominenceGroup.quaternion).dot(camDirN);
+        var sF = Math.min(1, Math.max(0, (facingF - 0.10) / 0.42));
+        sF = sF*sF*(3.0-2.0*sF);
+        var fu = ps.flat.material.uniforms;
+        fu.uLife.value = ps.env;
+        fu.uAgit.value = ps.agit;
+        fu.uPTime.value = ps.drift;
+        fu.uTime.value = elapsed;
+        // teto 0.45 com fieldK saturado: filamento GONG é cinza-escuro
+        // sobre o disco, nunca preto (juiz de realismo F3 — o teto
+        // antigo 0.55·fieldK1.2=0.66 saturava o núcleo para preto)
+        fu.uAbsorb.value = Math.min(1.0, FPROM_K) * 0.45 * sF * Math.min(1.0, ps.fieldK);
+      } else if (ps.flat.visible) ps.flat.visible = false;
     });
     prominenceMeshes.forEach(function(m){
       var ps = m.userData.state;

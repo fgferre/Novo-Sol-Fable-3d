@@ -25,6 +25,9 @@ baselines de paridade.
 `?look=sunshine` (preset cinematográfico) · `?speed=` · `?tier=low|mid|high|ultra`
 · `?scale=` · `?idle=1` · knobs individuais
 (`?film=1&pmode=0.6&hand=0.5&loops=1&burst=0.8`…).
+Fase 3: `?cycle=1` liga o ciclo solar de 11 anos (Spörer, Hale,
+reversão polar), `?lapse=1` o time-lapse documental do ciclo e
+`?fprom=1` a continuidade filamento↔proeminência.
 Painel de ajustes no ⚙ (salvo em localStorage).
 
 ## QA
@@ -35,6 +38,7 @@ npm run qa:parity      # paridade visual determinística vs qa/baselines
 npm run qa:motion      # evolução temporal (com tools/motion-check.py)
 npm run qa:shot        # screenshots desktop/portrait/zoom
 npm run qa:phase1      # Fase 1: loops, flare two-ribbon, starburst/íris
+npm run qa:phase3      # Fase 3: ciclo de 11 anos + filamento↔proeminência
 ```
 
 O modo determinístico (`?det=1&seed=N&hold=F`) fixa RNG e dt e congela o

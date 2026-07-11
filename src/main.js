@@ -1982,6 +1982,7 @@ function init(){
       'varying float vId;',
       'varying float vSide;',
       'varying float vFade;',
+      'varying float vWide;',
       'void main(){',
       '  vParam = aParam; vId = aLoop; vSide = aSide;',
       '  int li = int(aLoop + 0.5);',
@@ -2002,8 +2003,12 @@ function init(){
       '  vec2 nrm = (dl > 1e-3) ? vec2(-dS.y, dS.x)/dl : vec2(0.0, 1.0);',
       '  float pxScale = 0.5 * uRes.y * projectionMatrix[1][1];',
       '  float rawPx = uLoopW * pxScale / wA;',
-      '  float wpx = clamp(rawPx, 1.0, 22.0);',
+      '  float wpx = clamp(rawPx, 1.0, 14.0);',
       '  vFade = clamp(rawPx, 0.05, 1.0);',
+      // vWide 0→1 conforme a fita alarga na tela: o fragment usa para
+      // AMORTECER o contraste do fluxo (que em 1px lia como cintilação
+      // viva, mas numa fita larga vira "salsichas" de brilho)
+      '  vWide = clamp((rawPx - 1.0)/13.0, 0.0, 1.0);',
       '  clipA.xy += nrm * (aSide * wpx * 2.0 / uRes) * wA;',
       '  gl_Position = clipA;',
       '}'
@@ -2016,13 +2021,18 @@ function init(){
       'varying float vId;',
       'varying float vSide;',
       'varying float vFade;',
+      'varying float vWide;',
       'void main(){',
       '  if (vEnv < 0.002) discard;',
       // plasma escoando pelo tubo (condensação coronal): 2 harmônicas
-      // incomensuráveis em sentidos opostos — vivo, sem período audível
+      // incomensuráveis em sentidos opostos — vivo, sem período audível.
+      // De perto (fita larga, vWide→1) o contraste do fluxo amortece:
+      // o brilho pulsante que anima um fio de 1px quebraria a fita em
+      // salsichas (visto no smoke ribbons-close da Fase 2)
       '  float f1 = sin(vParam*18.85 - uTime*1.9 + vId*7.31);',
       '  float f2 = sin(vParam*40.84 + uTime*1.23 + vId*3.17);',
-      '  float flow = 0.62 + 0.26*f1 + 0.14*f2;',
+      '  float fAmp = 1.0 - 0.62*vWide;',
+      '  float flow = 0.62 + (0.26*f1 + 0.14*f2)*fAmp;',
       // pés mais brilhantes (coluna emissiva mais densa na base, como
       // o "moss" das imagens TRACE/AIA)
       '  float foot = 1.0 - vParam*(1.0 - vParam)*2.0;',
@@ -2161,13 +2171,19 @@ function init(){
     if (Math.abs(ps.lead.w) < 0.25) return false;   // região quase morta não enche loop
     loopSeedTmp.set(ps.lead.x, ps.lead.y, ps.lead.z).normalize();
     loopAxisTmp.set(ps.foll.x, ps.foll.y, ps.foll.z).normalize();
+    // FASE 2 (débito F1): viés pela SEPARAÇÃO do par — o leque de
+    // offsets escala com o ângulo lead→foll em vez de ser fixo. Par
+    // apertado semeia perto (linha fecha baixa), par largo semeia longe
+    // (fecha alta): menos sorteios caem em linha aberta/rasteira.
+    // Medido no probe (high, det=1&seed=7): rejeição 80% → ver doc F2.
+    var sepAng = Math.acos(Math.max(-1, Math.min(1, loopSeedTmp.dot(loopAxisTmp))));
     loopAxisTmp.addScaledVector(loopSeedTmp, -loopAxisTmp.dot(loopSeedTmp));
     if (loopAxisTmp.lengthSq() < 1e-6) return false;
     loopAxisTmp.normalize();
     loopLatTmp.crossVectors(loopSeedTmp, loopAxisTmp);
     out.copy(loopSeedTmp)
-       .addScaledVector(loopAxisTmp, 0.02 + 0.16*loopRand())
-       .addScaledVector(loopLatTmp, (loopRand() - 0.5)*0.16)
+       .addScaledVector(loopAxisTmp, sepAng*(0.12 + 0.60*loopRand()))
+       .addScaledVector(loopLatTmp, (loopRand() - 0.5)*0.30*sepAng)
        .normalize();
     return true;
   }
@@ -2558,11 +2574,11 @@ function init(){
     'varying vec2 vUv;',
     'void main(){',
     // FASE 2 — bloom espectral ponderado por corpo negro: raio de blur
-    // POR CANAL (difração ∝ λ — R borra mais largo, B mais estreito).
-    // Como todo nível da cadeia escala pelo mesmo fator, o raio total do
-    // halo escala linearmente: em disp=1, R×1.35 / B×0.75 (razão ~1.8,
-    // ancorada em λ_R/λ_B ≈ 700/450). O núcleo do halo fica levemente
-    // frio e a borda quente — o "halo de filme" sem passes novos.
+    // POR CANAL (difração ∝ λ — R borra mais largo, B mais estreito;
+    // razão ancorada em λ_R/λ_B ≈ 700/450). Este é o termo da DESCIDA;
+    // o grosso do espalhamento diferencial acontece na subida (tent por
+    // canal no upsampleFragment). Sem passes novos: só taps a mais, e
+    // só quando o knob liga.
     '  if (uDisp > 0.001){',
     '    vec2 oR = uTexel * (1.0 + 0.35*uDisp);',
     '    vec2 oB = uTexel * (1.0 - 0.25*uDisp);',
@@ -2592,11 +2608,40 @@ function init(){
   var downsampleMaterial = new THREE.ShaderMaterial({ uniforms: downsampleUniforms, vertexShader: quadVertex, fragmentShader: downsampleFragment });
   var downsampleScene = makeFullscreenScene(downsampleMaterial);
 
-  var upsampleUniforms = { tDiffuse:{value:null} };
+  var upsampleUniforms = { tDiffuse:{value:null}, uTexel:{value:new THREE.Vector2(1,1)}, uDisp:{value:0.0} };
   var upsampleFragment = [
     'uniform sampler2D tDiffuse;',
+    'uniform vec2 uTexel;',
+    'uniform float uDisp;',
     'varying vec2 vUv;',
     'void main(){',
+    // FASE 2 — bloom espectral: o grosso do raio do dual-Kawase vem da
+    // pirâmide em si (downsample bilinear), que é acromática; para o R
+    // espalhar DE VERDADE mais que o B, a subida troca o passthrough
+    // por um tent de 4 taps com raio POR CANAL a cada nível — o
+    // espalhamento diferencial compõe sobre o sinal acumulado inteiro
+    // (só o downsample espectral era imperceptível: ΔR médio +0.2/255
+    // no smoke; medido 2026-07).
+    '  if (uDisp > 0.001){',
+    '    vec2 oR = uTexel * (0.5 + 1.70*uDisp);',
+    '    vec2 oG = uTexel * 0.5;',
+    '    vec2 oB = uTexel * max(0.5 - 0.34*uDisp, 0.0);',
+    '    vec3 cS;',
+    '    cS.r = texture2D(tDiffuse, vUv+vec2( oR.x, oR.y)).r',
+    '         + texture2D(tDiffuse, vUv+vec2(-oR.x, oR.y)).r',
+    '         + texture2D(tDiffuse, vUv+vec2( oR.x,-oR.y)).r',
+    '         + texture2D(tDiffuse, vUv+vec2(-oR.x,-oR.y)).r;',
+    '    cS.g = texture2D(tDiffuse, vUv+vec2( oG.x, oG.y)).g',
+    '         + texture2D(tDiffuse, vUv+vec2(-oG.x, oG.y)).g',
+    '         + texture2D(tDiffuse, vUv+vec2( oG.x,-oG.y)).g',
+    '         + texture2D(tDiffuse, vUv+vec2(-oG.x,-oG.y)).g;',
+    '    cS.b = texture2D(tDiffuse, vUv+vec2( oB.x, oB.y)).b',
+    '         + texture2D(tDiffuse, vUv+vec2(-oB.x, oB.y)).b',
+    '         + texture2D(tDiffuse, vUv+vec2( oB.x,-oB.y)).b',
+    '         + texture2D(tDiffuse, vUv+vec2(-oB.x,-oB.y)).b;',
+    '    gl_FragColor = vec4(cS*0.25, 1.0);',
+    '    return;',
+    '  }',
     '  gl_FragColor = vec4(texture2D(tDiffuse, vUv).rgb, 1.0);',
     '}'
   ].join('\n');
@@ -2662,6 +2707,7 @@ function init(){
 
     for (var j=bloomMips.length-2;j>=0;j--){
       upsampleUniforms.tDiffuse.value = bloomMips[j+1].rt.texture;
+      upsampleUniforms.uTexel.value.set(1/bloomMips[j+1].w, 1/bloomMips[j+1].h);
       renderer.setRenderTarget(bloomMips[j].rt);
       renderer.autoClear = false;
       renderer.render(upsampleScene, quadCamera);
@@ -3995,6 +4041,7 @@ function init(){
 
     // FASE 2 — dispersão espectral do bloom (lida ANTES do renderBloom)
     downsampleUniforms.uDisp.value = DISP_K;
+    upsampleUniforms.uDisp.value = DISP_K;
     if (subToggle.bloom) renderBloom();
     compUniforms.uBloomStrength.value = subToggle.bloom ? BLOOM_STRENGTH_BASE : 0.0;
 

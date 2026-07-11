@@ -116,6 +116,13 @@ function init(){
   // limbo (proeminência, emissão). Default 0 = gêmeos de absorção
   // invisíveis, frame e custo idênticos ao baseline.
   var FPROM_K = knob('fprom', lk('fprom', 0), 0.0, 1.5);
+  // FASE 4 — a coroa de verdade: coroa volumétrica raymarched (helmet
+  // streamers emergindo da topologia aberta/fechada do MESMO campo de
+  // cargas, densidade bakeada em sampler3D 64³). Default 0 = mesh
+  // invisível, frame e custo idênticos ao baseline. Tier-gated: em
+  // tiers sem passos de raymarch (low) o knob é no-op e o plano de
+  // raias segue sozinho como fallback.
+  var CVOL_K = knob('cvol', lk('cvol', 0), 0.0, 1.5);
   var RENDER_SCALE = (parseFloat(urlQ.scale) > 0)
     ? Math.min(2.0, Math.max(0.3, parseFloat(urlQ.scale))) : 1.0;
 
@@ -143,9 +150,12 @@ function init(){
   // arcada pós-flare, lseg = segmentos por loop (o traço RK4 é CPU
   // amortizado — os contadores escalam com o tier, não o custo/frame).
   var TIER_PARAMS = {
-    low:  { fbm:4, seg:96,  stars:3500, bright:130, simW:384, simH:192, simStep:1/16, bloom:3, prom:4, chromo:512,  granFreq:22.0, lic7:false, loops:8,  larc:5,  lseg:28 },
-    mid:  { fbm:5, seg:128, stars:5000, bright:200, simW:768, simH:384, simStep:1/22, bloom:4, prom:6, chromo:1024, granFreq:30.0, lic7:true,  loops:12, larc:7,  lseg:36 },
-    high: { fbm:5, seg:128, stars:7000, bright:240, simW:768, simH:384, simStep:1/26, bloom:4, prom:7, chromo:2048, granFreq:34.0, lic7:true,  loops:16, larc:9,  lseg:44 },
+    // FASE 4: cstep = passos do raymarch da coroa volumétrica (0 = tier
+    // fica no plano de gradiente; o custo do raymarch escala linear nos
+    // passos E na resolução — o auto-tune de escala já o protege).
+    low:  { fbm:4, seg:96,  stars:3500, bright:130, simW:384, simH:192, simStep:1/16, bloom:3, prom:4, chromo:512,  granFreq:22.0, lic7:false, loops:8,  larc:5,  lseg:28, cstep:0 },
+    mid:  { fbm:5, seg:128, stars:5000, bright:200, simW:768, simH:384, simStep:1/22, bloom:4, prom:6, chromo:1024, granFreq:30.0, lic7:true,  loops:12, larc:7,  lseg:36, cstep:22 },
+    high: { fbm:5, seg:128, stars:7000, bright:240, simW:768, simH:384, simStep:1/26, bloom:4, prom:7, chromo:2048, granFreq:34.0, lic7:true,  loops:16, larc:9,  lseg:44, cstep:36 },
     // ULTRA (desktop com GPU dedicada): DPR até 3, malha/sim/estrelas
     // maiores e 5 níveis de bloom. Nunca é escolhido no primeiro load —
     // só o auto-tune promove (p95 < limiar por 30s no high) ou ?tier=ultra.
@@ -1536,7 +1546,11 @@ function init(){
     uActivity: { value: 0.5 },
     uHalo: { value: knob('halo', 0.55, 0.0, 2.0) },
     uActGain: { value: knob('cact', 0.50, 0.0, 2.0) },
-    uRayBoost: { value: knob('ray', 0.90, 0.0, 3.0) }
+    uRayBoost: { value: knob('ray', 0.90, 0.0, 3.0) },
+    // FASE 4: com a coroa volumétrica ligada o plano de raias cede o
+    // protagonismo (fica como base suave de halo). 0.0 default =
+    // multiplicação por 1.0 no shader, bit-exata — baseline intocado.
+    uCvolMix: { value: 0.0 }
   };
   var coronaRaysMat = new THREE.ShaderMaterial({
     uniforms: coronaRaysUniforms,
@@ -1551,6 +1565,7 @@ function init(){
       'uniform float uHalo;',
       'uniform float uActGain;',
       'uniform float uRayBoost;',
+      'uniform float uCvolMix;',
       'varying vec2 vUv;',
       'void main(){',
       '  vec2 c = vUv - 0.5;',
@@ -1596,7 +1611,7 @@ function init(){
       '  fall *= smoothstep(0.85, 0.55, r);',        // some bem antes da borda do plano
       '  vec3 col = mix(vec3(1.0,0.45,0.16), vec3(1.0,0.72,0.38), clamp((r-diskR)*2.2,0.0,1.0));',
       // amplitude respira com a atividade global do ciclo
-      '  gl_FragColor = vec4(col * fall * rays * 0.16 * (1.0 + uActGain*uActivity), 1.0);',
+      '  gl_FragColor = vec4(col * fall * rays * 0.16 * (1.0 + uActGain*uActivity) * (1.0 - 0.62*uCvolMix), 1.0);',
       '}'
     ].join('\n'),
     transparent: true,
@@ -1611,6 +1626,199 @@ function init(){
   var coronaOuter = new THREE.Sprite(new THREE.SpriteMaterial({map:coronaOuterTex, blending:THREE.AdditiveBlending, transparent:true, depthWrite:false}));
   coronaOuter.scale.set(SUN_RADIUS*6.0, SUN_RADIUS*6.0, 1);
   scene.add(coronaOuter);
+
+  // ---------------------------------------------------------------
+  // FASE 4 — "a coroa de verdade": coroa volumétrica raymarched.
+  // A densidade coronal vive num sampler3D 64³ (payoff do WebGL2)
+  // bakeado na CPU pelo MESMO campo de cargas (bFieldJS), fatiado como
+  // o bake da cromosfera (2 fatias z/frame, snapshot de cargas no
+  // início do ciclo, upload atômico no fim — sem tearing). A topologia
+  // aberta/fechada sai de um proxy físico barato, a UNIPOLARIDADE
+  // |B·r̂|/|B|: folhas de helmet streamer nascem na superfície neutra
+  // (unip≈0) e afinam com a altura (cúspide); buracos coronais são as
+  // regiões unipolares fortes perto da superfície (polos no mínimo do
+  // ciclo — emergente do dipolo polar da F3, sem heurística nova). No
+  // máximo a superfície neutra ondula por todas as latitudes = coroa
+  // "cheia" (refs 09/12); no mínimo sobra o cinturão equatorial +
+  // buracos polares. Tier-gated (cstep=0 => o plano de raias segue
+  // sozinho como fallback); knob cvol default 0 = mesh invisível.
+  // ---------------------------------------------------------------
+  var CVOL_STEPS = TP.cstep | 0;
+  var CVOL_N = 64, CVOL_VR = 3.0, CVOL_ROUT = 2.88;
+  var cvolStep = -1, cvolAccum = 0, cvolReady = false, cvolKilled = false, cvolCycles = 0;
+  var coronaVol = null, cvolUniforms = null, cvolTex = null;
+  var cvolData = null, cvolStage = null;
+  var cvolQ = new Float32Array(40);       // snapshot das 10 cargas (x,y,z,w)
+  var cvolInvRot = new THREE.Matrix3();
+  function snapshotCvolCharges(){
+    for (var i = 0; i < charges.length; i++){
+      cvolQ[i*4]   = charges[i].x; cvolQ[i*4+1] = charges[i].y;
+      cvolQ[i*4+2] = charges[i].z; cvolQ[i*4+3] = charges[i].w;
+    }
+  }
+  // pesos da mistura de densidade — ajustáveis em runtime pelo hook
+  // setCvolShape (sweep de calibração sem rebuild); os defaults são o
+  // resultado do painel de juízes da rodada
+  var cvolWBase = 0.30, cvolWSheet = 0.85, cvolWLoop = 0.55, cvolWHole = 0.62;
+  // densidade coronal num ponto do espaço do objeto (esfera unitária)
+  function cvolDensity(x, y, z){
+    var r = Math.sqrt(x*x + y*y + z*z);
+    if (r < 1.005 || r > CVOL_ROUT) return 0;
+    var bx = 0, by = 0, bz = 0;
+    for (var i = 0; i < 10; i++){
+      var dx = x - cvolQ[i*4], dy = y - cvolQ[i*4+1], dz = z - cvolQ[i*4+2];
+      var r2 = dx*dx + dy*dy + dz*dz + 1e-3;
+      var k = cvolQ[i*4+3] / (r2 * Math.sqrt(r2));
+      bx += dx*k; by += dy*k; bz += dz*k;
+    }
+    var bm = Math.sqrt(bx*bx + by*by + bz*bz) + 1e-9;
+    var unip = Math.abs((bx*x + by*y + bz*z) / (r * bm));
+    // base hidrostática (escala de altura 0.42R: satura na base e morre
+    // em ~2.5-3R como nas fotos de eclipse — refs 09/12)
+    var base = Math.exp(-(r - 1.0) * 2.38);
+    // folha de streamer na superfície neutra; o expoente cresce com a
+    // altura => a folha afunila (base larga ~30-40°, cúspide estreita)
+    var sheet = Math.exp(-unip*unip * (6.0 + 18.0*(r - 1.0)));
+    // coroa baixa presa às regiões ativas (|B| alto, só perto da base)
+    var loopBase = Math.min(1.1, bm*0.5) * Math.exp(-(r - 1.0) * 6.2);
+    // buraco coronal: unipolar forte perto da superfície rarefaz
+    // (interior quase preto na ref-11)
+    var hu = (unip - 0.60) / 0.30;
+    hu = hu < 0 ? 0 : (hu > 1 ? 1 : hu);
+    hu = hu*hu*(3.0 - 2.0*hu);
+    var hole = hu * Math.exp(-(r - 1.0) * 3.3);
+    var dens = base * (cvolWBase + cvolWSheet*sheet + cvolWLoop*loopBase) * (1.0 - cvolWHole*hole);
+    // fade externo: o shell de marcha não corta seco em ROUT
+    var fo = (CVOL_ROUT - 0.06 - r) * 4.0;
+    if (fo < 0) fo = 0; else if (fo > 1) fo = 1;
+    dens *= fo;
+    return dens <= 0 ? 0 : (dens > 1 ? 1 : dens);
+  }
+  function bakeCvolSlice(iz){
+    if (iz >= CVOL_N) return;
+    var inv = (2.0*CVOL_VR) / CVOL_N, off = -CVOL_VR + 0.5*inv;
+    var z = off + iz*inv, rowBase = iz * CVOL_N * CVOL_N;
+    for (var iy = 0; iy < CVOL_N; iy++){
+      var y = off + iy*inv, idx = rowBase + iy*CVOL_N;
+      for (var ix = 0; ix < CVOL_N; ix++){
+        var d = cvolDensity(off + ix*inv, y, z);
+        // sqrt-encode: 8 bits rendem melhor onde a coroa é tênue
+        cvolStage[idx + ix] = (Math.sqrt(d) * 255) | 0;
+      }
+    }
+  }
+  function cvolBakeFull(){
+    snapshotCvolCharges();
+    for (var iz = 0; iz < CVOL_N; iz++) bakeCvolSlice(iz);
+    cvolData.set(cvolStage);
+    cvolTex.needsUpdate = true;
+    cvolReady = true; cvolCycles++; cvolStep = -1;
+  }
+  if (CVOL_STEPS > 0){
+    cvolData = new Uint8Array(CVOL_N*CVOL_N*CVOL_N);
+    cvolStage = new Uint8Array(CVOL_N*CVOL_N*CVOL_N);
+    cvolTex = new THREE.Data3DTexture(cvolData, CVOL_N, CVOL_N, CVOL_N);
+    cvolTex.format = THREE.RedFormat;
+    cvolTex.type = THREE.UnsignedByteType;
+    cvolTex.minFilter = THREE.LinearFilter;
+    cvolTex.magFilter = THREE.LinearFilter;
+    cvolTex.wrapS = cvolTex.wrapT = cvolTex.wrapR = THREE.ClampToEdgeWrapping;
+    cvolTex.unpackAlignment = 1;
+    cvolTex.needsUpdate = true;
+    cvolUniforms = {
+      uVol: { value: cvolTex },
+      uInvRot: { value: cvolInvRot },
+      uCvol: { value: 0 },
+      uActivity: { value: 0.5 },
+      uTime: { value: 0 },
+      // contraste das raias finas procedurais sobre o volume (1 =
+      // calibrado; 0 = volume liso) — eixo do sweep, via setCvolFil
+      uFil: { value: 1.0 }
+    };
+    var cvolMat = new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3,
+      uniforms: cvolUniforms,
+      vertexShader: [
+        'varying vec3 vWorld;',
+        'void main(){',
+        '  vec4 w = modelMatrix * vec4(position, 1.0);',
+        '  vWorld = w.xyz;',
+        '  gl_Position = projectionMatrix * viewMatrix * w;',
+        '}'
+      ].join('\n'),
+      fragmentShader: NOISE_GLSL + '\n' + [
+        'precision highp sampler3D;',
+        '#define CVOL_STEPS ' + CVOL_STEPS,
+        '#define SUN_R ' + SUN_RADIUS.toFixed(4),
+        'uniform sampler3D uVol;',
+        'uniform mat3 uInvRot;',
+        'uniform float uCvol;',
+        'uniform float uActivity;',
+        'uniform float uTime;',
+        'uniform float uFil;',
+        'varying vec3 vWorld;',
+        // GLSL3: sem gl_FragColor — saída explícita
+        'out vec4 fragColor;',
+        'void main(){',
+        // raio de PERSPECTIVA real (não a aproximação angular do plano
+        // de raias): da câmera pelo vértice do billboard
+        '  vec3 ro = cameraPosition;',
+        '  vec3 rd = normalize(vWorld - cameraPosition);',
+        '  float b = dot(ro, rd);',
+        '  float R = SUN_R * ' + CVOL_ROUT.toFixed(3) + ';',
+        '  float disc = b*b - (dot(ro,ro) - R*R);',
+        '  if (disc <= 0.0){ fragColor = vec4(0.0); return; }',
+        '  float sq = sqrt(disc);',
+        '  float t0 = max(-b - sq, 0.0);',
+        '  float t1 = -b + sq;',
+        // o raio que fura o disco para no ponto de entrada: a coroa de
+        // trás não brilha na frente do disco (o disco opaco, desenhado
+        // depois, cobre o resto — renderOrder -1)
+        '  float di = b*b - (dot(ro,ro) - SUN_R*SUN_R*1.0201);',
+        '  if (di > 0.0) t1 = min(t1, -b - sqrt(di));',
+        '  if (t1 <= t0 + 1e-4){ fragColor = vec4(0.0); return; }',
+        '  float dt = (t1 - t0) / float(CVOL_STEPS);',
+        // jitter determinístico por pixel (esconde banding; det=ok)
+        '  float jit = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898,78.233)))*43758.5453);',
+        '  float t = t0 + dt*jit;',
+        '  float sum = 0.0; float hsum = 0.0;',
+        '  for (int i = 0; i < CVOL_STEPS; i++){',
+        '    vec3 pO = (uInvRot * (ro + rd*t)) * (1.0/SUN_R);',
+        '    float d = texture(uVol, pO*' + (0.5/CVOL_VR).toFixed(6) + ' + 0.5).r;',
+        '    d = d*d;',                       // decode do sqrt-encode
+        '    sum += d;',
+        '    hsum += d*length(pO);',
+        '    t += dt;',
+        '  }',
+        '  if (sum <= 1e-5){ fragColor = vec4(0.0); return; }',
+        '  float hMean = hsum / sum;',
+        // raias finas + flicker 1/f no referencial do objeto — a mesma
+        // vida do plano de raias (uma avaliação por pixel, não por passo)
+        '  vec3 dirO = normalize(uInvRot * normalize(vWorld));',
+        '  float f1 = fbmLight(dirO*3.1 + vec3(0.0, 0.0, uTime*0.030));',
+        '  float f2 = fbmLight(dirO*7.3 + vec3(5.1, 2.2, uTime*0.045));',
+        '  float flick = fbmLight(dirO*1.9 + vec3(3.7, 8.2, uTime*0.55));',
+        '  float fil = (0.62 + 0.55*f1) * (0.80 + 0.34*f2) * (0.90 + 0.20*flick);',
+        '  fil = 1.0 + (fil - 1.0)*uFil;',
+        // paleta quente do projeto, esfriando com a altura média da luz
+        '  vec3 col = mix(vec3(1.0,0.72,0.42), vec3(1.0,0.46,0.20), clamp((hMean-1.0)*0.75, 0.0, 1.0));',
+        '  float amp = sum * dt * (1.0/SUN_R) * 0.14 * uCvol * fil * (0.70 + 0.60*uActivity);',
+        '  fragColor = vec4(col*amp, 1.0);',
+        '}'
+      ].join('\n'),
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      depthTest: false
+    });
+    coronaVol = new THREE.Mesh(new THREE.PlaneGeometry(CORONA_SIZE, CORONA_SIZE), cvolMat);
+    coronaVol.renderOrder = -1;
+    coronaVol.visible = false;
+    scene.add(coronaVol);
+    // knob ligado desde a carga (?cvol=): bake inicial síncrono com as
+    // cargas do frame 0 (determinístico) — a coroa nunca aparece vazia
+    if (CVOL_K > 0.001) cvolBakeFull();
+  }
 
   // ---------------------------------------------------------------
   // Espículas: franja "felpuda" do limbo. Casca fina em torno do disco;
@@ -2180,6 +2388,10 @@ function init(){
   loopGeo.setIndex(new THREE.BufferAttribute(loopIndex, 1));
   var loopEnvArr = new Float32Array(LOOP_N);   // intensidade final por loop
   var loopHotArr = new Float32Array(LOOP_N);   // 1 = recém-reconectado (branco)
+  // FASE 4 (débito F1/F2/F3): peso de ABSORÇÃO por loop — só os slots
+  // de arcada enchem, quando os laços pós-flare esfriam de aditivo
+  // para escuro (em H-alfa a arcada fria absorve contra o disco)
+  var loopCoolArr = new Float32Array(LOOP_N);
   var loopUniforms = {
     uTime: { value: 0 },
     uLoopEnv: { value: loopEnvArr },
@@ -2292,8 +2504,97 @@ function init(){
   var loopMesh = new THREE.Mesh(loopGeo, loopMaterial);
   loopMesh.frustumCulled = false;   // posições mudam; a esfera de 2.2R sempre enquadra
   loopMesh.visible = false;
+  // FASE 4 — ARCADA ESCURA pós-esfriamento (débito da F1): gêmeo de
+  // ABSORÇÃO da fita, mesmo mecanismo multiplicativo dst*(1-src) do
+  // fprom. Compartilha a MESMA geometria/buffers do loopMesh (zero
+  // alocação nova por frame); o envelope vem de uLoopCool, que só os
+  // slots de arcada enchem quando o laço esfria no fim do rescaldo.
+  // renderOrder -0.5: multiplica DEPOIS da coroa (a arcada fria faz
+  // silhueta contra a coroa também) e antes das emissões aditivas.
+  var loopAbsUniforms = {
+    uTime: { value: 0 },
+    uLoopCool: { value: loopCoolArr },
+    uRes: loopUniforms.uRes,
+    uLoopW: loopUniforms.uLoopW
+  };
+  var loopAbsMaterial = new THREE.ShaderMaterial({
+    uniforms: loopAbsUniforms,
+    vertexShader: [
+      'attribute float aParam;',
+      'attribute float aLoop;',
+      'attribute float aSide;',
+      'attribute vec3 aTan;',
+      'uniform float uLoopCool[' + LOOP_N + '];',
+      'uniform vec2 uRes;',
+      'uniform float uLoopW;',
+      'varying float vParam;',
+      'varying float vCool;',
+      'varying float vId;',
+      'varying float vSide;',
+      'varying float vFade;',
+      'varying vec3 vWPos;',
+      'void main(){',
+      '  vParam = aParam; vId = aLoop; vSide = aSide;',
+      '  int li = int(aLoop + 0.5);',
+      '  vCool = uLoopCool[li];',
+      '  vWPos = (modelMatrix * vec4(position, 1.0)).xyz;',
+      // a MESMA fita billboard do loopMesh (largura em px com piso e
+      // teto) — a absorção veste exatamente o corpo da emissão
+      '  vec4 clipA = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
+      '  vec4 clipB = projectionMatrix * modelViewMatrix * vec4(position + aTan, 1.0);',
+      '  float wA = max(clipA.w, 0.01);',
+      '  float wB = max(clipB.w, 0.01);',
+      '  vec2 dS = (clipB.xy/wB - clipA.xy/wA) * uRes;',
+      '  float dl = length(dS);',
+      '  vec2 nrm = (dl > 1e-3) ? vec2(-dS.y, dS.x)/dl : vec2(0.0, 1.0);',
+      '  float pxScale = 0.5 * uRes.y * projectionMatrix[1][1];',
+      '  float rawPx = uLoopW * pxScale / wA;',
+      '  float expPx = length(aTan) * pxScale / wA;',
+      '  float faceK = 1.0 - clamp(dl / max(expPx, 1e-3), 0.0, 1.0);',
+      '  float wMin = 1.0 + 2.2*faceK*faceK;',
+      '  float wpx = clamp(rawPx, wMin, 14.0);',
+      '  vFade = clamp(rawPx / wpx, 0.05, 1.0);',
+      '  clipA.xy += nrm * (aSide * wpx * 2.0 / uRes) * wA;',
+      '  gl_Position = clipA;',
+      '}'
+    ].join('\n'),
+    fragmentShader: [
+      'uniform float uTime;',
+      'varying float vParam;',
+      'varying float vCool;',
+      'varying float vId;',
+      'varying float vSide;',
+      'varying float vFade;',
+      'varying vec3 vWPos;',
+      'void main(){',
+      '  if (vCool < 0.004) discard;',
+      // miolo SÓLIDO (lição do painel F3: buracos até zero leem como
+      // dithering) — o fluxo vira modulação suave, não gate
+      '  float f1 = sin(vParam*18.85 - uTime*0.6 + vId*7.31);',
+      '  float body = 0.72 + 0.18*f1;',
+      '  float prof = 1.0 - vSide*vSide;',
+      // absorção escala com mu (a luz que RESTA — regra do fprom): no
+      // limbo o multiply forte sobre o anel escurecido lia como renda
+      '  float mu = dot(normalize(vWPos), normalize(cameraPosition - vWPos));',
+      '  float ab = prof * body * vCool * vFade * clamp(mu, 0.0, 1.0) * smoothstep(0.12, 0.30, mu);',
+      '  gl_FragColor = vec4(vec3(ab * 0.55), 1.0);',
+      '}'
+    ].join('\n'),
+    transparent: true,
+    blending: THREE.CustomBlending,
+    blendSrc: THREE.ZeroFactor,
+    blendDst: THREE.OneMinusSrcColorFactor,
+    depthWrite: false,
+    depthTest: true,
+    side: THREE.DoubleSide
+  });
+  var loopAbsMesh = new THREE.Mesh(loopGeo, loopAbsMaterial);
+  loopAbsMesh.frustumCulled = false;
+  loopAbsMesh.visible = false;
+  loopAbsMesh.renderOrder = -0.5;
   var loopGroup = new THREE.Group();
   loopGroup.add(loopMesh);
+  loopGroup.add(loopAbsMesh);
   scene.add(loopGroup);
 
   // Traçador RK4 com passo de ARCO fixo sobre o campo unitário B/|B|
@@ -2489,6 +2790,7 @@ function init(){
   (function initArcStates(){
     for (var i = 0; i < LOOP_ARC; i++) arcStates.push({ ok: false, delay: 0, off: 0 });
   })();
+  var lastArcAbsMax = 0;   // FASE 4: pico corrente da arcada escura (QA)
   var arcQueueN = 0;
   var arcSeedBase = new THREE.Vector3();
   var arcSeedTan = new THREE.Vector3();
@@ -2506,6 +2808,7 @@ function init(){
       st.off = ((LOOP_ARC > 1 ? i/(LOOP_ARC-1) : 0.5) - 0.5) * 0.16 + (loopRand() - 0.5)*0.015;
       st.delay = i*0.10 + loopRand()*0.05;
       loopEnvArr[LOOP_AMB + i] = 0;
+      loopCoolArr[LOOP_AMB + i] = 0;
     }
     arcQueueN = LOOP_ARC;
   }
@@ -2563,10 +2866,10 @@ function init(){
         }
       }
     }
-    var arcMax = 0;
+    var arcMax = 0, arcAbsMax = 0;
     for (i = 0; i < LOOP_ARC; i++){
       st = arcStates[i];
-      var envA = 0;
+      var envA = 0, envAbs = 0;
       if (st.ok){
         var ta = surfFlareT - st.delay;
         if (ta > 0){
@@ -2578,12 +2881,21 @@ function init(){
           // relógio do evento; em t>=2.5 (check B4) já vale 1.
           var arcGate = Math.min(1, Math.max(0, (surfFlareT - 0.55)/0.5));
           envA = flareEnvGrad(ta) * 1.25 * surfFlareAmp * arcGate;
-          loopHotArr[LOOP_AMB + i] = Math.exp(-ta*0.30);
+          var hotK = Math.exp(-ta*0.30);
+          loopHotArr[LOOP_AMB + i] = hotK;
+          // FASE 4 (débito F1): o laço que ESFRIA troca emissão por
+          // ABSORÇÃO — o envelope escuro cresce com (1-hot) e decai
+          // no dobro do fôlego do gradual (a arcada fria demora a
+          // drenar; em H-alfa ela persiste escura sobre o disco)
+          envAbs = flareEnvGrad(ta*0.5) * (1.0 - hotK) * surfFlareAmp * arcGate;
         }
       }
       if (envA < 0.004) envA = 0;
+      if (envAbs < 0.004) envAbs = 0;
       loopEnvArr[LOOP_AMB + i] = envA;
+      loopCoolArr[LOOP_AMB + i] = Math.min(1, envAbs);
       if (envA > arcMax) arcMax = envA;
+      if (envAbs > arcAbsMax) arcAbsMax = envAbs;
     }
     for (i = 0; i < LOOP_AMB; i++){
       st = loopStatesA[i];
@@ -2597,6 +2909,10 @@ function init(){
     loopUniforms.uTime.value = elapsed;
     loopUniforms.uRes.value.set(renderer.domElement.width, renderer.domElement.height);
     loopMesh.visible = subToggle.loops && (loopsOn || arcMax > 0 || arcQueueN > 0);
+    // arcada escura: só entra no draw quando algum slot esfriou de fato
+    loopAbsUniforms.uTime.value = elapsed;
+    lastArcAbsMax = arcAbsMax;
+    loopAbsMesh.visible = subToggle.loops && arcAbsMax > 0;
   }
 
   // ---------------------------------------------------------------
@@ -3477,7 +3793,8 @@ function init(){
   var perfIdx = 0, perfN = 0, perfLastT = 0, perfCalls = 0;
   var perfBakes = [];
   var subToggle = { sim:true, bake:true, bloom:true, spicules:true,
-                    corona:true, prominences:true, stars:true, loops:true };
+                    corona:true, prominences:true, stars:true, loops:true,
+                    corona3d:true };   // FASE 4: A/B do raymarch isolado
 
   // HUD de perf on-device: ?hud=1 liga na carga; segurar um dedo PARADO
   // ~1s alterna (o arquivo aberto localmente no iPhone não tem como
@@ -3544,8 +3861,18 @@ function init(){
         applyRenderScale(scaleIdx+1);
         tuneCooldown = 4; tuneWin.length = 0;
       } else {
-        var k = TIER_ORDER.indexOf(TIER);
-        if (k > 0){ persistTier(TIER_ORDER[k-1]); tuneCooldown = 1e9; }
+        // FASE 4: antes de rebaixar o tier persistido, derruba a coroa
+        // volumétrica em runtime — se o aparelho não segura o raymarch
+        // nem na menor escala, a coroa volta ao plano de gradiente
+        // (fallback) e o resto do tier sobrevive. É o gate de código do
+        // piso de 24fps: nenhuma medição é pedida ao dono.
+        if (CVOL_STEPS > 0 && !cvolKilled && CVOL_K > 0.001){
+          cvolKilled = true; tuneEvents++;
+          tuneCooldown = 4; tuneWin.length = 0;
+        } else {
+          var k = TIER_ORDER.indexOf(TIER);
+          if (k > 0){ persistTier(TIER_ORDER[k-1]); tuneCooldown = 1e9; }
+        }
       }
     } else if (p95 < TUNE_LO){
       tuneGoodT += delta;
@@ -3608,11 +3935,43 @@ function init(){
                  cycle: CYCLE_K,
                  lapse: LAPSE_K,
                  fprom: FPROM_K,
+                 cvol: CVOL_K,
                  adaptMul: compUniforms.uAdapt.value,
                  look: LOOK ? 'sunshine' : '' };
       };
       window.__solInfo.perfReset = function(){
         perfN = 0; perfIdx = 0; perfLastT = 0; perfBakes.length = 0;
+      };
+      // FASE 4: estado da coroa volumétrica (QA: tier-gate, bake, kill)
+      window.__solInfo.coronaInfo = function(){
+        return { steps: CVOL_STEPS, res: CVOL_N, k: CVOL_K,
+                 on: CVOL_STEPS > 0 && CVOL_K > 0.001 && !cvolKilled &&
+                     subToggle.corona && subToggle.corona3d,
+                 ready: cvolReady, killed: cvolKilled, cycles: cvolCycles };
+      };
+      window.__solInfo.setCvol = function(v){
+        CVOL_K = Math.min(1.5, Math.max(0, +v || 0));
+        return CVOL_K;
+      };
+      // re-bake síncrono do volume (QA: sob ?hold o bake fatiado congela;
+      // depois de setCyclePhase a captura precisa do volume da fase nova)
+      window.__solInfo.rebakeCorona = function(){
+        if (CVOL_STEPS > 0){ cvolBakeFull(); return true; }
+        return false;
+      };
+      // eixos do sweep de calibração (painel de juízes) sem rebuild:
+      // pesos do bake de densidade + contraste das raias procedurais
+      window.__solInfo.setCvolShape = function(o){
+        o = o || {};
+        if (o.base  !== undefined) cvolWBase  = +o.base;
+        if (o.sheet !== undefined) cvolWSheet = +o.sheet;
+        if (o.loop  !== undefined) cvolWLoop  = +o.loop;
+        if (o.hole  !== undefined) cvolWHole  = +o.hole;
+        return { base: cvolWBase, sheet: cvolWSheet, loop: cvolWLoop, hole: cvolWHole };
+      };
+      window.__solInfo.setCvolFil = function(x){
+        if (cvolUniforms) cvolUniforms.uFil.value = Math.min(2, Math.max(0, +x || 0));
+        return cvolUniforms ? cvolUniforms.uFil.value : 0;
       };
       // liga/desliga um subsistema (A/B de custo); sem argumento inverte;
       // nome desconhecido devolve a lista de nomes válidos
@@ -3765,6 +4124,8 @@ function init(){
         for (i = 0; i < LOOP_ARC; i++) if (arcStates[i].ok && loopEnvArr[LOOP_AMB+i] > 0.004) nArc++;
         return { on: LOOP_K, amb: nOk, arc: nArc, queue: arcQueueN,
                  visible: loopMesh.visible,
+                 abs: +lastArcAbsMax.toFixed(3),
+                 absVisible: loopAbsMesh.visible,
                  traces: loopStats.traces, fails: loopStats.fails,
                  probes: loopStats.probes, probeRej: loopStats.probeRej,
                  ms: +loopStats.ms.toFixed(2) };
@@ -3966,6 +4327,8 @@ function init(){
       { k:'cact', label:'Resposta à atividade', lo:0, hi:1.5, step:0.05, dflt:0.5,
         get:function(){ return coronaRaysUniforms.uActGain.value; },
         set:function(v){ coronaRaysUniforms.uActGain.value = v; } },
+      { k:'cvol', label:'Coroa volumétrica (raymarch)', lo:0, hi:1.5, step:0.05, dflt:0,
+        get:function(){ return CVOL_K; }, set:function(v){ CVOL_K = v; } },
       { k:'loops', label:'Loops coronais', lo:0, hi:1.5, step:0.05, dflt:0,
         get:function(){ return LOOP_K; }, set:function(v){ LOOP_K = v; } },
       { k:'fprom', label:'Filamento ↔ proeminência', lo:0, hi:1.5, step:0.05, dflt:0,
@@ -4438,6 +4801,39 @@ function init(){
     var actSum = 0;
     for (var ai = 0; ai < pairStates.length; ai++) actSum += Math.abs(pairStates[ai].lead.w);
     coronaRaysUniforms.uActivity.value = Math.min(1.0, actSum/4.0);
+
+    // FASE 4 — coroa volumétrica: uniforms + bake fatiado do sampler3D
+    // (2 fatias z/frame, ciclo ~0.5s + folga; cadência de sobra para a
+    // deriva lenta das cargas e para o time-lapse do ciclo). Com knob 0
+    // nada aqui roda além do teste — custo e frame idênticos.
+    if (CVOL_STEPS > 0){
+      var cvolOn = CVOL_K > 0.001 && !cvolKilled && subToggle.corona && subToggle.corona3d;
+      if (cvolOn && !cvolReady) cvolBakeFull();   // ligada ao vivo pelo painel
+      coronaVol.visible = cvolOn;
+      coronaRaysUniforms.uCvolMix.value = cvolOn ? Math.min(1.0, CVOL_K) : 0.0;
+      if (cvolOn){
+        coronaVol.quaternion.copy(camera.quaternion);
+        cvolUniforms.uCvol.value = CVOL_K;
+        cvolUniforms.uTime.value = elapsed;
+        cvolUniforms.uActivity.value = coronaRaysUniforms.uActivity.value;
+        // mundo -> objeto: transposta da rotação do sunMesh (tilt+spin)
+        sunMesh.updateMatrixWorld();
+        cvolInvRot.setFromMatrix4(sunMesh.matrixWorld).transpose();
+        cvolAccum += delta;
+        if (cvolStep < 0 && cvolAccum >= 0.9){
+          cvolStep = 0; cvolAccum = 0; snapshotCvolCharges();
+        }
+        if (cvolStep >= 0){
+          bakeCvolSlice(cvolStep); bakeCvolSlice(cvolStep + 1);
+          cvolStep += 2;
+          if (cvolStep >= CVOL_N){
+            cvolStep = -1; cvolCycles++;
+            cvolData.set(cvolStage);        // upload atômico: sem tearing
+            cvolTex.needsUpdate = true;
+          }
+        }
+      }
+    }
 
     // inércia: continua girando ao soltar, com amortecimento exponencial
     if (pointers.size === 0){

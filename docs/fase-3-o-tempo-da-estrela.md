@@ -189,6 +189,13 @@ ref-02/ref-03 como verdade). Achados convergentes e o que foi feito:
 - **Deriva diferencial sob lapse pesado**: satura no cap de
   0.35/frame; imperceptível no time-lapse (as manchas nascem e morrem
   rápido demais para a deriva contar), mas registrado.
+- **Proporção das regiões ativas (pedido do dono, fechamento da F3)**:
+  verificar se o tamanho/escala dos emaranhados escuros das regiões
+  ativas (umbras + tapete de fibrilas do bake) está realístico em
+  relação ao disco — em zoom próximo eles leem como "chagas" grandes.
+  Medir contra as refs GONG (umbras reais são pontos de 0.005–0.086R,
+  ver `reference/images/README.md`; a área escura ao redor é fibrila,
+  mas a proporção do conjunto precisa de régua contra ref-03/ref-07).
 - **FPS em iPhone real (SÓ O DONO)**: pendente desde a Fase 0 — abrir
   `https://fgferre.github.io/Novo-Sol-Fable-3d/?hud=1` no iPhone
   (depois `?hud=1&tier=high`) e reportar fps / ms avg / p95 / cpu.

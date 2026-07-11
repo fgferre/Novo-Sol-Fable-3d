@@ -53,9 +53,13 @@ mexer. A janela principal fica para decisões, edições e o registro.
    Candidato: slots virtuais baratos só para manchas pequenas (sem
    loops/proeminências), contagem modulada pela fase do ciclo — MEDIR o
    custo do bake antes.
-4. **Débitos herdados**: deriva diferencial satura sob lapse pesado
-   (cap 0.35/frame — registrado, ver doc F3); **FPS em iPhone real (SÓ O
-   DONO: `?hud=1` no Pages)** — pendente desde a Fase 0.
+4. **Débitos herdados**: **proporção das regiões ativas** (pedido do
+   dono na F3: medir contra as refs GONG se os emaranhados escuros
+   umbra+fibrilas têm escala realística — umbras reais são pontos de
+   0.005–0.086R e em zoom próximo o conjunto lê como "chaga" grande);
+   deriva diferencial satura sob lapse pesado (cap 0.35/frame —
+   registrado, ver doc F3); **FPS em iPhone real (SÓ O DONO: `?hud=1`
+   no Pages)** — pendente desde a Fase 0.
 
 ## CONVENÇÕES (desde o LOOP-5 — não quebrar)
 

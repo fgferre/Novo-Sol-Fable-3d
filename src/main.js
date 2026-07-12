@@ -16,6 +16,8 @@ import { createCME } from './atmosphere/cme.js';
 import { createSpicules } from './atmosphere/spicules.js';
 import { createProminences } from './atmosphere/prominences.js';
 import { createLoops } from './atmosphere/loops.js';
+import { createStars } from './scene/stars.js';
+import { createPipeline } from './post/pipeline.js';
 import { createRenderer, createRenderInfra, createRTType } from './core/renderer.js';
 
 THREE.ColorManagement.enabled = false;
@@ -145,183 +147,11 @@ function init(){
       arcStates = ctx.arcStates, loopStats = ctx.loopStats, loopEnvArr = ctx.loopEnvArr,
       LOOP_AMB = ctx.LOOP_AMB, LOOP_ARC = ctx.LOOP_ARC,
       updateLoops = ctx.updateLoops, scheduleFlareArcade = ctx.scheduleFlareArcade;
-
-  // ---------------------------------------------------------------
-  // Campo de estrelas — cor por classe de temperatura estelar real
-  // (a maioria das estrelas visíveis é fria/avermelhada; poucas são
-  // quentes/azuis), usando a mesma função de corpo negro.
-  // ---------------------------------------------------------------
-  function buildStars(count, radius, hotBias){
-    var positions = new Float32Array(count*3);
-    var colors = new Float32Array(count*3);
-    for(var i=0;i<count;i++){
-      var u = srand(), v = srand();
-      var th = 2*Math.PI*u;
-      var ph = Math.acos(2*v-1);
-      var rr = radius*(0.55+srand()*0.45);
-      positions[i*3]   = rr*Math.sin(ph)*Math.cos(th);
-      positions[i*3+1] = rr*Math.sin(ph)*Math.sin(th);
-      positions[i*3+2] = rr*Math.cos(ph);
-      var starTemp = (srand() < (hotBias ? 0.30 : 0.75))
-        ? (2800+srand()*3200)
-        : (hotBias ? (7000+srand()*13000) : (6000+srand()*20000));
-      var sc = kelvinToRGB(starTemp);
-      var b = 0.35 + 0.90*Math.pow(srand(), 2.2);   // distribuição ~log: poucas vivas
-      colors[i*3]=sc.r*b; colors[i*3+1]=sc.g*b; colors[i*3+2]=sc.b*b;
-    }
-    var geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(positions,3));
-    geo.setAttribute('color', new THREE.BufferAttribute(colors,3));
-    var mat = new THREE.PointsMaterial({size:1.35, vertexColors:true, transparent:true, opacity:0.55, sizeAttenuation:true});
-    return new THREE.Points(geo, mat);
-  }
-  // glint em cruz para as estrelas VIVAS (sprite: núcleo radial + braços)
-  var glintTex = (function(){
-    var c = document.createElement('canvas'); c.width = c.height = 64;
-    var ctx = c.getContext('2d');
-    var g = ctx.createRadialGradient(32,32,0,32,32,32);
-    g.addColorStop(0.0,'rgba(255,255,255,1)');
-    g.addColorStop(0.22,'rgba(255,255,255,0.34)');
-    g.addColorStop(1.0,'rgba(255,255,255,0)');
-    ctx.fillStyle = g; ctx.fillRect(0,0,64,64);
-    ctx.globalCompositeOperation = 'lighter';
-    var arm = ctx.createLinearGradient(0,0,64,0);
-    arm.addColorStop(0,'rgba(255,255,255,0)');
-    arm.addColorStop(0.5,'rgba(255,255,255,0.5)');
-    arm.addColorStop(1,'rgba(255,255,255,0)');
-    ctx.fillStyle = arm; ctx.fillRect(0,31,64,2);
-    ctx.translate(32,32); ctx.rotate(Math.PI/2); ctx.translate(-32,-32);
-    ctx.fillRect(0,31,64,2);
-    var tex = new THREE.CanvasTexture(c); tex.needsUpdate = true; return tex;
-  })();
-  var stars = buildStars(STAR_COUNT, 700);
-  scene.add(stars);
-  // camada esparsa de estrelas maiores e mais vivas: profundidade no fundo
-  // camada brilhante mais PRÓXIMA (raio 500 vs 700): paralaxe diferencial
-  // real quando a câmera ORBITA o pivô — a casca próxima desloca MENOS
-  // que o fundo (lei R/(R+d); medido -5.4% por passo de órbita)
-  var brightStars = buildStars(TP.bright, 500, true);
-  brightStars.material.size = 12.0;   // ~9px na tela: a cruz do glint fica legível
-  brightStars.material.opacity = 0.8;
-  brightStars.material.map = glintTex;
-  brightStars.material.blending = THREE.AdditiveBlending;
-  brightStars.material.depthWrite = false;
-  scene.add(brightStars);
-  // T2.3c: faixa da Via Láctea DISCRETA — terceira camada achatada num
-  // plano inclinado (grande círculo), fraca e densa
-  var milkyWay = buildStars(Math.floor(STAR_COUNT*0.9), 730);
-  (function flattenToBand(){
-    var pos = milkyWay.geometry.attributes.position;
-    var n = new THREE.Vector3(0.35, 0.85, 0.40).normalize();
-    var v = new THREE.Vector3();
-    for (var i = 0; i < pos.count; i++){
-      v.set(pos.getX(i), pos.getY(i), pos.getZ(i));
-      var rr0 = v.length();
-      v.addScaledVector(n, -v.dot(n)*0.86);
-      v.setLength(rr0);   // direção achatada, mas de volta à casca distante
-      pos.setXYZ(i, v.x, v.y, v.z);
-    }
-    pos.needsUpdate = true;
-  })();
-  milkyWay.material.size = 1.7;
-  milkyWay.material.opacity = knob('mw', 0.62, 0.0, 1.0);
-  var STARS_OP0 = stars.material.opacity, BRIGHT_OP0 = brightStars.material.opacity;
-  var starK = knob('stars', 1.0, 0.0, 3.0);
-  stars.material.opacity = Math.min(1, STARS_OP0*starK);
-  brightStars.material.opacity = Math.min(1, BRIGHT_OP0*starK);
-  scene.add(milkyWay);
-  // twinkle SUTIL (backlog M2 nº4: estrelas eram a única camada 100%
-  // morta). Cada estrela pisca com fase e cadência próprias (hash da
-  // posição), modulando a OPACIDADE — astrofoto tem pouco, cinema tem
-  // algum; a cruz de glint das vivas é a que mais cintila.
-  var twinkleUniform = { value: 0 };
-  function addTwinkle(mat, amp){
-    mat.onBeforeCompile = function(shader){
-      shader.uniforms.uTwT = twinkleUniform;
-      shader.vertexShader = shader.vertexShader
-        .replace('#include <common>', '#include <common>\nuniform float uTwT;\nvarying float vTw;')
-        .replace('#include <color_vertex>', '#include <color_vertex>\n'
-          + 'float twPh = fract(sin(dot(position, vec3(12.9898,78.233,37.719)))*43758.5453)*6.2832;\n'
-          + 'float twSp = 2.0 + 4.0*fract(sin(dot(position, vec3(39.3468,11.135,83.155)))*24634.6345);\n'
-          + 'vTw = 1.0 - ' + amp.toFixed(2) + '*(0.5 + 0.5*sin(uTwT*twSp + twPh));\n');
-      shader.fragmentShader = shader.fragmentShader
-        .replace('#include <common>', '#include <common>\nvarying float vTw;')
-        .replace('vec4 diffuseColor = vec4( diffuse, opacity );',
-                 'vec4 diffuseColor = vec4( diffuse, opacity * vTw );');
-    };
-    // sem isto o three reusa o MESMO programa para amps diferentes
-    // (onBeforeCompile.toString() é igual — o amp vive num closure)
-    mat.customProgramCacheKey = function(){ return 'twinkle' + amp; };
-  }
-  addTwinkle(stars.material, 0.30);
-  addTwinkle(brightStars.material, 0.45);
-  addTwinkle(milkyWay.material, 0.18);
-  // Via Láctea opção B (astrofoto): véu DIFUSO de gás por trás da camada
-  // estelar — faixa gaussiana no mesmo plano, manchas de fBm, veio de
-  // poeira escura no meio, bojo galáctico dourado e bordas azuladas.
-  // Aditivo e fora do disco: não toca nos gates.
-  var mwNebUniforms = { uMW: { value: 0.0 }, uN: { value: new THREE.Vector3(0.35,0.85,0.40).normalize() } };
-  var mwNeb = new THREE.Mesh(new THREE.SphereGeometry(710, 32, 32), new THREE.ShaderMaterial({
-    uniforms: mwNebUniforms,
-    vertexShader: [
-      'varying vec3 vD;',
-      'void main(){ vD = position;',
-      '  gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }'
-    ].join('\n'),
-    fragmentShader: NOISE_GLSL + '\n' + [
-      'uniform float uMW;',
-      'uniform vec3 uN;',
-      'varying vec3 vD;',
-      // Via Láctea CINEMATOGRÁFICA (pedido do dono): a versão anterior
-      // lia monocromática — ganho 0.16 deixava o véu no toe do ACES e a
-      // única variação de matiz (mix azul↔dourado por ck) era ~0 em
-      // quase toda a faixa. Agora: campos de fBm SEPARADOS para
-      // densidade (3 escalas), matiz fria por mancha (azul↔ciano),
-      // manchas de H-alfa avermelhadas, alcance do bojo dourado e veio
-      // de poeira marrom sinuoso. uMW segue multiplicando tudo (knob
-      // mw=0 desliga); nada dos knobs cinema é tocado.
-      'void main(){',
-      '  vec3 d = normalize(vD);',
-      '  float b = dot(d, uN);',
-      '  float band = exp(-b*b*34.0);',
-      '  float halo = 0.20*exp(-b*b*9.0);',
-      '  if (band + halo < 0.006){ gl_FragColor = vec4(0.0); return; }',
-      '  vec3 core = normalize(cross(uN, vec3(0.2,0.0,1.0)));',
-      '  float ck = pow(max(dot(d, core), 0.0), 6.0);',
-      '  float c1 = fbmLight(d*3.2)*0.5+0.5;',
-      '  float c2 = fbmLight(d*7.5+vec3(13.1))*0.5+0.5;',
-      '  float c3 = fbmLight(d*16.0+vec3(4.2,8.8,1.5))*0.5+0.5;',
-      '  float cloud = 0.22 + 1.5*(0.5*c1+0.32*c2+0.18*c3);',
-      '  cloud *= cloud;',
-      '  float bw = b + 0.045*fbmLight(d*5.0+vec3(7.7));',
-      '  float dust = exp(-bw*bw*300.0) * smoothstep(0.32,0.80,fbmLight(d*9.0+vec3(4.7))*0.5+0.5);',
-      '  float hue  = fbmLight(d*2.3+vec3(21.7))*0.5+0.5;',
-      '  float hue2 = fbmLight(d*4.2+vec3(33.3))*0.5+0.5;',
-      '  float hue3 = fbmLight(d*3.1+vec3(55.5))*0.5+0.5;',
-      '  vec3 cCyan = vec3(0.26,0.78,1.30);',
-      '  vec3 cBlue = vec3(0.42,0.55,1.30);',
-      '  vec3 cAmber= vec3(1.10,0.72,0.38);',
-      '  vec3 cHa   = vec3(1.05,0.28,0.22);',
-      '  vec3 col = mix(cBlue, cCyan, smoothstep(0.2,0.8,hue));',
-      '  col = mix(col, cAmber, clamp(ck*(0.7+0.9*hue3),0.0,1.0));',
-      '  float haM = smoothstep(0.58,0.76,hue2)*(0.4+0.6*c2);',
-      '  col = mix(col, cHa, haM*0.85);',
-      '  col = mix(col, cCyan, 0.55*smoothstep(0.06,0.20,abs(b))*(1.0-ck));',
-      '  float coolB = smoothstep(0.55,0.90,hue)*(1.0-clamp(ck*2.0,0.0,1.0))*(1.0-haM);',
-      '  col *= 1.0 + 0.55*coolB;',
-      '  col = mix(col, vec3(0.45,0.28,0.16), dust*0.7);',
-      '  float I = (band*(0.65+0.90*ck) + halo*0.4)*cloud*(1.0-0.78*dust);',
-      '  gl_FragColor = vec4(col * I * uMW * 0.27, 1.0);',
-      '}'
-    ].join('\n'),
-    side: THREE.BackSide, transparent: true,
-    blending: THREE.AdditiveBlending, depthWrite: false
-  }));
-  mwNebUniforms.uMW.value = milkyWay.material.opacity;
-  scene.add(mwNeb);
-
-  // (Tentativa de faixa da Via Láctea removida: sem QA visual funcionando,
-  // calibrar estética por estatística de pixels se provou má ideia.)
+  createStars(ctx);
+  var stars = ctx.stars, brightStars = ctx.brightStars, milkyWay = ctx.milkyWay,
+      mwNeb = ctx.mwNeb, mwNebUniforms = ctx.mwNebUniforms,
+      twinkleUniform = ctx.twinkleUniform,
+      STARS_OP0 = ctx.STARS_OP0, BRIGHT_OP0 = ctx.BRIGHT_OP0;
 
   // inclinação real do eixo solar (~7.25° em relação à eclíptica)
   sunMesh.rotation.z = 0.1265;
@@ -329,506 +159,17 @@ function init(){
   spiculeMesh.rotation.z = 0.1265;
   loopGroup.rotation.z = 0.1265;
 
-  // ---------------------------------------------------------------
-  // Bloom multi-escala (cadeia de downsample + threshold, depois
-  // upsample aditivo — técnica tipo "dual Kawase" usada em engines
-  // de jogos), seguido de tonemap fílmico ACES no composite final.
-  // ---------------------------------------------------------------
-  // HDR: targets em half-float para que a emissão >1.0 do shader do Sol
-  // sobreviva até o bloom. A detecção precisa ser ciente do contexto:
-  //  - WebGL2: half-float é núcleo; a RENDERIZAÇÃO para ele exige
-  //    EXT_color_buffer_float (ou _half_float). Consultar as extensões
-  //    OES_* do WebGL1 aqui gera warnings e falso-negativo.
-  //  - WebGL1: exige OES_texture_half_float (+_linear) e
-  //    EXT_color_buffer_half_float.
-  // Consultamos gl.getExtension direto (silencioso), nunca
-  // renderer.extensions.get (que loga warning quando não acha).
-  // (rtType/isHDR detectados no topo, antes dos targets da simulação)
-  // Calibração do sweep T2.1 (5 variantes julgadas vs refs): com o disco
-  // H-alfa pico ~0.98 de luminância, threshold 1.0 nunca florescia — só
-  // flare raro. 0.72 + emissivos HDR de plage/limbo (no shader do sol)
-  // fazem o bloom LER sem lavar o disco (p50 +2%, 0% de pixels clipados).
-  var EXP0 = isHDR ? 1.02 : 1.06;
-  var BLOOM_THRESHOLD = knob('bloomth', isHDR ? 0.72 : 0.82, 0.2, 2.0);
   // diagnóstico acessível via console: window.__solInfo
   try { window.__solInfo = { webgl2: !!(renderer.capabilities && renderer.capabilities.isWebGL2), hdr: isHDR, tier: TIER, scale: RENDER_SCALE }; } catch(e){}
 
-  var sceneRT = new THREE.WebGLRenderTarget(2,2, {
-    minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
-    format: THREE.RGBAFormat, type: rtType, stencilBuffer:false, depthBuffer:true
-  });
-
-  var bloomMips = [];
-  (function initBloomMips(){
-    for (var i=0;i<BLOOM_LEVELS;i++){
-      var rt = new THREE.WebGLRenderTarget(2, 2, {
-        minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter,
-        format:THREE.RGBAFormat, type: rtType, depthBuffer:false, stencilBuffer:false
-      });
-      bloomMips.push({ rt: rt, w: 2, h: 2 });
-    }
-  })();
-
-  var thresholdUniforms = { tDiffuse:{value:null}, uTexel:{value:new THREE.Vector2(1,1)}, uThreshold:{value:BLOOM_THRESHOLD} };
-  var thresholdFragment = [
-    'uniform sampler2D tDiffuse;',
-    'uniform vec2 uTexel;',
-    'uniform float uThreshold;',
-    'varying vec2 vUv;',
-    'void main(){',
-    '  vec3 c = texture2D(tDiffuse, vUv).rgb;',
-    '  vec3 c2 = c;',
-    '  c2 += texture2D(tDiffuse, vUv+vec2(uTexel.x,0.0)).rgb;',
-    '  c2 += texture2D(tDiffuse, vUv-vec2(uTexel.x,0.0)).rgb;',
-    '  c2 += texture2D(tDiffuse, vUv+vec2(0.0,uTexel.y)).rgb;',
-    '  c2 += texture2D(tDiffuse, vUv-vec2(0.0,uTexel.y)).rgb;',
-    '  c2 /= 5.0;',
-    '  float b = dot(c2, vec3(0.299,0.587,0.114));',
-    '  float f = smoothstep(uThreshold, uThreshold+0.3, b);',
-    '  gl_FragColor = vec4(c2*f, 1.0);',
-    '}'
-  ].join('\n');
-  var thresholdMaterial = new THREE.ShaderMaterial({ uniforms: thresholdUniforms, vertexShader: quadVertex, fragmentShader: thresholdFragment });
-  var thresholdScene = makeFullscreenScene(thresholdMaterial);
-
-  var downsampleUniforms = { tDiffuse:{value:null}, uTexel:{value:new THREE.Vector2(1,1)}, uDisp:{value:0.0} };
-  var downsampleFragment = [
-    'uniform sampler2D tDiffuse;',
-    'uniform vec2 uTexel;',
-    'uniform float uDisp;',
-    'varying vec2 vUv;',
-    'void main(){',
-    // FASE 2 — bloom espectral ponderado por corpo negro: raio de blur
-    // POR CANAL (difração ∝ λ — R borra mais largo, B mais estreito;
-    // razão ancorada em λ_R/λ_B ≈ 700/450). Este é o termo da DESCIDA;
-    // o grosso do espalhamento diferencial acontece na subida (tent por
-    // canal no upsampleFragment). Sem passes novos: só taps a mais, e
-    // só quando o knob liga.
-    '  if (uDisp > 0.001){',
-    '    vec2 oR = uTexel * (1.0 + 0.35*uDisp);',
-    '    vec2 oB = uTexel * (1.0 - 0.25*uDisp);',
-    '    vec3 cS;',
-    '    cS.r = texture2D(tDiffuse, vUv+vec2( oR.x, oR.y)).r',
-    '         + texture2D(tDiffuse, vUv+vec2(-oR.x, oR.y)).r',
-    '         + texture2D(tDiffuse, vUv+vec2( oR.x,-oR.y)).r',
-    '         + texture2D(tDiffuse, vUv+vec2(-oR.x,-oR.y)).r;',
-    '    cS.g = texture2D(tDiffuse, vUv+vec2( uTexel.x, uTexel.y)).g',
-    '         + texture2D(tDiffuse, vUv+vec2(-uTexel.x, uTexel.y)).g',
-    '         + texture2D(tDiffuse, vUv+vec2( uTexel.x,-uTexel.y)).g',
-    '         + texture2D(tDiffuse, vUv+vec2(-uTexel.x,-uTexel.y)).g;',
-    '    cS.b = texture2D(tDiffuse, vUv+vec2( oB.x, oB.y)).b',
-    '         + texture2D(tDiffuse, vUv+vec2(-oB.x, oB.y)).b',
-    '         + texture2D(tDiffuse, vUv+vec2( oB.x,-oB.y)).b',
-    '         + texture2D(tDiffuse, vUv+vec2(-oB.x,-oB.y)).b;',
-    '    gl_FragColor = vec4(cS*0.25, 1.0);',
-    '    return;',
-    '  }',
-    '  vec3 c = texture2D(tDiffuse, vUv+vec2(uTexel.x,uTexel.y)).rgb;',
-    '  c += texture2D(tDiffuse, vUv+vec2(-uTexel.x,uTexel.y)).rgb;',
-    '  c += texture2D(tDiffuse, vUv+vec2(uTexel.x,-uTexel.y)).rgb;',
-    '  c += texture2D(tDiffuse, vUv+vec2(-uTexel.x,-uTexel.y)).rgb;',
-    '  gl_FragColor = vec4(c*0.25, 1.0);',
-    '}'
-  ].join('\n');
-  var downsampleMaterial = new THREE.ShaderMaterial({ uniforms: downsampleUniforms, vertexShader: quadVertex, fragmentShader: downsampleFragment });
-  var downsampleScene = makeFullscreenScene(downsampleMaterial);
-
-  var upsampleUniforms = { tDiffuse:{value:null}, uTexel:{value:new THREE.Vector2(1,1)}, uDisp:{value:0.0} };
-  var upsampleFragment = [
-    'uniform sampler2D tDiffuse;',
-    'uniform vec2 uTexel;',
-    'uniform float uDisp;',
-    'varying vec2 vUv;',
-    'void main(){',
-    // FASE 2 — bloom espectral: o grosso do raio do dual-Kawase vem da
-    // pirâmide em si (downsample bilinear), que é acromática; para o R
-    // espalhar DE VERDADE mais que o B, a subida troca o passthrough
-    // por um tent de 4 taps com raio POR CANAL a cada nível — o
-    // espalhamento diferencial compõe sobre o sinal acumulado inteiro
-    // (só o downsample espectral era imperceptível: ΔR médio +0.2/255
-    // no smoke; medido 2026-07).
-    '  if (uDisp > 0.001){',
-    '    vec2 oR = uTexel * (0.5 + 1.70*uDisp);',
-    '    vec2 oG = uTexel * 0.5;',
-    '    vec2 oB = uTexel * max(0.5 - 0.34*uDisp, 0.0);',
-    '    vec3 cS;',
-    '    cS.r = texture2D(tDiffuse, vUv+vec2( oR.x, oR.y)).r',
-    '         + texture2D(tDiffuse, vUv+vec2(-oR.x, oR.y)).r',
-    '         + texture2D(tDiffuse, vUv+vec2( oR.x,-oR.y)).r',
-    '         + texture2D(tDiffuse, vUv+vec2(-oR.x,-oR.y)).r;',
-    '    cS.g = texture2D(tDiffuse, vUv+vec2( oG.x, oG.y)).g',
-    '         + texture2D(tDiffuse, vUv+vec2(-oG.x, oG.y)).g',
-    '         + texture2D(tDiffuse, vUv+vec2( oG.x,-oG.y)).g',
-    '         + texture2D(tDiffuse, vUv+vec2(-oG.x,-oG.y)).g;',
-    '    cS.b = texture2D(tDiffuse, vUv+vec2( oB.x, oB.y)).b',
-    '         + texture2D(tDiffuse, vUv+vec2(-oB.x, oB.y)).b',
-    '         + texture2D(tDiffuse, vUv+vec2( oB.x,-oB.y)).b',
-    '         + texture2D(tDiffuse, vUv+vec2(-oB.x,-oB.y)).b;',
-    '    gl_FragColor = vec4(cS*0.25, 1.0);',
-    '    return;',
-    '  }',
-    '  gl_FragColor = vec4(texture2D(tDiffuse, vUv).rgb, 1.0);',
-    '}'
-  ].join('\n');
-  var upsampleMaterial = new THREE.ShaderMaterial({
-    uniforms: upsampleUniforms, vertexShader: quadVertex, fragmentShader: upsampleFragment,
-    transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, depthTest:false
-  });
-  var upsampleScene = makeFullscreenScene(upsampleMaterial);
-
-  // streak anamórfico (camada cinema): blur horizontal longo em RT
-  // pequeno (w/4 × h/16), 2 passadas com alcance crescente; só roda
-  // quando o knob streak > 0 — custo zero no default
-  var streakRTa = new THREE.WebGLRenderTarget(2,2, {
-    minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter,
-    format:THREE.RGBAFormat, type: rtType, depthBuffer:false, stencilBuffer:false
-  });
-  var streakRTb = streakRTa.clone();
-  var streakW = 2, streakH = 2;
-  var streakUniforms = { tDiffuse:{value:null}, uTexelX:{value:1}, uStride:{value:2} };
-  var streakFragment = [
-    'uniform sampler2D tDiffuse;',
-    'uniform float uTexelX;',
-    'uniform float uStride;',
-    'varying vec2 vUv;',
-    'void main(){',
-    '  vec3 acc = vec3(0.0); float wsum = 0.0;',
-    '  for (int i = -8; i <= 8; i++){',
-    '    float w = exp(-0.35*abs(float(i)));',
-    '    acc += texture2D(tDiffuse, vUv + vec2(float(i)*uTexelX*uStride, 0.0)).rgb * w;',
-    '    wsum += w;',
-    '  }',
-    '  gl_FragColor = vec4(acc/wsum, 1.0);',
-    '}'
-  ].join('\n');
-  var streakMaterial = new THREE.ShaderMaterial({ uniforms: streakUniforms, vertexShader: quadVertex, fragmentShader: streakFragment });
-  var streakScene = makeFullscreenScene(streakMaterial);
-  function renderStreak(){
-    var src = bloomMips[Math.min(1, bloomMips.length-1)];
-    streakUniforms.tDiffuse.value = src.rt.texture;
-    streakUniforms.uTexelX.value = 1/src.w;
-    streakUniforms.uStride.value = 2.0;
-    renderer.setRenderTarget(streakRTa);
-    renderer.render(streakScene, quadCamera);
-    streakUniforms.tDiffuse.value = streakRTa.texture;
-    streakUniforms.uTexelX.value = 1/streakW;
-    streakUniforms.uStride.value = 8.0;
-    renderer.setRenderTarget(streakRTb);
-    renderer.render(streakScene, quadCamera);
-  }
-
-  function renderBloom(){
-    thresholdUniforms.tDiffuse.value = sceneRT.texture;
-    thresholdUniforms.uTexel.value.set(1/sceneRT.width, 1/sceneRT.height);
-    renderer.setRenderTarget(bloomMips[0].rt);
-    renderer.render(thresholdScene, quadCamera);
-
-    for (var i=1;i<bloomMips.length;i++){
-      downsampleUniforms.tDiffuse.value = bloomMips[i-1].rt.texture;
-      downsampleUniforms.uTexel.value.set(1/bloomMips[i-1].w, 1/bloomMips[i-1].h);
-      renderer.setRenderTarget(bloomMips[i].rt);
-      renderer.render(downsampleScene, quadCamera);
-    }
-
-    for (var j=bloomMips.length-2;j>=0;j--){
-      upsampleUniforms.tDiffuse.value = bloomMips[j+1].rt.texture;
-      upsampleUniforms.uTexel.value.set(1/bloomMips[j+1].w, 1/bloomMips[j+1].h);
-      renderer.setRenderTarget(bloomMips[j].rt);
-      renderer.autoClear = false;
-      renderer.render(upsampleScene, quadCamera);
-      renderer.autoClear = true;
-    }
-  }
-
-  var BLOOM_BASE0 = isHDR ? 0.62 : 0.55;
-  var BLOOM_STRENGTH_BASE = BLOOM_BASE0 * knob('bloom', lk('bloom', 1.0), 0.0, 3.0);
-  // camada cinema (ver docs/cinema-sunshine.md): defaults 0 = frame
-  // pixel-idêntico ao calibrado; valores em JS p/ gating por toggle
-  var VEIL_BASE = knob('veil', lk('veil', 0), 0.0, 1.5);
-  var STREAK_K = knob('streak', lk('streak', 0), 0.0, 1.5);
-  var ADAPT_K = knob('adapt', lk('adapt', 0), 0.0, 1.0);
-  // FASE 1 — starburst de difração no ponto do flare, dirigido pelo
-  // brilho HDR REAL que chega à lente (envelope × visibilidade do
-  // ponto no hemisfério voltado à câmera). Default 0 = sem efeito.
-  var BURST_K = knob('burst', lk('burst', 0), 0.0, 1.5);
-  // FASE 2 — a luz como matéria: dispersão espectral do bloom (raios de
-  // blur por canal no dual-Kawase, ver downsampleFragment) e halação com
-  // peso de temperatura (só as altas QUENTES sangram para o vermelho,
-  // ver branch uHal no compFragment). Defaults 0 = frame pixel-idêntico.
-  var DISP_K = knob('disp', lk('disp', 0), 0.0, 1.5);
-  var HAL_K = knob('hal', lk('hal', 0), 0.0, 1.5);
-  // hand: linguagem de câmera do Sunshine — o Sol é filmado em lente
-  // longa com deriva lenta e micro-tremor de operador (0.1-0.3 Hz + um
-  // harmônico rápido fraco). Soma de senos incomensuráveis = pseudo-
-  // perlin sem alocação; média zero, NÃO acumula no estado da câmera.
-  var HAND_K = knob('hand', lk('hand', 0), 0.0, 1.5);
-  var adaptCur = 1.0;
-  // FASE 5 — foco raso: plano de foco corrente (lerp curto = focus
-  // pull de maquinista) e override do modo diretor/QA (-1 = automático,
-  // foco na superfície mais próxima do disco)
-  var dofFocusCur = 0.0;
-  var dofFocusOverride = -1;
-  var cineProj = new THREE.Vector3();
-  // FASE 1: flare em espaço de MUNDO (p/ visibilidade) + projeção do
-  // starburst — temporários reutilizados, zero alocação por frame
-  var flareWorldTmp = new THREE.Vector3();
-  var burstProj = new THREE.Vector3();
-  var lastFlareHDR = 0;
-  var compUniforms = {
-    tScene:{value:null}, tBloom:{value:null}, tVeil:{value:null}, tStreak:{value:null},
-    uStreak:{value: 0.0},
-    uBloomStrength:{value: BLOOM_STRENGTH_BASE},
-    uExposure:{value: EXP0 * knob('exposure', lk('exposure', 1.0), 0.3, 2.5)},
-    uSat:{value: knob('sat', 1.0, 0.0, 2.0)},
-    uVig:{value: knob('vig', lk('vig', 0.55), 0.0, 1.5)},
-    uGrain:{value: knob('grain', lk('grain', 1.0), 0.0, 5.0)},
-    uVeil:{value: 0.0},
-    // FASE 2 — halação com peso de temperatura (0 = ramo desligado)
-    uHal:{value: 0.0},
-    uAdapt:{value: 1.0},
-    uFringe:{value: knob('fringe', lk('fringe', 0), 0.0, 1.5)},
-    uShimmer:{value: knob('shimmer', lk('shimmer', 0), 0.0, 1.5)},
-    uTone:{value: knob('tone', lk('tone', 0), 0.0, 1.2)},
-    // film: mistura ACES (0) -> AgX (1). AgX desatura as altas de forma
-    // gradual — o centro do disco para de "clipar nuclear" e resolve a
-    // pendência de recalibração pós-ACES do audit-loop6. Default 0 =
-    // pixel-idêntico ao baseline.
-    uFilm:{value: knob('film', lk('film', 0), 0.0, 1.0)},
-    uCTime:{value: 0.0},
-    uSunC:{value: new THREE.Vector2(0.5, 0.5)},
-    uSunR:{value: 0.33},
-    uAspect:{value: 1.0},
-    // FASE 1 — starburst de difração (0 fora de flare/knob desligado)
-    uBurst:{value: 0.0},
-    uBurstPos:{value: new THREE.Vector2(0.5, 0.5)},
-    uBurstRot:{value: 0.0},
-    // FASE 5 — profundidade de campo hexagonal: uDof = raio máximo de
-    // desfoque em UV NESTE frame (knob × fator de close-up, calculado
-    // no JS — em fit é 0 e o ramo morre), uDofFocus = plano de foco no
-    // perfil analítico da esfera (0 = centro do disco/superfície mais
-    // próxima; 1 = limbo — o "focus pull" do modo diretor)
-    uDof:{value: 0.0},
-    uDofFocus:{value: 0.0}
-  };
-  var compFragment = [
-    'uniform sampler2D tScene;',
-    'uniform sampler2D tBloom;',
-    'uniform sampler2D tVeil;',
-    'uniform sampler2D tStreak;',
-    'uniform float uStreak;',
-    'uniform float uBloomStrength;',
-    'uniform float uExposure;',
-    'uniform float uSat;',
-    'uniform float uVig;',
-    'uniform float uGrain;',
-    'uniform float uVeil;',
-    'uniform float uHal;',
-    'uniform float uAdapt;',
-    'uniform float uFringe;',
-    'uniform float uShimmer;',
-    'uniform float uTone;',
-    'uniform float uFilm;',
-    'uniform float uCTime;',
-    'uniform vec2 uSunC;',
-    'uniform float uSunR;',
-    'uniform float uAspect;',
-    'uniform float uBurst;',
-    'uniform vec2 uBurstPos;',
-    'uniform float uBurstRot;',
-    'uniform float uDof;',
-    'uniform float uDofFocus;',
-    'varying vec2 vUv;',
-    'vec3 ACESFilm(vec3 x){',
-    '  float a=2.51; float b=0.03; float c=2.43; float d=0.59; float e=0.14;',
-    '  return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);',
-    '}',
-    // AgX (fit polinomial de B. Wrensch sobre o AgX de T. Sobotka): curva
-    // de resposta tipo filme com rolloff suave nas altas. Como o pipeline
-    // grava direto no canvas (o ACES acima também embute o "gamma"), o
-    // resultado fica no espaço codificado do AgX base — comparável ao ACES.
-    'vec3 agxContrast(vec3 x){',
-    '  vec3 x2 = x*x; vec3 x4 = x2*x2;',
-    '  return 15.5*x4*x2 - 40.14*x4*x + 31.96*x4 - 6.868*x2*x + 0.4298*x2 + 0.1191*x - 0.00232;',
-    '}',
-    'vec3 AgXFilm(vec3 val){',
-    '  const mat3 agx_mat = mat3(',
-    '    0.842479062253094, 0.0423282422610123, 0.0423756549057051,',
-    '    0.0784335999999992, 0.878468636469772, 0.0784336,',
-    '    0.0792237451477643, 0.0791661274605434, 0.879142973793104);',
-    '  const mat3 agx_mat_inv = mat3(',
-    '    1.19687900512017, -0.0528968517574562, -0.0529716355144438,',
-    '    -0.0980208811401368, 1.15190312990417, -0.0980434501171241,',
-    '    -0.0990297440797205, -0.0989611768448433, 1.15107367264116);',
-    '  const float min_ev = -12.47393;',
-    '  const float max_ev = 4.026069;',
-    '  val = agx_mat * val;',
-    '  val = clamp(log2(max(val, vec3(1e-10))), min_ev, max_ev);',
-    '  val = (val - min_ev) / (max_ev - min_ev);',
-    '  val = agxContrast(val);',
-    // outset (inversa do inset): devolve a saturação que o inset guardou;
-    // sem isto o resultado fica leitoso/dessaturado
-    '  val = agx_mat_inv * val;',
-    '  return clamp(val, 0.0, 1.0);',
-    '}',
-    'float hash12(vec2 p){',
-    '  vec3 p3 = fract(vec3(p.xyx) * 0.1031);',
-    '  p3 += dot(p3, p3.yzx + 33.33);',
-    '  return fract((p3.x + p3.y) * p3.z);',
-    '}',
-    'float vnoise(vec2 p){',
-    '  vec2 i = floor(p); vec2 f = fract(p); f = f*f*(3.0-2.0*f);',
-    '  return mix(mix(hash12(i), hash12(i+vec2(1.0,0.0)), f.x),',
-    '             mix(hash12(i+vec2(0.0,1.0)), hash12(i+vec2(1.0,1.0)), f.x), f.y);',
-    '}',
-    'void main(){',
-    '  vec2 uv = vUv;',
-    // heat-haze: anel logo além do limbo, noise subindo (ar quente);
-    // nunca toca o interior do disco (fibrilas ficam estáveis)
-    '  if (uShimmer > 0.001){',
-    '    vec2 rel = (uv - uSunC) * vec2(uAspect, 1.0);',
-    '    float rr = length(rel) / max(uSunR, 1e-4);',
-    '    float band = smoothstep(1.0, 1.06, rr) * (1.0 - smoothstep(1.10, 1.45, rr));',
-    '    if (band > 0.001){',
-    '      vec2 np = uv * vec2(90.0, 60.0) + vec2(0.0, -uCTime*1.6);',
-    '      vec2 wob = vec2(vnoise(np) - 0.5, vnoise(np + 17.7) - 0.5);',
-    '      uv += wob * (band * uShimmer * 0.006);',
-    '    }',
-    '  }',
-    '  vec3 sceneCol = texture2D(tScene, uv).rgb;',
-    // aberração cromática lateral da lente: cresce com o ângulo de
-    // campo (zero no centro), como vidro real — franja no limbo e nas
-    // estrelas sem depender de máscara de luminância
-    // CA espectral em 6 taps (antes: 3 amostras discretas R/G/B — o G
-    // "parado" criava um rebordo VERDE sólido no limbo com fringe>=0.5,
-    // porque em toda borda clara/escura o G segue inteiro onde o R já
-    // caiu). O smear radial com pesos de arco-íris (R no extremo externo,
-    // G no meio, B no interno, normalizados por canal) dissolve a borda
-    // num gradiente espectral contínuo, como numa lente real.
-    '  if (uFringe > 0.001){',
-    '    vec2 rc = uv - 0.5;',
-    '    vec2 off = rc * ((0.006 + 0.020*dot(rc, rc)) * uFringe);',
-    '    vec3 accCA = vec3(0.0); vec3 wsumCA = vec3(0.0);',
-    '    for (int i = 0; i < 6; i++){',
-    '      float t = float(i)/5.0 - 0.5;',
-    '      vec3 w = vec3(max(0.0, 0.5 + t), 1.0 - abs(t)*2.0, max(0.0, 0.5 - t));',
-    '      accCA += texture2D(tScene, uv + off*(t*2.0)).rgb * w;',
-    '      wsumCA += w;',
-    '    }',
-    '    sceneCol = accCA / max(wsumCA, vec3(1e-4));',
-    '  }',
-    // FASE 5 — profundidade de campo hexagonal (bokeh da íris de 6
-    // lâminas, a MESMA do starburst). Profundidade ANALÍTICA: o perfil
-    // da esfera dá z = sqrt(1-rr²) dentro do disco (1 = centro, mais
-    // perto da câmera; 0 = limbo) e o céu além do limbo é fundo. CoC =
-    // |perfil - foco|; o gather de 19 taps cobre um HEXÁGONO (centro +
-    // anel 6 + anel 12 nos vértices e meios de aresta) — highlights
-    // desfocados viram hexágonos, como numa íris real de 6 lâminas.
-    // uDof já chega multiplicado pelo fator de close-up (0 em fit).
-    '  if (uDof > 0.0008){',
-    '    vec2 relD = (uv - uSunC) * vec2(uAspect, 1.0);',
-    '    float rrD = length(relD) / max(uSunR, 1e-4);',
-    '    float zProf = (rrD < 1.0) ? sqrt(max(0.0, 1.0 - rrD*rrD)) : -min((rrD - 1.0)*0.9, 0.6);',
-    // banda de tolerância focal (±0.07 de perfil): o plano em foco é
-    // uma FAIXA nítida, não uma casca de espessura zero (painel: o
-    // pull ao limbo lia como véu global porque nada cravava nitidez)
-    '    float coc = max(0.0, abs((1.0 - zProf) - uDofFocus) - 0.07);',
-    '    float rUV = uDof * min(coc, 1.5);',
-    '    if (rUV > 0.0008){',
-    '      rUV = min(rUV, 0.045);',
-    '      vec3 accD = sceneCol;',
-    '      float rot = 0.26;',
-    '      vec2 scl = vec2(rUV/uAspect, rUV);',
-    '      for (int k = 0; k < 6; k++){',
-    '        float aK = float(k)*1.0471976 + rot;',
-    '        vec2 dir6 = vec2(cos(aK), sin(aK));',
-    '        vec2 mid6 = vec2(cos(aK + 0.5235988), sin(aK + 0.5235988))*0.8660254;',
-    '        accD += texture2D(tScene, uv + dir6*scl).rgb;',          // vértice do hex
-    '        accD += texture2D(tScene, uv + dir6*scl*0.5).rgb;',      // anel interno
-    '        accD += texture2D(tScene, uv + mid6*scl).rgb;',          // meio de aresta
-    '      }',
-    '      vec3 dofCol = accD * (1.0/19.0);',
-    '      sceneCol = mix(sceneCol, dofCol, smoothstep(0.0008, 0.0035, rUV));',
-    '    }',
-    '  }',
-    '  vec3 bloomCol = texture2D(tBloom, uv).rgb;',
-    '  vec3 color = (sceneCol + bloomCol*uBloomStrength) * (uExposure * uAdapt);',
-    // halação/veiling glare: o mip mais largo do dual-Kawase lava as
-    // sombras ao redor do disco ("knife edge" do Sunshine)
-    '  if (uVeil > 0.001){',
-    '    color += texture2D(tVeil, uv).rgb * (uVeil * 0.55) * uExposure * uAdapt;',
-    '  }',
-    // FASE 2 — halação com peso de temperatura (corpo negro): no filme a
-    // camada anti-halation absorve o λ curto; o que sangra de volta pela
-    // base é o VERMELHO. Peso = excesso espectral de R no mip largo —
-    // plage (1.0,0.70,0.32) e limbo quente (1.0,0.30,0.10) pesam muito,
-    // altas NEUTRAS pesam ~0. As fontes quentes avermelham a vizinhança;
-    // o veil neutro acima continua intocado (uHal=0 ⇒ ramo morto).
-    '  if (uHal > 0.001){',
-    '    vec3 hv = texture2D(tVeil, uv).rgb;',
-    '    float hw = max(hv.r - 0.5*(hv.g + hv.b), 0.0);',
-    '    color += vec3(1.0, 0.38, 0.14) * (hw * uHal * 0.9) * uExposure * uAdapt;',
-    '  }',
-    // streak anamórfico: risco horizontal frio (assinatura de lente
-    // anamórfica; os flares do Sunshine eram de lente REAL)
-    '  if (uStreak > 0.001){',
-    '    color += texture2D(tStreak, uv).rgb * (uStreak * 0.70) * vec3(0.80,0.88,1.12) * uExposure * uAdapt;',
-    '  }',
-    // FASE 1 — starburst de difração das lâminas da íris, cravado na
-    // POSIÇÃO PROJETADA do flare: 6 braços |cos(3θ)|^n com alcance
-    // ESPECTRAL (difração ∝ λ — o R alcança mais longe que o B, ponta
-    // avermelhada como em lente real) + núcleo quente. uBurst já chega
-    // multiplicado pelo brilho HDR real do flare (JS): flare atrás do
-    // limbo => 0 => a lente não inventa luz que não recebeu.
-    '  if (uBurst > 0.001){',
-    '    vec2 relB = (vUv - uBurstPos) * vec2(uAspect, 1.0);',
-    '    float rB = length(relB);',
-    '    float angB = atan(relB.y, relB.x);',
-    '    float arms = pow(abs(cos((angB - uBurstRot)*3.0)), 18.0);',
-    '    vec3 armFall = exp(vec3(-5.0, -7.5, -11.0) * rB);',
-    '    vec3 burst = vec3(1.0, 0.72, 0.45) * arms * armFall;',
-    '    burst += vec3(1.0, 0.85, 0.62) * exp(-rB*30.0);',
-    '    color += burst * (uBurst * 0.85) * uExposure * uAdapt;',
-    '  }',
-    '  vec3 aces = ACESFilm(color);',
-    '  color = (uFilm > 0.001) ? mix(aces, AgXFilm(color), uFilm) : aces;',
-    '  color = mix(vec3(dot(color, vec3(0.299,0.587,0.114))), color, uSat);',
-    // split-tone Sunshine: sombras frias, altas douradas (contraste
-    // ouro-vs-frio de Boyle/Küchler dentro do mesmo frame)
-    '  if (uTone > 0.001){',
-    '    float tl = dot(color, vec3(0.299,0.587,0.114));',
-    '    vec3 tint = mix(vec3(0.82,0.90,1.10), vec3(1.08,1.00,0.86), smoothstep(0.10, 0.65, tl));',
-    '    color *= mix(vec3(1.0), tint, uTone);',
-    '  }',
-    // vinheta cinematográfica sutil
-    '  vec2 vc = vUv - 0.5;',
-    '  color *= 1.0 - dot(vc, vc)*uVig;',
-    // dithering só nas áreas ESCURAS (céu/coroa, onde há banding);
-    // no disco ele viraria chuvisco isotrópico sobre as fibrilas
-    '  float dith = smoothstep(0.30, 0.06, dot(color, vec3(0.3333)));',
-    '  color += (hash12(gl_FragCoord.xy) - 0.5) * (1.6/255.0) * dith * uGrain;',
-    '  gl_FragColor = vec4(color, 1.0);',
-    '}'
-  ].join('\n');
-  var compMaterial = new THREE.ShaderMaterial({ uniforms: compUniforms, vertexShader: quadVertex, fragmentShader: compFragment });
-  var compScene = makeFullscreenScene(compMaterial);
-
-  function resizeTargets(){
-    var w = Math.max(2, Math.floor(window.innerWidth*ctx.pixelRatio));
-    var h = Math.max(2, Math.floor(window.innerHeight*ctx.pixelRatio));
-    sceneRT.setSize(w, h);
-    var bw = Math.max(2, Math.floor(w/2));
-    var bh = Math.max(2, Math.floor(h/2));
-    for (var i=0;i<bloomMips.length;i++){
-      bloomMips[i].rt.setSize(bw, bh);
-      bloomMips[i].w = bw; bloomMips[i].h = bh;
-      bw = Math.max(2, Math.floor(bw/2));
-      bh = Math.max(2, Math.floor(bh/2));
-    }
-    streakW = Math.max(2, Math.floor(w/4));
-    streakH = Math.max(2, Math.floor(h/16));
-    streakRTa.setSize(streakW, streakH);
-    streakRTb.setSize(streakW, streakH);
-  }
+  createPipeline(ctx);
+  var EXP0 = ctx.EXP0, BLOOM_BASE0 = ctx.BLOOM_BASE0, BLOOM_THRESHOLD = ctx.BLOOM_THRESHOLD,
+      sceneRT = ctx.sceneRT, bloomMips = ctx.bloomMips, streakRTb = ctx.streakRTb,
+      downsampleUniforms = ctx.downsampleUniforms, upsampleUniforms = ctx.upsampleUniforms,
+      compUniforms = ctx.compUniforms, compScene = ctx.compScene,
+      renderBloom = ctx.renderBloom, renderStreak = ctx.renderStreak,
+      resizeTargets = ctx.resizeTargets, cineProj = ctx.cineProj,
+      flareWorldTmp = ctx.flareWorldTmp, burstProj = ctx.burstProj;
 
   // ---------------------------------------------------------------
   // Controles de câmera (arraste/1 dedo = orbita; roda/2 dedos = zoom)
@@ -861,10 +202,10 @@ function init(){
     var th = theta, ph = phi;
     // offsets de "mão" aplicados só na POSE do frame (theta/phi reais
     // ficam intactos: soltar o knob volta exatamente ao enquadramento)
-    if (HAND_K > 0.001){
+    if (ctx.HAND_K > 0.001){
       var ht = ctx.elapsed || 0;
-      th += HAND_K*(0.0042*Math.sin(ht*0.291) + 0.0023*Math.sin(ht*0.833+1.7) + 0.0008*Math.sin(ht*2.31+0.4));
-      ph += HAND_K*(0.0031*Math.sin(ht*0.247+0.9) + 0.0017*Math.sin(ht*0.911+2.6) + 0.0007*Math.sin(ht*2.73+1.2));
+      th += ctx.HAND_K*(0.0042*Math.sin(ht*0.291) + 0.0023*Math.sin(ht*0.833+1.7) + 0.0008*Math.sin(ht*2.31+0.4));
+      ph += ctx.HAND_K*(0.0031*Math.sin(ht*0.247+0.9) + 0.0017*Math.sin(ht*0.911+2.6) + 0.0007*Math.sin(ht*2.73+1.2));
     }
     var sp = Math.sin(ph);
     camera.position.set(
@@ -1215,15 +556,15 @@ function init(){
                  halo: coronaRaysUniforms.uHalo.value, ray: coronaRaysUniforms.uRayBoost.value,
                  cact: coronaRaysUniforms.uActGain.value,
                  mw: milkyWay.material.opacity, stars: stars.material.opacity,
-                 veil: VEIL_BASE, streak: STREAK_K, adapt: ADAPT_K,
+                 veil: ctx.VEIL_BASE, streak: ctx.STREAK_K, adapt: ctx.ADAPT_K,
                  fringe: compUniforms.uFringe.value,
                  shimmer: compUniforms.uShimmer.value,
                  tone: compUniforms.uTone.value,
                  film: compUniforms.uFilm.value,
                  pmode: sunUniforms.uPmode.value,
-                 hand: HAND_K,
+                 hand: ctx.HAND_K,
                  loops: ctx.LOOP_K,
-                 burst: BURST_K,
+                 burst: ctx.BURST_K,
                  cycle: ctx.CYCLE_K,
                  lapse: ctx.LAPSE_K,
                  fprom: ctx.FPROM_K,
@@ -1408,8 +749,8 @@ function init(){
                  sep: sunUniforms.uFlareGeo.value.w,
                  dir: [surfFlareDir.x, surfFlareDir.y, surfFlareDir.z],
                  tan: [flareTanDir.x, flareTanDir.y, flareTanDir.z],
-                 hdr: lastFlareHDR, burst: compUniforms.uBurst.value,
-                 disp: DISP_K, hal: compUniforms.uHal.value };
+                 hdr: ctx.lastFlareHDR, burst: compUniforms.uBurst.value,
+                 disp: ctx.DISP_K, hal: compUniforms.uHal.value };
       };
       // QA FASE 1: estado dos loops coronais (traçados, arcada viva,
       // custo acumulado do traçador) e salto de fase p/ fotografia
@@ -1522,16 +863,16 @@ function init(){
       // FASE 5 — QA do foco raso: override do plano de foco (0 centro,
       // 1 limbo; -1 volta ao automático) + estado corrente
       window.__solInfo.setDofFocus = function(x){
-        dofFocusOverride = (x === undefined || x < 0) ? -1 : Math.min(1.5, +x);
+        ctx.dofFocusOverride = (x === undefined || x < 0) ? -1 : Math.min(1.5, +x);
         // snap imediato (QA sob ?hold: rawDelta=0 congela o lerp do
         // focus pull; ao vivo o diretor puxa suave pelo lerp)
-        if (dofFocusOverride >= 0) dofFocusCur = dofFocusOverride;
-        return dofFocusOverride;
+        if (ctx.dofFocusOverride >= 0) ctx.dofFocusCur = ctx.dofFocusOverride;
+        return ctx.dofFocusOverride;
       };
       window.__solInfo.dofInfo = function(){
         return { knob: ctx.DOF_K, amt: compUniforms.uDof.value,
                  focus: compUniforms.uDofFocus.value,
-                 override: dofFocusOverride };
+                 override: ctx.dofFocusOverride };
       };
       // FASE 5 — modo diretor por HOOK (o mesmo caminho do botão do
       // painel: liga em runtime, sem URL, com empréstimo de knobs)
@@ -1654,8 +995,8 @@ function init(){
         get:function(){ return ctx.LAPSE_K; }, set:function(v){ ctx.LAPSE_K = v; } },
       { sec: 'luz & cor' },
       { k:'bloom', label:'Bloom', lo:0, hi:2.5, step:0.05, dflt:1,
-        get:function(){ return BLOOM_STRENGTH_BASE/BLOOM_BASE0; },
-        set:function(v){ BLOOM_STRENGTH_BASE = BLOOM_BASE0*v; } },
+        get:function(){ return ctx.BLOOM_STRENGTH_BASE/BLOOM_BASE0; },
+        set:function(v){ ctx.BLOOM_STRENGTH_BASE = BLOOM_BASE0*v; } },
       { k:'exposure', label:'Exposição', lo:0.5, hi:1.8, step:0.02, dflt:1,
         get:function(){ return compUniforms.uExposure.value/EXP0; },
         set:function(v){ compUniforms.uExposure.value = EXP0*v; } },
@@ -1673,17 +1014,17 @@ function init(){
         set:function(v){ compUniforms.uGrain.value = v; } },
       { sec: 'cinema' },
       { k:'veil', label:'Halação (glare)', lo:0, hi:1.5, step:0.05, dflt:0,
-        get:function(){ return VEIL_BASE; }, set:function(v){ VEIL_BASE = v; } },
+        get:function(){ return ctx.VEIL_BASE; }, set:function(v){ ctx.VEIL_BASE = v; } },
       { k:'streak', label:'Flare anamórfico', lo:0, hi:1.5, step:0.05, dflt:0,
-        get:function(){ return STREAK_K; }, set:function(v){ STREAK_K = v; } },
+        get:function(){ return ctx.STREAK_K; }, set:function(v){ ctx.STREAK_K = v; } },
       { k:'burst', label:'Starburst (difração)', lo:0, hi:1.5, step:0.05, dflt:0,
-        get:function(){ return BURST_K; }, set:function(v){ BURST_K = v; } },
+        get:function(){ return ctx.BURST_K; }, set:function(v){ ctx.BURST_K = v; } },
       { k:'disp', label:'Bloom espectral (dispersão)', lo:0, hi:1.5, step:0.05, dflt:0,
-        get:function(){ return DISP_K; }, set:function(v){ DISP_K = v; } },
+        get:function(){ return ctx.DISP_K; }, set:function(v){ ctx.DISP_K = v; } },
       { k:'hal', label:'Halação quente (corpo negro)', lo:0, hi:1.5, step:0.05, dflt:0,
-        get:function(){ return HAL_K; }, set:function(v){ HAL_K = v; } },
+        get:function(){ return ctx.HAL_K; }, set:function(v){ ctx.HAL_K = v; } },
       { k:'adapt', label:'Olho (adaptação)', lo:0, hi:1, step:0.05, dflt:0,
-        get:function(){ return ADAPT_K; }, set:function(v){ ADAPT_K = v; } },
+        get:function(){ return ctx.ADAPT_K; }, set:function(v){ ctx.ADAPT_K = v; } },
       { k:'fringe', label:'Franja da lente', lo:0, hi:1.5, step:0.05, dflt:0,
         get:function(){ return compUniforms.uFringe.value; },
         set:function(v){ compUniforms.uFringe.value = v; } },
@@ -1697,7 +1038,7 @@ function init(){
         get:function(){ return compUniforms.uFilm.value; },
         set:function(v){ compUniforms.uFilm.value = v; } },
       { k:'hand', label:'Câmera de mão', lo:0, hi:1.5, step:0.05, dflt:0,
-        get:function(){ return HAND_K; }, set:function(v){ HAND_K = v; } },
+        get:function(){ return ctx.HAND_K; }, set:function(v){ ctx.HAND_K = v; } },
       { k:'dof', label:'Foco raso (bokeh hex)', lo:0, hi:1.5, step:0.05, dflt:0,
         get:function(){ return ctx.DOF_K; }, set:function(v){ ctx.DOF_K = v; } },
       { sec: 'coroa' },
@@ -2016,7 +1357,7 @@ function init(){
     if (!directorActive()) return;
     dirT = -999;   // permanente: o usuário assumiu a câmera
     ctx.LAPSE_K = dirSavedLapse;
-    dofFocusOverride = -1;
+    ctx.dofFocusOverride = -1;
     // devolve os knobs que o diretor emprestou para a vitrine
     if (dirSavedCme >= 0){ ctx.CME_K = dirSavedCme; dirSavedCme = -1; }
     if (dirSavedDof >= 0){ ctx.DOF_K = dirSavedDof; dirSavedDof = -1; }
@@ -2077,7 +1418,7 @@ function init(){
       theta = dirLerpAngle(theta, dirAng.th - 0.9, k);
       phi += (Math.PI*0.46 - phi)*k;
       targetCamDist = fitDist*(1.28 - 0.018*Math.min(t, 10));
-      dofFocusOverride = -1;
+      ctx.dofFocusOverride = -1;
     } else if (t < 22){
       // B1 — push-in: tracking da região protagonista (ela gira com o
       // Sol e a câmera a persegue), foco raso no centro do quadro
@@ -2086,7 +1427,7 @@ function init(){
       theta = dirLerpAngle(theta, dirAng.th, k);
       phi += (dirAng.ph - phi)*k;
       targetCamDist += (minDist*1.30 - targetCamDist)*(1 - Math.exp(-rawDelta/3.0));
-      dofFocusOverride = 0.0;
+      ctx.dofFocusOverride = 0.0;
     } else if (t < 30){
       // B2 — reposição ao limbo: a região desliza para a borda (o
       // palco do Thomson) e o foco puxa ao horizonte
@@ -2095,7 +1436,7 @@ function init(){
       theta = dirLerpAngle(theta, dirAng.th + horizon*0.94, k);
       phi += (dirAng.ph*0.5 + Math.PI*0.25 - phi)*k;
       targetCamDist += (fitDist*0.78 - targetCamDist)*(1 - Math.exp(-rawDelta/3.0));
-      dofFocusOverride = 1.0;
+      ctx.dofFocusOverride = 1.0;
     } else if (t < 48){
       // B3 — a erupção: flare X no limbo; a casca desprende ~1s depois
       // (slow rise → impulsiva, sincronizada com o envelope do flare)
@@ -2107,10 +1448,10 @@ function init(){
       k = 1 - Math.exp(-rawDelta/4.5);
       theta = dirLerpAngle(theta, dirAng.th + horizon*0.94, k*0.4);
       targetCamDist += (fitDist*0.92 - targetCamDist)*(1 - Math.exp(-rawDelta/8.0));
-      dofFocusOverride = 1.0;
+      ctx.dofFocusOverride = 1.0;
     } else if (t < 64){
       // B4 — retirada: a casca cruza a coroa, a arcada escura fica
-      dofFocusOverride = -1;
+      ctx.dofFocusOverride = -1;
       targetCamDist += (fitDist*1.30 - targetCamDist)*(1 - Math.exp(-rawDelta/6.0));
       theta += 0.012*rawDelta;
     } else if (t < 78){
@@ -2430,17 +1771,17 @@ function init(){
     renderer.render(scene, camera);
 
     // FASE 2 — dispersão espectral do bloom (lida ANTES do renderBloom)
-    downsampleUniforms.uDisp.value = DISP_K;
-    upsampleUniforms.uDisp.value = DISP_K;
+    downsampleUniforms.uDisp.value = ctx.DISP_K;
+    upsampleUniforms.uDisp.value = ctx.DISP_K;
     if (subToggle.bloom) renderBloom();
-    compUniforms.uBloomStrength.value = subToggle.bloom ? BLOOM_STRENGTH_BASE : 0.0;
+    compUniforms.uBloomStrength.value = subToggle.bloom ? ctx.BLOOM_STRENGTH_BASE : 0.0;
 
     // --- camada cinema (Sunshine) ---------------------------------
     // halação usa o mip mais largo do bloom; zera junto com o toggle
-    compUniforms.uVeil.value = subToggle.bloom ? VEIL_BASE : 0.0;
+    compUniforms.uVeil.value = subToggle.bloom ? ctx.VEIL_BASE : 0.0;
     compUniforms.tVeil.value = bloomMips[bloomMips.length-1].rt.texture;
-    if (STREAK_K > 0.001 && subToggle.bloom) renderStreak();
-    compUniforms.uStreak.value = subToggle.bloom ? STREAK_K : 0.0;
+    if (ctx.STREAK_K > 0.001 && subToggle.bloom) renderStreak();
+    compUniforms.uStreak.value = subToggle.bloom ? ctx.STREAK_K : 0.0;
     compUniforms.tStreak.value = streakRTb.texture;
     compUniforms.uCTime.value = ctx.elapsed;
     // centro/raio do disco em UV de tela (p/ o anel de heat-haze)
@@ -2457,10 +1798,10 @@ function init(){
     // branch do shader morre.
     if (ctx.DOF_K > 0.001){
       var dofCloseK = Math.max(0, Math.min(1, (fitDist/camDist - 1.10)/1.10));
-      var dofTgt = (dofFocusOverride >= 0) ? dofFocusOverride : 0.0;
-      dofFocusCur += (dofTgt - dofFocusCur) * (1.0 - Math.exp(-rawDelta/0.35));
+      var dofTgt = (ctx.dofFocusOverride >= 0) ? ctx.dofFocusOverride : 0.0;
+      ctx.dofFocusCur += (dofTgt - ctx.dofFocusCur) * (1.0 - Math.exp(-rawDelta/0.35));
       compUniforms.uDof.value = ctx.DOF_K * dofCloseK*dofCloseK * 0.026;
-      compUniforms.uDofFocus.value = dofFocusCur;
+      compUniforms.uDofFocus.value = ctx.dofFocusCur;
     } else compUniforms.uDof.value = 0.0;
     // FASE 1 — brilho HDR REAL do flare na lente: envelope (2 fases) ×
     // visibilidade do ponto do flare no hemisfério voltado à câmera
@@ -2473,34 +1814,34 @@ function init(){
     var fvis = Math.min(1, Math.max(0, (flareFacing - 0.04)/0.26));
     fvis = fvis*fvis*(3.0 - 2.0*fvis);
     var flareHDR = (sfEnv + 0.5*sfRib) * fvis;
-    lastFlareHDR = flareHDR;
+    ctx.lastFlareHDR = flareHDR;
     // FASE 2 — halação quente: além do peso espectral por pixel (shader),
     // o ganho global SURGE com o flash do flare — o mesmo escalar físico
     // que dirige íris e starburst ("uma estrela, um estado")
-    compUniforms.uHal.value = subToggle.bloom ? HAL_K * (1.0 + 1.6*flareHDR) : 0.0;
+    compUniforms.uHal.value = subToggle.bloom ? ctx.HAL_K * (1.0 + 1.6*flareHDR) : 0.0;
     // adaptação de exposição (olho/íris): fecha rápido no claro, reabre
     // devagar; flare estoura o quadro ANTES de a íris correr atrás
-    if (ADAPT_K > 0.001){
+    if (ctx.ADAPT_K > 0.001){
       var cover = cineAng / cineHalf; cover = Math.min(2.0, cover*cover);
       // termo do flare 0.60→0.25 (backlog M2 nº5): a íris escurecia o
       // quadro TODO -26% enquanto o flash local era +3% — o evento lia
       // invertido; com o laço 4x mais forte, o flare ganha a leitura
       // FASE 5: a CME visível também pesa na íris (lastCmeHDR = 0 sem
       // evento ⇒ soma 0.0, bit-exato — convenção F3/F4)
-      var aTarget = 1.0 / (1.0 + ADAPT_K*(0.42*cover
+      var aTarget = 1.0 / (1.0 + ctx.ADAPT_K*(0.42*cover
         + 0.20*coronaRaysUniforms.uActivity.value*cover + 0.25*flareHDR
         + 0.10*ctx.lastCmeHDR));
-      var aTau = (aTarget < adaptCur) ? 0.5 : 3.0;
-      adaptCur += (aTarget - adaptCur) * (1.0 - Math.exp(-rawDelta/aTau));
-      compUniforms.uAdapt.value = adaptCur * (1.0 + ADAPT_K*0.85*flareHDR);
-    } else { adaptCur = 1.0; compUniforms.uAdapt.value = 1.0; }
+      var aTau = (aTarget < ctx.adaptCur) ? 0.5 : 3.0;
+      ctx.adaptCur += (aTarget - ctx.adaptCur) * (1.0 - Math.exp(-rawDelta/aTau));
+      compUniforms.uAdapt.value = ctx.adaptCur * (1.0 + ctx.ADAPT_K*0.85*flareHDR);
+    } else { ctx.adaptCur = 1.0; compUniforms.uAdapt.value = 1.0; }
     // starburst de difração: cravado na posição PROJETADA do flare e
     // dirigido pelo mesmo flareHDR — nasce, cresce e some com o brilho
     // físico (impulsivo forte, rescaldo fraco), nunca com um timer
-    if (BURST_K > 0.001 && flareHDR > 0.004){
+    if (ctx.BURST_K > 0.001 && flareHDR > 0.004){
       burstProj.copy(flareWorldTmp).multiplyScalar(SUN_RADIUS).project(camera);
       compUniforms.uBurstPos.value.set(burstProj.x*0.5 + 0.5, burstProj.y*0.5 + 0.5);
-      compUniforms.uBurst.value = (burstProj.z < 1.0) ? BURST_K * flareHDR : 0.0;
+      compUniforms.uBurst.value = (burstProj.z < 1.0) ? ctx.BURST_K * flareHDR : 0.0;
       // rotação: assinatura fixa por EVENTO + deriva ínfima (lente viva)
       compUniforms.uBurstRot.value = flareSeedVal*0.7 + Math.sin(ctx.elapsed*0.9 + flareSeedVal)*0.03;
     } else compUniforms.uBurst.value = 0.0;

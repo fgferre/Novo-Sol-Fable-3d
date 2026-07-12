@@ -70,3 +70,30 @@ Aprendizados-chave para a coroa raymarched:
 - Textura fina: a coroa não é névoa lisa — é feita de raios/filamentos
   radiais finos e sobrepostos (visível em ref-09 e ref-10); ruído radial
   fino sobre a densidade base vende o efeito.
+
+## Referências de erupção/CME (Fase 5)
+
+| Arquivo | Descrição |
+| --- | --- |
+| `ref-13-lasco-c2-cme-fluxrope.jpg` | SOHO/LASCO C2, 2002-12-02 19:26 UT (via NASA on The Commons / Wikimedia Commons). CME de flux-rope no limbo NW: a casca helicoidal do rope lê como LAÇOS circulares aninhados e brilhantes, com cavidade mais escura por dentro e material denso na base; segundo evento menor no SW. A referência-mãe da morfologia da casca do CME. |
+| `ref-14-proeminencia-eruptiva-stereo.jpg` | STEREO/EUVI 304 Å, 2008-09-29 (NASA/STEREO, Wikimedia Commons, domínio público). Proeminência ERUPTIVA no limbo NW: o material frio arqueia, alonga e escapa como uma cauda fiapenta — o "núcleo denso" das CMEs de três partes é exatamente este material. Referência das partículas do ejecta e do desprendimento. |
+
+Atribuição: SOHO/LASCO cortesia do consórcio SOHO (ESA/NASA, uso livre com
+crédito); STEREO cortesia NASA (domínio público).
+
+Aprendizados-chave para a erupção (Fase 5):
+
+- CME de três partes (ref-13): FRENTE brilhante (a casca comprimida),
+  CAVIDADE escura (o interior rarefeito do rope) e NÚCLEO denso (material
+  de proeminência) — a hierarquia de brilho é frente ≥ núcleo ≫ cavidade.
+- A casca não é uma bolha lisa: lê como fios/laços aninhados que seguem o
+  eixo do rope (a textura de fbm ancorada no referencial da bolha).
+- Expansão auto-similar: o ângulo do cone se mantém enquanto a frente
+  avança; o brilho dilui com a expansão mas a FRENTE continua legível até
+  sair do campo (C2 ~6 R☉).
+- Thomson: CMEs de limbo são as brilhantes; halo CMEs (de frente) são
+  tênues e anulares — o peso sin² do ângulo ao plano do céu é física, não
+  estilo.
+- Proeminência eruptiva (ref-14): o material NÃO sobe como bloco — alonga
+  em fios que se curvam ao longo do caminho, parte escapa e parte drena de
+  volta (chuva coronal).

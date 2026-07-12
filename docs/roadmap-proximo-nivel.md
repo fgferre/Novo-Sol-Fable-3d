@@ -135,6 +135,27 @@ espalhamento Thomson no limbo) + partículas por transform feedback +
 profundidade de campo hexagonal em close-ups + "modo diretor" (sequência-
 atração com ciclo, eventos e linguagem de câmera).
 
+**Entrega (2026-07, ver `docs/fase-5-erupcao.md`)**: knobs novos `cme`
+(casca de flux-rope raymarched ANALÍTICA — bolha auto-similar alongada
+no eixo do rope, marcha só na esfera envolvente, peso de THOMSON sin²
+por amostra: limbo brilha, halo esmaece; gatilho só em flare GRANDE,
+prob ∝ amplitude em stream RNG próprio; cinemática em forma fechada
+p/ fotografia determinística; tier-gated cmestep 0/16/24/32 +
+kill-switch `cmeKilled` ANTES do `cvolKilled` no auto-tune) e `dof`
+(foco raso com CoC analítico do perfil da esfera — sem readback; bokeh
+hexagonal de 19 taps, a íris de 6 lâminas do starburst; em FIT é 0px
+provado), ambos default 0 = paridade A/B worktree 0px em 5/5.
+Partículas do ejecta por TRANSFORM FEEDBACK (payoff WebGL2 nº 2):
+ping-pong de VBOs com rasterizer discard, respawn determinístico por
+gl_VertexID na base do rope, ~28% drenam como chuva coronal; render
+por 2 THREE.Points fixos (GLBufferAttribute, VAOs estáveis); `cmen`
+0/1024/2048/4096 por tier. Modo diretor (`?director=1`): sequência-
+atração determinística ~84s amarrando as 5 fases (plano geral →
+close-up com foco raso → limbo → flare X + CME → retirada → time-lapse
+do ciclo), tracking da região com a rotação real, qualquer input
+devolve o controle. `qa:phase5` novo (14 checks K/L/M). Refs novas:
+ref-13 (LASCO C2 flux-rope) e ref-14 (proeminência eruptiva STEREO).
+
 ## Não-objetivos (decididos)
 MHD de primeiros princípios; interação com magnetosfera terrestre (não há
 Terra em cena); transferência radiativa espectral completa; WebGPU/TSL

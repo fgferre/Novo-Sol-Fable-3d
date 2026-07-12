@@ -101,7 +101,15 @@ function init(){
     // "somar textura, não luminância"; bloom espectral e halação já
     // carregam o brilho; >=1.0 lava o céu na vista fit). Nos tiers sem
     // raymarch (low) é no-op e o plano de raias segue como fallback.
-    cvol:0.5
+    cvol:0.5,
+    // FASE 5: CME + foco raso, painel de 3 juízes (sweep 6×2 + 4 doses
+    // de dof, sem rebuild). cme = mediana 0.9 (0.6 cinema / 0.9 físico
+    // / 1.2 artefatos — cada lente puxou p/ um lado; 0.9 mantém o
+    // evento como pulso raro sem afogar o rim no céu). dof = 0.5
+    // UNÂNIME (falloff contido e fílmico; 0.8-1.2 e o focus pull ao
+    // limbo ficam para o modo diretor). Em tiers sem CME (low) o cme
+    // é no-op, como o cvol.
+    cme:0.9, dof:0.5
   };
   var LOOK = (urlQ.look === 'sunshine') ? LOOK_SUNSHINE : null;
   function lk(n, base){ return (LOOK && LOOK[n] !== undefined) ? LOOK[n] : base; }
@@ -1880,7 +1888,10 @@ function init(){
   var cmeAxis = new THREE.Vector3(1, 0, 0);
   var cmeSeedVal = 0;
   var lastCmeHDR = 0;
-  var cmeCoreGain = 0.9;   // ganho do núcleo denso (eixo do sweep de juízes)
+  // ganho do núcleo denso — mediana do painel de 3 juízes da F5
+  // (1.3/1.4/0.9): com o boost do shader, 1.3 fecha a leitura de
+  // "três partes" (frente/cavidade/núcleo) sem virar cometa
+  var cmeCoreGain = 1.3;
   var cmeWorldTmp = new THREE.Vector3();
   // RNG PRÓPRIO (padrão loopRand): o sorteio "este flare solta CME?"
   // não pode deslocar o stream do srand nem o do loopRand
@@ -1924,7 +1935,7 @@ function init(){
     var front = cx + rho;
     var fo = 1.0 - Math.min(1, Math.max(0, (front - 2.75)/0.50));
     cmeGeomOut.d = d; cmeGeomOut.cx = cx; cmeGeomOut.rho = rho;
-    cmeGeomOut.w = 0.040 + 0.055*d;
+    cmeGeomOut.w = 0.034 + 0.046*d;   // casca mais fina = rim com mais contraste
     cmeGeomOut.front = front;
     cmeGeomOut.env = rise * dil * fo;
     return cmeGeomOut;
@@ -2036,32 +2047,41 @@ function init(){
         '    vec3 q = p - c;',
         '    float qa = dot(q, uCmeAxis);',
         '    float dc = length(q - uCmeAxis*(qa*0.26));',
-        '    float shell = exp(-((dc - rho)*(dc - rho))/(wSh*wSh));',
+        // casca engrossa rumo à BASE (as pernas do rope enraizadas no
+        // limbo — flag 3/3 do painel: "bolha destacada"; a ref-13
+        // mantém as pernas até o occulter)
+        '    float wEff = wSh*(1.0 + 1.4*exp(-(r - 1.0)*2.8));',
+        '    float shell = exp(-((dc - rho)*(dc - rho))/(wEff*wEff));',
         // pernas ancoradas: material só no hemisfério do evento
         '    float ca = dot(p, uCmeDir)/max(r, 1e-4);',
         '    shell *= smoothstep(0.02, 0.42, ca);',
-        // núcleo denso (a proeminência ejetada) atrás do centro da bolha
+        // núcleo denso (a proeminência ejetada) atrás do centro da
+        // bolha — mais compacto e 2.2x mais forte (painel: núcleo era
+        // "sub-liminar", a leitura três-partes só fechava com core alto)
         '    vec3 pk = p - uCmeDir*(uCmeKin.x - rho*0.34);',
-        '    float rk = rho*0.36;',
-        '    float core = exp(-dot(pk,pk)/(rk*rk)) * uCmeMat.x;',
+        '    float rk = rho*0.30;',
+        '    float core = exp(-dot(pk,pk)/(rk*rk)) * (uCmeMat.x*2.2);',
         // fios do rope: fbm no referencial da bolha (a textura ACOMPANHA
         // a casca em vez de ficar pregada no espaço)
         '    float n = fbmLight(q*(2.4/max(rho, 0.2)) + vec3(uCmeMat.z, uCmeMat.z*0.31, 0.0));',
         '    float fil = 0.68 + 0.55*n;',
-        // peso de Thomson por amostra: sin² do ângulo ao plano do céu
+        // peso de Thomson por amostra: sin² do ângulo ao plano do céu.
+        // O núcleo (material denso de proeminência) sente MENOS o
+        // Thomson — brilha por densidade, não só por geometria.
         '    float mu = dot(p, rdO)/max(r, 1e-4);',
         '    float thom = 1.0 - mu*mu;',
-        '    float d = (shell*fil + core) * (0.22 + 0.78*thom) * fade;',
+        '    float d = shell*fil*(0.22 + 0.78*thom)*fade + core*(0.50 + 0.50*thom)*fade;',
         '    sum += d;',
         '    hsum += d*clamp((r - 1.0)*0.8, 0.0, 1.0);',
         '    ksum += core*fade;',
         '  }',
         '  if (sum <= 1e-5){ fragColor = vec4(0.0); return; }',
         '  float hK = hsum/sum;',
-        // luz branca espalhada (Thomson) — mais NEUTRA que a coroa
-        // H-alfa; o núcleo (material de proeminência) puxa ao vermelho
-        '  vec3 col = mix(vec3(1.0, 0.82, 0.60), vec3(1.0, 0.60, 0.36), clamp(hK*0.8 + (ksum/sum)*0.6, 0.0, 1.0));',
-        '  float amp = sum * dtO * 0.85 * uCmeKin.w;',
+        // luz branca espalhada (Thomson), QUENTE e emissiva (painel de
+        // cinema: o tom marrom sobre o céu azul lia como "fumaça/
+        // fuligem") — o núcleo puxa ao vermelho de proeminência
+        '  vec3 col = mix(vec3(1.0, 0.88, 0.70), vec3(1.0, 0.66, 0.42), clamp(hK*0.8 + (ksum/sum)*0.6, 0.0, 1.0));',
+        '  float amp = sum * dtO * 1.05 * uCmeKin.w;',
         '  fragColor = vec4(col*amp, 1.0);',
         '}'
       ].join('\n'),
@@ -2121,8 +2141,10 @@ function init(){
       '      float a2 = h1(id*2.717 + uSeed*1.37);',
       '      float a3 = h1(id*3.141 + uSeed*2.09);',
       '      float a4 = h1(id*4.669 + uSeed*0.53);',
+      // leque COLIMADO (painel de cinema: o spray abria ~10h-4h para
+      // um evento de 1h — cone de CME real é estreito)
       '      vec3 perp = normalize(cross(uDir, uAxis));',
-      '      vec3 base = normalize(uDir + uAxis*(a1 - 0.5)*1.05 + perp*(a2 - 0.5)*0.50);',
+      '      vec3 base = normalize(uDir + uAxis*(a1 - 0.5)*0.62 + perp*(a2 - 0.5)*0.30);',
       '      P.xyz = base*(1.03 + 0.42*a3*a3);',   // mais denso na base, cauda rala
       '      P.w = 0.60 + 0.80*a4;',
       // dispersão de velocidade por partícula: sem ela o campo-alvo
@@ -2227,6 +2249,8 @@ function init(){
         'attribute vec4 aVel;',
         'varying float vLife;',
         'varying float vKind;',
+        'varying vec2 vDir;',
+        'varying float vStretch;',
         'uniform float uPx;',
         'float hsz(float n){ return fract(sin(n)*43758.5453123); }',
         'void main(){',
@@ -2234,22 +2258,37 @@ function init(){
         '  vKind = aVel.w;',
         '  vec4 mv = modelViewMatrix * vec4(aPos.xyz*SUN_R, 1.0);',
         '  gl_Position = projectionMatrix * mv;',
-        // mistura de grãos finos e flocos (o enxame uniforme lia como
-        // spray): 70% pequenos, cauda de tamanhos até ~3x
+        // direção da VELOCIDADE em tela: o sprite vira um risco
+        // alongado no rumo do movimento (painel 3/3: pontos uniformes
+        // liam como confete/glitter — material filamentar não é dot)
+        '  vec4 mv2 = modelViewMatrix * vec4((aPos.xyz + aVel.xyz*0.35)*SUN_R, 1.0);',
+        '  vec4 c1 = projectionMatrix * mv2;',
+        '  vec2 sd = c1.xy/max(abs(c1.w), 1e-4) - gl_Position.xy/max(abs(gl_Position.w), 1e-4);',
+        '  float sl = length(sd);',
+        '  vDir = sl > 1e-5 ? sd/sl : vec2(1.0, 0.0);',
+        '  vStretch = clamp(sl*30.0, 0.0, 2.4);',
+        // mistura de grãos finos e flocos (70% pequenos, cauda ~3x)
         '  float g = hsz(aPos.x*57.3 + aPos.y*23.1 + aPos.z*11.7);',
         '  float sz = uPx*(0.35 + 0.45*vKind + 1.6*g*g*g)/max(0.1, -mv.z);',
-        '  gl_PointSize = clamp(sz, 0.0, 5.5) * step(0.001, vLife);',
+        '  gl_PointSize = clamp(sz*(1.0 + 0.5*vStretch), 0.0, 6.5) * step(0.001, vLife);',
         '}'
       ].join('\n'),
       fragmentShader: [
         'varying float vLife;',
         'varying float vKind;',
+        'varying vec2 vDir;',
+        'varying float vStretch;',
         'uniform float uAmp;',
         'void main(){',
         '  vec2 d = gl_PointCoord - 0.5;',
-        '  float a = exp(-dot(d,d)*10.0) * smoothstep(0.0, 0.15, vLife) * min(1.0, vLife);',
+        // gaussiana ALONGADA na direção do movimento (streak), fina na
+        // normal — em repouso volta ao grão redondo
+        '  float t = dot(d, vDir);',
+        '  float n = d.x*vDir.y - d.y*vDir.x;',
+        '  float a = exp(-(t*t*10.0/(1.0 + 2.2*vStretch) + n*n*(10.0 + 8.0*vStretch)));',
+        '  a *= smoothstep(0.0, 0.15, vLife) * min(1.0, vLife);',
         '  vec3 col = mix(vec3(1.0, 0.52, 0.26), vec3(1.0, 0.76, 0.50), 0.25 + 0.5*vKind);',
-        '  gl_FragColor = vec4(col*(a*uAmp*0.35), 1.0);',
+        '  gl_FragColor = vec4(col*(a*uAmp*0.30), 1.0);',
         '}'
       ].join('\n'),
       transparent: true,
@@ -2345,8 +2384,10 @@ function init(){
       var respawn = cmePts.armT >= 0 && cmePts.armT < 0.9;
       cmePtsTick(delta, respawn);
       // esmaece com o envelope do evento (sem corte seco no fim; o
-      // +0.15 mantém a chuva coronal legível no rescaldo)
-      cmePts.ptsMat.uniforms.uAmp.value = 0.7 * Math.min(1.5, CME_K) *
+      // +0.15 mantém a chuva coronal legível no rescaldo). Base 0.55:
+      // o painel flagrou a nuvem SATURANDO (knob perceptualmente
+      // inerte porque o aditivo estourava no tonemap)
+      cmePts.ptsMat.uniforms.uAmp.value = 0.55 * Math.min(1.5, CME_K) *
         (0.35 + 0.65*thom) * Math.min(1, cmeAmp) *
         Math.min(1, 2.2*g.env + 0.15);
       // pós-tick: a visibilidade segue o VBO recém-escrito
@@ -4032,7 +4073,10 @@ function init(){
     '    vec2 relD = (uv - uSunC) * vec2(uAspect, 1.0);',
     '    float rrD = length(relD) / max(uSunR, 1e-4);',
     '    float zProf = (rrD < 1.0) ? sqrt(max(0.0, 1.0 - rrD*rrD)) : -min((rrD - 1.0)*0.9, 0.6);',
-    '    float coc = abs((1.0 - zProf) - uDofFocus);',
+    // banda de tolerância focal (±0.07 de perfil): o plano em foco é
+    // uma FAIXA nítida, não uma casca de espessura zero (painel: o
+    // pull ao limbo lia como véu global porque nada cravava nitidez)
+    '    float coc = max(0.0, abs((1.0 - zProf) - uDofFocus) - 0.07);',
     '    float rUV = uDof * min(coc, 1.5);',
     '    if (rUV > 0.0008){',
     '      rUV = min(rUV, 0.045);',

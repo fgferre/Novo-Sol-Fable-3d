@@ -144,11 +144,64 @@ rho,cx,env,hdr,dir,pts}; `setCme(v)`; `setCmeCore(x)` (eixo do sweep);
 
 ## A/B de GPU por tier (perf hooks, SwiftShader)
 
-(Preenchido na rodada de gates — ver seção QA do registro final.)
+Evento VIVO no limbo (pior caso: casca no cruzeiro + partículas),
+45 frames por página, `perf()`/`perfReset` — render por software é o
+limite SUPERIOR do custo relativo:
+
+| tier | passos | partículas | frame p95 on/off | razão |
+|---|---|---|---|---|
+| mid | 16 | 1024 | 896.2 / 810.6 ms | **×1.106** |
+| high | 24 | 2048 | 1732.6 / 1609.2 ms | ×1.077 |
+| ultra | 32 | 4096 | 1475.7 / 1417.2 ms | ×1.041 |
+
+Armadilha de medição flagrada e corrigida: a 1ª medição do mid deu
+×1.423 — era COMPILAÇÃO DE PIPELINE do SwiftShader na primeira página
+(a casca/TF compilam no primeiro draw); com warmup de 12 frames antes
+do `perfReset`, ×1.106. CPU (busy): sem delta mensurável fora do ruído
+(o tick de TF é GPU-side; o JS só escreve uniforms) — dentro do
+orçamento de ≤1ms/frame. O custo é EPISÓDICO (~8s por evento, cooldown
+20s) e o kill-switch `cmeKilled` derruba casca+partículas na menor
+escala antes de qualquer rebaixamento de tier.
 
 ## Calibração visual (painel de juízes)
 
-(Preenchido após o sweep + painel de 3 juízes — valores do preset.)
+Sweep de 6 variantes (knob × ganho do núcleo) × 2 vistas (impulsiva
+fit / cruzeiro wide) via `setCme`/`setCmeCore`/`setCmeClock` — SEM
+rebuild — + 4 doses de foco raso, julgado por painel de 3 juízes de
+lentes distintas (físico solar vs refs 13/14/10 / diretor de
+fotografia Sunshine / caçador de artefatos), executado como Workflow.
+
+- Medianas: v0-centro 6.0, v1-sutil 5.5, **v2-forte 6.5**, v3-casca
+  5.0, v4-nucleo 5.5, v5-drama 6.0. SEM vencedora unânime — cada lente
+  puxou para um lado (físico: v4, "a única leitura três-partes
+  completa"; cinema: v1, "pulso raro e atmosférico"; artefatos: v2,
+  "única que mantém o anel legível sobre o fundo").
+- **Preset `?look=sunshine` ganha `cme:0.9` (mediana 0.6/0.9/1.2) e
+  `dof:0.5` (UNÂNIME)**; `coreGain` default 1.3 (mediana 1.3/1.4/0.9).
+- Flags convergentes (3/3) CORRIGIDAS na própria rodada:
+  - *ejecta lia como confete/glitter de pontos uniformes* → sprites
+    viraram STREAKS orientados pela velocidade em tela (gaussiana
+    alongada no rumo do movimento), leque colimado (0.62/0.30 vs
+    1.05/0.50) e amplitude reduzida (a nuvem saturava no tonemap e o
+    knob ficava perceptualmente inerte);
+  - *casca "bolha destacada" sem pernas* → a espessura da casca cresce
+    rumo à base (`wEff = w·(1+1.4·e^{−2.8(r−1)})`) — o pé do rope fica
+    enraizado no limbo como na ref-13;
+  - *núcleo sub-liminar (knob core quase morto)* → núcleo mais
+    compacto (0.30ρ) e 2.2× mais forte no shader, com piso de Thomson
+    próprio (0.50+0.50·sin² — material denso brilha por densidade);
+  - *rim "fumaça marrom" sobre o céu azul (anti-Sunshine)* → paleta
+    mais quente/branca (1.0,0.88,0.70 → 1.0,0.66,0.42), casca mais
+    fina (w 0.034+0.046d) e amp 1.05;
+  - *focus pull "sem destino" (nada nítido no quadro)* → banda de
+    tolerância focal ±0.07 de perfil: o plano de foco é uma FAIXA
+    nítida, não uma casca de espessura zero.
+- Flags anotadas (não corrigidas nesta rodada): serrilhado periódico
+  de ~2px no limbo (PRÉ-existente, exposto ao lado da casca lisa);
+  bokeh hexagonal sobre highlights pontuais não fotografado no sweep
+  (nenhum highlight desfocado nos enquadramentos — validar em rodada
+  futura com estrela/proeminência no quadro); rim ainda lê "contas"
+  em vez de estrias fibrosas de laços do rope em zoom.
 
 ## Débitos conscientes desta rodada
 
@@ -168,3 +221,10 @@ rho,cx,env,hdr,dir,pts}; `setCme(v)`; `setCmeCore(x)` (eixo do sweep);
 - Sob `?hold`, partículas congelam no instante do hold (integração não
   salta com setCmeClock — só a casca tem forma fechada); documentado no
   harness (as fotos de beat usam hold≈lançamento+1.4s).
+- Flags do painel que ficam para rodada futura: rim com textura de
+  "contas" em vez de estrias fibrosas de laços (candidato: alinhar o
+  fbm ao eixo do rope em coordenada helicoidal); contraste
+  frente:cavidade ~1.3× vs ≥3× da ref-13 (o bloom/veil preenchem a
+  cavidade — candidato: gate de cavidade explícito no shader); smoke
+  de VÍDEO do evento completo (o julgamento foi em stills; herdado da
+  F4 para os fios de 1px, agora também para o streak das partículas).

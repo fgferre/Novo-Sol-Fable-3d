@@ -31,3 +31,42 @@ Aprendizados-chave dessas refs (escala de disco inteiro):
 - Filamentos grandes têm BARBS (pés laterais), não são cobras lisas.
 - O disco é tonalmente MUITO plano; a textura fina é sutil.
 - Proeminências do dia-a-dia são baixas (0.03-0.08 R); gigantes são raras.
+
+## Referências da coroa solar (Fase 4)
+
+| Arquivo | Descrição |
+| --- | --- |
+| `ref-09-eclipse-coroa.jpg` | Eclipse total de 2017-08-21 (Madras, Oregon; NASA/Aubrey Gemignani, `NHQ201708210100`, images.nasa.gov). Coroa em luz branca na fase descendente do ciclo: feixes de streamers bem separados (NE, NW, SW e S), plumas polares finas e retas, base da coroa contínua e saturada colada ao limbo, cromosfera rosada aparecendo em pontos do limbo. |
+| `ref-10-lasco-c2.jpg` | Coronógrafo SOHO/LASCO C2, 2026-07-11 03:00 UT (soho.nascom.nasa.gov, `data/realtime/c2/1024/latest.jpg`). Atividade alta: streamers radiais em quase todas as latitudes, material brilhante de CME no quadrante NW. O disco oclusor cobre até ~2.2 R☉ (círculo branco = 1 R☉); campo de visão ~6 R☉. |
+| `ref-11-buraco-coronal.jpg` | SDO/AIA 193 Å, 2017-03-28 12:10 UT (sdo.gsfc.nasa.gov, arquivo `20170328_121029_1024_0193.jpg`). Buraco coronal gigante ancorado no polo sul e estendendo-se em arco até latitudes médias no lado oeste: interior quase preto na escala da imagem, bordas irregulares/dedadas, pontos brilhantes isolados dentro do buraco. Regiões ativas brilhantes no hemisfério norte para contraste. |
+| `ref-12-eclipse-maximo.jpg` | Eclipse total de 2024-04-08 (Cleveland, Ohio; NASA/GRC/Jordan Salkin, `GRC-2024-C-02639`, images.nasa.gov). Coroa no MÁXIMO solar: "pétalas" de streamers em todas as latitudes, silhueta quase circular/cheia — comparar com `ref-09` (fase descendente: coroa assimétrica, feixes discretos + plumas polares). Proeminências rosadas visíveis no limbo E e S. |
+
+Atribuição: fotos de eclipse NASA (domínio público — conteúdo NASA não tem
+copyright); SOHO/LASCO cortesia do consórcio SOHO (projeto ESA/NASA, uso
+livre com crédito); SDO/AIA cortesia NASA/SDO e equipe científica AIA
+(domínio público NASA).
+
+Aprendizados-chave para a coroa raymarched:
+
+- Forma vs ciclo: no mínimo/fase descendente a coroa é assimétrica —
+  streamers concentrados em latitudes baixas/médias + plumas polares finas
+  (ref-09); no máximo é "cheia", com streamers em todas as latitudes e
+  silhueta quase redonda (ref-12).
+- Helmet streamers: base larga (~30-40° de largura angular no limbo) que
+  afunila em cúspide por volta de ~1.5-2.5 R☉ e continua como haste fina e
+  radial; no C2 (ref-10) as hastes seguem visíveis até a borda do campo
+  (~6 R☉).
+- Gradiente de brilho brutal: a coroa interna (< 1.3 R☉) satura na foto
+  enquanto a externa some no fundo do céu em ~2-3 R☉ — queda de brilho de
+  várias ordens de magnitude por R☉; o brilho total da coroa é ~1e-6 do
+  disco (só visível com o disco ocultado).
+- Plumas polares: raios finos, retos e curtos saindo dos buracos coronais
+  polares, levemente divergentes (seguem o campo aberto), bem mais fracas
+  que os streamers equatoriais.
+- Buracos coronais (ref-11): em EUV são regiões QUASE PRETAS com bordas
+  irregulares e pontos brilhantes internos; ocupam frações grandes do disco
+  (o de ref-11 vai do polo sul até ~30°S ao longo de ~120° de longitude).
+  Acima deles a coroa em luz branca fica escura (é de onde saem as plumas).
+- Textura fina: a coroa não é névoa lisa — é feita de raios/filamentos
+  radiais finos e sobrepostos (visível em ref-09 e ref-10); ruído radial
+  fino sobre a densidade base vende o efeito.

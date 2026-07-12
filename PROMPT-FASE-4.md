@@ -20,6 +20,24 @@ conclusão volta), QA/capturas/sweeps via agentes ou Workflow (fan-out de
 variantes + juiz visual), verificação adversarial de achados antes de
 mexer. A janela principal fica para decisões, edições e o registro.
 
+## PERFORMANCE (diretriz do dono — explícita)
+
+**NÃO pedir números de FPS/performance ao dono — em nenhuma hipótese.**
+A pendência "FPS em iPhone real" foi ENCERRADA por decisão do dono no
+fim da F3; medição em aparelho do dono está fora do processo. O alvo
+técnico de sempre continua valendo integralmente, mas é **gate de
+código**, verificado por você com as ferramentas do repo:
+
+- o raymarch da coroa precisa de **A/B de GPU por tier** (hooks
+  `__solInfo.perf`/`perfReset` — busy/ms/p95) antes de entrar no
+  default de qualquer tier;
+- e precisa **respeitar ≥24 fps no mid** (o limiar de 42ms p95 do
+  auto-tune é a régua).
+
+Se o mid não segurar o raymarch, a coroa volumétrica não entra no
+default desse tier — fica no fallback do plano de gradiente — sem
+consultar o dono.
+
 ## ESTADO ATUAL (git)
 
 - `main`: Fases 0+1+2+3 mescladas — base Vite + three (paridade provada),
@@ -60,9 +78,9 @@ mexer. A janela principal fica para decisões, edições e o registro.
    deriva diferencial satura sob lapse pesado (cap 0.35/frame —
    registrado, ver doc F3). A antiga pendência "FPS em iPhone real"
    foi ENCERRADA por decisão do dono no fim da F3 (auto-tune + seletor
-   de tier cobrem; não pedir números ao dono) — mas o alvo de
-   performance continua valendo: o raymarch da coroa precisa de A/B de
-   GPU por tier e de respeitar ≥24 fps no mid.
+   de tier cobrem) — regra e alvo técnico na seção PERFORMANCE acima:
+   A/B de GPU por tier e ≥24 fps no mid são gate de código, não
+   pergunta ao dono.
 
 ## CONVENÇÕES (desde o LOOP-5 — não quebrar)
 

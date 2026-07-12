@@ -17,7 +17,8 @@
     "qa:motion": "node tools/qa-motion.js out/motion dist-single/index.html",
     "qa:shot": "node tools/shot.js shots --file dist-single/index.html",
     "qa:phase1": "node tools/qa-phase1.js out/phase1 --file dist-single/index.html",
-    "qa:phase3": "node tools/qa-phase3.js out/phase3 --file dist-single/index.html"
+    "qa:phase3": "node tools/qa-phase3.js out/phase3 --file dist-single/index.html",
+    "qa:phase4": "node tools/qa-phase4.js out/phase4 --file dist-single/index.html"
   },
   "repository": {
     "type": "git",

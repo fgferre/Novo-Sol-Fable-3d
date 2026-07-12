@@ -4,6 +4,8 @@
 // mantemos a saída linear — comportamento idêntico ao r128.
 import * as THREE from 'three';
 import { NOISE_GLSL as NOISE_GLSL_SRC, WORLEY_GLSL, SFTDIR_GLSL, BFIELD_GLSL, LIC_GLSL, quadVertex, uvMeshVertex } from './glsl/common.js';
+import { createConfig } from './core/config.js';
+import { createRenderer, createRenderInfra, createRTType } from './core/renderer.js';
 
 THREE.ColorManagement.enabled = false;
 
@@ -27,221 +29,26 @@ try {
 }
 
 function init(){
+  // --- Manifesto RNG (ordem de consumo no init) ---
+  // buildCharges(srand) → proeminências(srand) → loops(loopRand 1×) → estrelas(srand)
+  //   → [painel/__solInfo: 0 draws] → flares: cooldown 1×srand (PÓS-painel).
+  // Streams criados UMA vez no createConfig: srand (mulberry32(seed) se DET, senão
+  //   Math.random), cmeRand (seed ^ 0x00C0E5ED), loopRand (seed ^ 0x5EEDC0DE) —
+  //   streams próprios: nada desloca o srand por construção.
+  var ctx = {};
+  ctx.container = container;
+  createConfig(ctx);
+  var urlQ = ctx.urlQ, DET = ctx.DET, DET_HOLD = ctx.DET_HOLD, srand = ctx.srand,
+      knob = ctx.knob, lk = ctx.lk, LOOK = ctx.LOOK, LOOK_SUNSHINE = ctx.LOOK_SUNSHINE,
+      RENDER_SCALE = ctx.RENDER_SCALE, loopRand = ctx.loopRand, cmeRand = ctx.cmeRand;
 
-  // Overrides de QA/perf via URL: ?tier=low|mid|high força o tier de
-  // partida e ?scale= multiplica o pixelRatio — o profiler mede A/B de
-  // custo por resolução e por tier sem editar o arquivo.
-  var urlQ = {};
-  try {
-    (location.search || '').replace(/^\?/, '').split('&').forEach(function(kv){
-      if (!kv) return; var p = kv.split('=');
-      urlQ[p[0]] = decodeURIComponent(p[1] || '');
-    });
-  } catch(e){}
-  // Modo determinístico de QA (?det=1[&seed=N]): todos os sorteios do APP
-  // passam por srand() — um PRNG semeado (mulberry32) — e o dt do frame
-  // fica fixo em 1/60s simulado. Com isso duas execuções produzem
-  // exatamente a mesma cena/frame — é o que permite comparar screenshots
-  // pixel a pixel entre versões do código (paridade de migração). O RNG é
-  // LOCAL do app (não sobrescreve Math.random): o three consome
-  // Math.random internamente (UUIDs) em quantidades que variam por versão
-  // e contaminaria o stream. Sem ?det=1, srand === Math.random.
-  var DET = urlQ.det === '1';
-  // ?hold=F congela o tempo simulado a partir do frame F (delta=0): o
-  // frame renderizado vira uma imagem ESTÁTICA e o screenshot deixa de
-  // correr contra o requestAnimationFrame.
-  var DET_HOLD = 0;
-  var detFrames = 0;
-  var srand = Math.random;
-  if (DET) DET_HOLD = parseInt(urlQ.hold, 10) || 0;
-  if (DET) {
-    var detSeed = ((parseInt(urlQ.seed, 10) || 1) >>> 0) || 1;
-    srand = function(){
-      detSeed = (detSeed + 0x6D2B79F5) >>> 0;
-      var t = detSeed;
-      t = Math.imul(t ^ (t >>> 15), t | 1);
-      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-  }
-  var savedKnobs = {};
-  try { savedKnobs = JSON.parse(localStorage.getItem('solKnobs') || '{}') || {}; } catch(e){}
-  function knob(name, dflt, lo, hi){
-    var v = parseFloat(urlQ[name]);
-    if (v !== v && savedKnobs[name] !== undefined) v = parseFloat(savedKnobs[name]);
-    return (v === v) ? Math.min(hi, Math.max(lo, v)) : dflt;
-  }
-  // Knobs cinematográficos (defaults = visual calibrado do LOOP-5; sem
-  // query string NADA muda). speed comprime/expande o tempo SIMULADO de
-  // forma coerente (rotação, deriva, ciclos, flares, sim) sem tocar na
-  // resposta dos controles de câmera.
-  var TIME_SCALE = knob('speed', 1.0, 0.05, 3.0);
-  // ?look=sunshine: preset da camada cinematográfica (Sunshine 2007 —
-  // halação, íris, lente); semeia DEFAULTS, então knob individual na
-  // URL/painel continua tendo precedência. Sem o preset, tudo em 0.
-  // valores do preset SEMPRE disponíveis (o painel da engrenagem tem um
-  // botão "look Sunshine" que os aplica ao vivo, sem URL)
-  var LOOK_SUNSHINE = {
-    // calibrado por sweep de 7 variantes + juiz visual (h2, 8.5/10;
-    // fringe>=0.5 gera rebordo verde no limbo — manter <=0.35)
-    veil:0.85, adapt:0.55, fringe:0.35, shimmer:0.45, tone:0.65,
-    streak:0.65, bloom:1.15, grain:1.7, vig:0.85, exposure:1.08,
-    // FASE 2: loops/burst (dívida da F1) + disp/hal calibrados por
-    // sweep de 6 variantes × 2 vistas com painel de 3 juízes (cinema/
-    // realismo/legibilidade) — v1-sutil venceu unânime (8.5/10 nas 3
-    // lentes); valores = mediana das 3 recomendações. Acima disso:
-    // loops>=0.8 vira "mola de neon", burst>=1.0 vira cunha dura,
-    // disp>=0.7 lava o disco p/ ouro, hal>=0.9 véu leitoso.
-    loops:0.55, burst:0.55, disp:0.40, hal:0.45,
-    // FASE 3: filamentos escuros como âncora de escala (painel de 3
-    // juízes: mediana 0.55, mesmo patamar dos loops; >=0.9 vira
-    // caricato — núcleo preto). cycle/lapse ficam FORA do preset: são
-    // comportamento no tempo, não look.
-    fprom:0.55,
-    // FASE 4: coroa volumétrica raymarched (mediana do painel: 0.5 —
-    // "somar textura, não luminância"; bloom espectral e halação já
-    // carregam o brilho; >=1.0 lava o céu na vista fit). Nos tiers sem
-    // raymarch (low) é no-op e o plano de raias segue como fallback.
-    cvol:0.5,
-    // FASE 5: CME + foco raso, painel de 3 juízes (sweep 6×2 + 4 doses
-    // de dof, sem rebuild). cme = mediana 0.9 (0.6 cinema / 0.9 físico
-    // / 1.2 artefatos — cada lente puxou p/ um lado; 0.9 mantém o
-    // evento como pulso raro sem afogar o rim no céu). dof = 0.5
-    // UNÂNIME (falloff contido e fílmico; 0.8-1.2 e o focus pull ao
-    // limbo ficam para o modo diretor). Em tiers sem CME (low) o cme
-    // é no-op, como o cvol.
-    cme:0.9, dof:0.5
-  };
-  var LOOK = (urlQ.look === 'sunshine') ? LOOK_SUNSHINE : null;
-  function lk(n, base){ return (LOOK && LOOK[n] !== undefined) ? LOOK[n] : base; }
-  var IDLE_CINE = urlQ.idle === '1' || (urlQ.idle === undefined && savedKnobs.idle == 1);
-  // FASE 3 — o tempo da estrela: cycle liga o ciclo de 11 anos (0 = o
-  // sol "de meio de ciclo" eterno de sempre; frame default intocado;
-  // >1 acelera o relógio natural do ciclo). lapse é o time-lapse
-  // documental da camada cinema: multiplica o relógio do ciclo E o
-  // tempo de vida das regiões ativas (só a maquinaria de manchas —
-  // rotação, granulação e proeminências seguem no tempo normal, a
-  // mesma honestidade de VFX de p-modes/convecção). lapse>0 com
-  // cycle=0 liga o ciclo sozinho (modo documental de um toque).
-  var CYCLE_K = knob('cycle', lk('cycle', 0), 0.0, 1.5);
-  var LAPSE_K = knob('lapse', lk('lapse', 0), 0.0, 1.5);
-  // FASE 3 — continuidade filamento↔proeminência: a MESMA estrutura
-  // escura contra o disco (filamento, absorção) e vermelha além do
-  // limbo (proeminência, emissão). Default 0 = gêmeos de absorção
-  // invisíveis, frame e custo idênticos ao baseline.
-  var FPROM_K = knob('fprom', lk('fprom', 0), 0.0, 1.5);
-  // FASE 4 — a coroa de verdade: coroa volumétrica raymarched (helmet
-  // streamers emergindo da topologia aberta/fechada do MESMO campo de
-  // cargas, densidade bakeada em sampler3D 64³). Default 0 = mesh
-  // invisível, frame e custo idênticos ao baseline. Tier-gated: em
-  // tiers sem passos de raymarch (low) o knob é no-op e o plano de
-  // raias segue sozinho como fallback.
-  var CVOL_K = knob('cvol', lk('cvol', 0), 0.0, 1.5);
-  // FASE 5 — "Erupção": CME de flux-rope. Em flare GRANDE a casca do
-  // rope sobre a PIL perde equilíbrio e escapa: frente brilhante,
-  // cavidade rarefeita e núcleo denso (a "CME de três partes" do LASCO,
-  // ref-13), com brilho de espalhamento THOMSON — máximo no plano do
-  // céu (evento no limbo), tênue de frente (CME "halo"), o mesmo peso
-  // sin² da física. Default 0 = nenhum evento dispara, meshes
-  // invisíveis, frame e custo idênticos ao baseline. Tier-gated
-  // (cmestep=0 no low => knob no-op, como o cvol).
-  var CME_K = knob('cme', lk('cme', 0), 0.0, 1.5);
-  // FASE 5 — profundidade de campo em close-up: bokeh da MESMA íris de
-  // 6 lâminas do starburst da F1. CoC ANALÍTICO da geometria esfera/
-  // câmera (sem readback de Z — convenção da íris analítica); em
-  // enquadramento fit a abertura é ~0 e nada muda mesmo com knob alto.
-  // Default 0 = ramo morto no composite, frame idêntico.
-  var DOF_K = knob('dof', lk('dof', 0), 0.0, 1.5);
-  // FASE 5 — modo diretor (?director=1): sequência-atração
-  // determinística coreografada POR CIMA dos hooks/knobs existentes
-  // (ciclo, flare grande + CME, close-ups com foco raso, retirada
-  // wide). Qualquer input do usuário devolve o controle. Sem a query,
-  // nenhuma linha do modo roda — default intocado.
-  var DIRECTOR_ON = urlQ.director === '1';
-  var RENDER_SCALE = (parseFloat(urlQ.scale) > 0)
-    ? Math.min(2.0, Math.max(0.3, parseFloat(urlQ.scale))) : 1.0;
-
-  var renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-  // three moderno liga saída sRGB por padrão; o composite já faz tonemap e
-  // gamma por conta própria — saída linear reproduz o r128 exatamente.
-  renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
-  renderer.toneMapping = THREE.NoToneMapping;
-  var pixelRatio = Math.min(window.devicePixelRatio || 1, 2) * RENDER_SCALE;
-  renderer.setPixelRatio(pixelRatio);
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setClearColor(0x000000, 1);
-  container.appendChild(renderer.domElement);
-
-  var scene = new THREE.Scene();
-  var camera = new THREE.PerspectiveCamera(42, window.innerWidth/window.innerHeight, 0.1, 3000);
-
-  // Qualidade adaptativa: o tier controla oitavas de ruído, malha,
-  // textura de simulação, bake, bloom e contagem de proeminências.
-  var coarsePointer = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
-  var smallScreen = Math.max(window.innerWidth, window.innerHeight) < 820;
-  // Tiers NOMEADOS (low/mid/high); MID é o alvo do iPhone 15 Pro:
-  // bake 1024, SIM 768x384, LIC 7 taps, 4 níveis de bloom.
-  // FASE 1: loops = nº de loops coronais ambientes, larc = slots de
-  // arcada pós-flare, lseg = segmentos por loop (o traço RK4 é CPU
-  // amortizado — os contadores escalam com o tier, não o custo/frame).
-  var TIER_PARAMS = {
-    // FASE 4: cstep = passos do raymarch da coroa volumétrica (0 = tier
-    // fica no plano de gradiente; o custo do raymarch escala linear nos
-    // passos E na resolução — o auto-tune de escala já o protege).
-    // FASE 5: cmestep = passos do raymarch da casca do CME (analítico,
-    // sem textura — mais barato por passo que o cvol e episódico: só
-    // custa DURANTE um evento); cmen = partículas do ejecta por
-    // transform feedback (0 = tier sem partículas).
-    low:  { fbm:4, seg:96,  stars:3500, bright:130, simW:384, simH:192, simStep:1/16, bloom:3, prom:4, chromo:512,  granFreq:22.0, lic7:false, loops:8,  larc:5,  lseg:28, cstep:0,  cmestep:0,  cmen:0 },
-    mid:  { fbm:5, seg:128, stars:5000, bright:200, simW:768, simH:384, simStep:1/22, bloom:4, prom:6, chromo:1024, granFreq:30.0, lic7:true,  loops:12, larc:7,  lseg:36, cstep:22, cmestep:16, cmen:1024 },
-    high: { fbm:5, seg:128, stars:7000, bright:240, simW:768, simH:384, simStep:1/26, bloom:4, prom:7, chromo:2048, granFreq:34.0, lic7:true,  loops:16, larc:9,  lseg:44, cstep:36, cmestep:24, cmen:2048 },
-    // ULTRA (desktop com GPU dedicada): DPR até 3, malha/sim/estrelas
-    // maiores e 5 níveis de bloom. Nunca é escolhido no primeiro load —
-    // só o auto-tune promove (p95 < limiar por 30s no high) ou ?tier=ultra.
-    ultra:{ fbm:6, seg:192, stars:10000, bright:320, simW:1024, simH:512, simStep:1/30, bloom:5, prom:8, chromo:2048, granFreq:36.0, lic7:true, loops:22, larc:12, lseg:52, cstep:48, cmestep:32, cmen:4096 }
-  };
-  // T3.2: partida por HARDWARE + memória de sessões anteriores. A
-  // heurística antiga (toque/tela pequena => low) rebaixava iPhones Pro;
-  // agora o renderer decide: Apple GPU com toque parte em MID, desktop em
-  // HIGH, móvel genérico com pouca RAM em LOW. SwiftShader/llvmpipe (QA
-  // headless) fica em HIGH: os gates visuais são calibrados no tier alto —
-  // e o auto-tune é desligado lá, senão o p95 do render por software
-  // rebaixaria a resolução e mudaria as capturas.
-  var glStr = '';
-  try {
-    var glc = renderer.getContext();
-    var dbgInfo = glc.getExtension('WEBGL_debug_renderer_info');
-    glStr = String(glc.getParameter(dbgInfo ? dbgInfo.UNMASKED_RENDERER_WEBGL : glc.RENDERER)).toLowerCase();
-  } catch(e){}
-  var isSoftwareGL = /swiftshader|llvmpipe|softpipe|software/.test(glStr);
-  function detectTier(){
-    if (TIER_PARAMS[urlQ.tier]) return urlQ.tier;
-    try {
-      var saved = localStorage.getItem('solTier');   // auto-tune passado
-      if (TIER_PARAMS[saved]) return saved;
-    } catch(e){}
-    if (isSoftwareGL) return 'high';
-    if (/apple gpu|apple a[0-9]|apple m[0-9]/.test(glStr)) return coarsePointer ? 'mid' : 'high';
-    var mem = navigator.deviceMemory || 0;
-    if (coarsePointer || smallScreen) return (mem > 0 && mem < 4) ? 'low' : 'mid';
-    return 'high';
-  }
-  var TIER = detectTier();
-  var TP = TIER_PARAMS[TIER];
-  // ultra desbloqueia DPR nativo até 3 (o cap 2 protege os tiers móveis)
-  if (TIER === 'ultra'){
-    pixelRatio = Math.min(window.devicePixelRatio || 1, 3) * RENDER_SCALE;
-    renderer.setPixelRatio(pixelRatio);
-    renderer.setSize(window.innerWidth, window.innerHeight);
-  }
-  var FBM_OCTAVES = TP.fbm;
-  var SPHERE_SEG  = TP.seg;
-  var STAR_COUNT  = TP.stars;
-  var SIM_W = TP.simW;
-  var SIM_H = TP.simH;
-  var BLOOM_LEVELS = TP.bloom;
-  var PROMINENCE_COUNT = TP.prom;
-  var hasTouch = coarsePointer || ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+  createRenderer(ctx);
+  var renderer = ctx.renderer, scene = ctx.scene, camera = ctx.camera,
+      coarsePointer = ctx.coarsePointer, isSoftwareGL = ctx.isSoftwareGL,
+      TIER = ctx.TIER, TP = ctx.TP, FBM_OCTAVES = ctx.FBM_OCTAVES,
+      SPHERE_SEG = ctx.SPHERE_SEG, STAR_COUNT = ctx.STAR_COUNT, SIM_W = ctx.SIM_W,
+      SIM_H = ctx.SIM_H, BLOOM_LEVELS = ctx.BLOOM_LEVELS,
+      PROMINENCE_COUNT = ctx.PROMINENCE_COUNT, hasTouch = ctx.hasTouch;
 
   var NOISE_GLSL = NOISE_GLSL_SRC;
   NOISE_GLSL = NOISE_GLSL.replace('i<5;', 'i<' + FBM_OCTAVES + ';');
@@ -254,26 +61,9 @@ function init(){
       .replace(/float\(i\)\/6\.0/g, 'float(i)/3.0');
   }
 
-  // Radiação de corpo negro (aproximação de Tanner Helland, válida
-  // ~1000K-40000K): cor a partir de temperatura para as estrelas.
-  function kelvinToRGB(kelvin){
-    var tmp = kelvin/100, r,g,b;
-    if (tmp<=66) r=255; else r=Math.min(255,Math.max(0,329.698727446*Math.pow(tmp-60,-0.1332047592)));
-    if (tmp<=66) g=Math.min(255,Math.max(0,99.4708025861*Math.log(tmp)-161.1195681661));
-    else g=Math.min(255,Math.max(0,288.1221695283*Math.pow(tmp-60,-0.0755148492)));
-    if (tmp>=66) b=255; else if(tmp<=19) b=0; else b=Math.min(255,Math.max(0,138.5177312231*Math.log(tmp-10)-305.0447927307));
-    return new THREE.Color(r/255,g/255,b/255);
-  }
-
-  function makeFullscreenScene(material){
-    var geo = new THREE.PlaneGeometry(2,2);
-    var mesh = new THREE.Mesh(geo, material);
-    mesh.frustumCulled = false;
-    var s = new THREE.Scene();
-    s.add(mesh);
-    return s;
-  }
-  var quadCamera = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
+  createRenderInfra(ctx);
+  var kelvinToRGB = ctx.kelvinToRGB, makeFullscreenScene = ctx.makeFullscreenScene,
+      quadCamera = ctx.quadCamera;
 
   // ---------------------------------------------------------------
   // SIMULAÇÃO FÍSICA: campo de convecção evoluído por GPU.
@@ -295,27 +85,8 @@ function init(){
   // magnetohidrodinâmica de primeiros princípios como as usadas em
   // física solar de verdade.
   // ---------------------------------------------------------------
-  // HDR: detecção de half-float ANTES dos render targets da simulação —
-  // o estado do transporte de fluxo precisa de precisão: em 8 bits os
-  // incrementos de ~3% por passo quantizam para zero e o campo evoluído
-  // congela/erode até virar uniforme.
-  var rtType = THREE.UnsignedByteType;
-  try {
-    var glCtx0 = renderer.getContext();
-    var isWebGL2Ctx = !!(renderer.capabilities && renderer.capabilities.isWebGL2);
-    if (isWebGL2Ctx) {
-      if (glCtx0.getExtension('EXT_color_buffer_float') || glCtx0.getExtension('EXT_color_buffer_half_float')) {
-        rtType = THREE.HalfFloatType;
-      }
-    } else {
-      if (glCtx0.getExtension('OES_texture_half_float') &&
-          glCtx0.getExtension('OES_texture_half_float_linear') &&
-          glCtx0.getExtension('EXT_color_buffer_half_float')) {
-        rtType = THREE.HalfFloatType;
-      }
-    }
-  } catch(e){}
-  var isHDR = (rtType === THREE.HalfFloatType);
+  createRTType(ctx);
+  var rtType = ctx.rtType, isHDR = ctx.isHDR;
 
   var simRTOptions = { minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, format:THREE.RGBAFormat, type: rtType, depthBuffer:false, stencilBuffer:false };
   var simRTs = [
@@ -589,7 +360,7 @@ function init(){
   var cyclePolarN = null, cyclePolarS = null;
   function cycleDepth(){
     // lapse sozinho liga o ciclo (modo documental de um toque)
-    return (LAPSE_K > 0.001 && CYCLE_K < 0.001) ? 1.0 : Math.min(1.0, CYCLE_K);
+    return (ctx.LAPSE_K > 0.001 && ctx.CYCLE_K < 0.001) ? 1.0 : Math.min(1.0, ctx.CYCLE_K);
   }
   function updateCycleState(){
     var d = cycleDepth();
@@ -1696,7 +1467,7 @@ function init(){
     scene.add(coronaVol);
     // knob ligado desde a carga (?cvol=): bake inicial síncrono com as
     // cargas do frame 0 (determinístico) — a coroa nunca aparece vazia
-    if (CVOL_K > 0.001) cvolBakeFull();
+    if (ctx.CVOL_K > 0.001) cvolBakeFull();
   }
 
   // ---------------------------------------------------------------
@@ -1730,17 +1501,6 @@ function init(){
   // "três partes" (frente/cavidade/núcleo) sem virar cometa
   var cmeCoreGain = 1.3;
   var cmeWorldTmp = new THREE.Vector3();
-  // RNG PRÓPRIO (padrão loopRand): o sorteio "este flare solta CME?"
-  // não pode deslocar o stream do srand nem o do loopRand
-  var cmeRandState = DET ? ((((parseInt(urlQ.seed, 10) || 1) >>> 0) ^ 0x00C0E5ED) >>> 0)
-                         : ((Math.random() * 4294967296) >>> 0);
-  function cmeRand(){
-    cmeRandState = (cmeRandState + 0x6D2B79F5) >>> 0;
-    var t = cmeRandState;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  }
   // cinemática fechada: v(t) = 0.045 + 0.19·smoothstep((t-1.2)/2.6);
   // D(t) = ∫v dt tem primitiva analítica (x³ − x⁴/2 no trecho suave) —
   // rise lento do rope (~1.2s, o rope infla no lugar), aceleração
@@ -1791,10 +1551,10 @@ function init(){
   // flare GRANDE solta CME — a probabilidade cresce com a amplitude
   // (X-class ~certo, M-class raro), no stream próprio cmeRand.
   function maybeLaunchCME(){
-    if (CME_K <= 0.001 || CME_STEPS <= 0 || cmeKilled) return false;
+    if (ctx.CME_K <= 0.001 || CME_STEPS <= 0 || cmeKilled) return false;
     if (cmeT < 900 || cmeCooldown > 0) return false;
     var p = (surfFlareAmp - 0.85)/0.45;
-    p = Math.max(0, Math.min(1, p)) * Math.min(1, CME_K);
+    p = Math.max(0, Math.min(1, p)) * Math.min(1, ctx.CME_K);
     if (p <= 0 || cmeRand() >= p) return false;
     launchCME(surfFlareAmp);
     return true;
@@ -2195,7 +1955,7 @@ function init(){
       cmeGeomAt(cmeT);
       if (cmeGeomOut.front > CME_ROUT || cmeT > 18){ cmeT = 999; active = false; }
     }
-    var on = active && CME_K > 0.001 && CME_STEPS > 0 && !cmeKilled && subToggle.cme;
+    var on = active && ctx.CME_K > 0.001 && CME_STEPS > 0 && !cmeKilled && subToggle.cme;
     lastCmeHDR = 0;
     if (cmeMesh) cmeMesh.visible = on;
     var ptsOn = on && cmePts.on && subToggle.cmepts;
@@ -2210,11 +1970,11 @@ function init(){
     cmeWorldTmp.copy(cmeDir).applyQuaternion(sunMesh.quaternion);
     var muC = cmeWorldTmp.dot(camDirN);
     var thom = 1.0 - muC*muC;
-    lastCmeHDR = g.env * cmeAmp * (0.25 + 0.75*thom) * Math.min(1.5, CME_K);
+    lastCmeHDR = g.env * cmeAmp * (0.25 + 0.75*thom) * Math.min(1.5, ctx.CME_K);
     cmeMesh.quaternion.copy(camera.quaternion);
     cmeInvRot.setFromMatrix4(sunMesh.matrixWorld).transpose();
     cmeUniforms.uCmeKin.value.set(g.cx, g.rho, g.w,
-      g.env * cmeAmp * Math.min(1.5, CME_K));
+      g.env * cmeAmp * Math.min(1.5, ctx.CME_K));
     // o núcleo esmaece conforme o material vira partículas/se dispersa
     cmeUniforms.uCmeMat.value.set(cmeCoreGain*Math.exp(-cmeT*0.10), cmeT, cmeSeedVal, 0);
     if (ptsOn){
@@ -2225,7 +1985,7 @@ function init(){
       // +0.15 mantém a chuva coronal legível no rescaldo). Base 0.55:
       // o painel flagrou a nuvem SATURANDO (knob perceptualmente
       // inerte porque o aditivo estourava no tonemap)
-      cmePts.ptsMat.uniforms.uAmp.value = 0.42 * Math.min(1.5, CME_K) *
+      cmePts.ptsMat.uniforms.uAmp.value = 0.42 * Math.min(1.5, ctx.CME_K) *
         (0.35 + 0.65*thom) * Math.min(1, cmeAmp) *
         Math.min(1, 2.2*g.env + 0.15);
       // pós-tick: a visibilidade segue o VBO recém-escrito
@@ -2742,19 +2502,6 @@ function init(){
   // flare two-ribbon e acendem em qualquer default DURANTE um flare
   // (pendência do audit-loop6 — flares já eram um evento default).
   // ---------------------------------------------------------------
-  // RNG PRÓPRIO (mesmo mulberry32 do modo det, stream separado): os
-  // sorteios novos NÃO tocam o stream do srand — a paridade
-  // determinística dos elementos pré-existentes (proeminências,
-  // estrelas, flares) fica intacta por construção.
-  var loopRandState = DET ? ((((parseInt(urlQ.seed, 10) || 1) >>> 0) ^ 0x5EEDC0DE) >>> 0)
-                          : ((Math.random()*4294967296) >>> 0);
-  function loopRand(){
-    loopRandState = (loopRandState + 0x6D2B79F5) >>> 0;
-    var t = loopRandState;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  }
   var LOOP_K = knob('loops', lk('loops', 0), 0.0, 1.5);
   var LOOP_AMB = TP.loops, LOOP_ARC = TP.larc, LOOP_N = LOOP_AMB + LOOP_ARC;
   var LOOP_SEG = TP.lseg;
@@ -3996,8 +3743,8 @@ function init(){
   var compScene = makeFullscreenScene(compMaterial);
 
   function resizeTargets(){
-    var w = Math.max(2, Math.floor(window.innerWidth*pixelRatio));
-    var h = Math.max(2, Math.floor(window.innerHeight*pixelRatio));
+    var w = Math.max(2, Math.floor(window.innerWidth*ctx.pixelRatio));
+    var h = Math.max(2, Math.floor(window.innerHeight*ctx.pixelRatio));
     sceneRT.setSize(w, h);
     var bw = Math.max(2, Math.floor(w/2));
     var bh = Math.max(2, Math.floor(h/2));
@@ -4289,14 +4036,14 @@ function init(){
   // fôlego por 30s no teto abre num maior.
   // ---------------------------------------------------------------
   var SCALE_STEPS = [1.0, 0.85, 0.7];
-  var baseDpr = pixelRatio;
+  var baseDpr = ctx.pixelRatio;
   var scaleIdx = 0, tuneWin = [], tuneGoodT = 0, tuneCooldown = 0, tuneEvents = 0;
   var autoTuneOn = (urlQ.tune === '1') ||
                    (!urlQ.tier && !(parseFloat(urlQ.scale) > 0) && !isSoftwareGL);
   function applyRenderScale(i){
     scaleIdx = Math.max(0, Math.min(SCALE_STEPS.length-1, i));
-    pixelRatio = baseDpr * SCALE_STEPS[scaleIdx];
-    renderer.setPixelRatio(pixelRatio);
+    ctx.pixelRatio = baseDpr * SCALE_STEPS[scaleIdx];
+    renderer.setPixelRatio(ctx.pixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
     resizeTargets();
     tuneEvents++;
@@ -4331,7 +4078,7 @@ function init(){
         // cai antes da coroa volumétrica: é efeito EPISÓDICO; se nem a
         // menor escala segura o frame durante uma erupção, a erupção
         // não pode afundar o tier inteiro.
-        if (CME_STEPS > 0 && !cmeKilled && CME_K > 0.001){
+        if (CME_STEPS > 0 && !cmeKilled && ctx.CME_K > 0.001){
           cmeKilled = true; tuneEvents++;
           tuneCooldown = 4; tuneWin.length = 0;
         } else
@@ -4340,7 +4087,7 @@ function init(){
         // nem na menor escala, a coroa volta ao plano de gradiente
         // (fallback) e o resto do tier sobrevive. É o gate de código do
         // piso de 24fps: nenhuma medição é pedida ao dono.
-        if (CVOL_STEPS > 0 && !cvolKilled && CVOL_K > 0.001){
+        if (CVOL_STEPS > 0 && !cvolKilled && ctx.CVOL_K > 0.001){
           cvolKilled = true; tuneEvents++;
           tuneCooldown = 4; tuneWin.length = 0;
         } else {
@@ -4378,7 +4125,7 @@ function init(){
         var now = performance.now();
         while (perfBakes.length && now - perfBakes[0] > 5000) perfBakes.shift();
         var f = stats(perfFrameMs, perfN);
-        return { tier: TIER, scale: RENDER_SCALE, dpr: pixelRatio,
+        return { tier: TIER, scale: RENDER_SCALE, dpr: ctx.pixelRatio,
                  autoScale: SCALE_STEPS[scaleIdx],
                  tune: { on: autoTuneOn, events: tuneEvents },
                  frames: perfN, ms: f, busy: stats(perfBusyMs, perfN),
@@ -4389,7 +4136,7 @@ function init(){
       };
       // painel de knobs ativos (introspecção p/ QA e usuário)
       window.__solInfo.knobs = function(){
-        return { speed: TIME_SCALE, idle: IDLE_CINE,
+        return { speed: ctx.TIME_SCALE, idle: ctx.IDLE_CINE,
                  bloom: compUniforms.uBloomStrength.value, bloomth: BLOOM_THRESHOLD,
                  exposure: compUniforms.uExposure.value, sat: compUniforms.uSat.value,
                  vig: compUniforms.uVig.value, grain: compUniforms.uGrain.value,
@@ -4406,13 +4153,13 @@ function init(){
                  hand: HAND_K,
                  loops: LOOP_K,
                  burst: BURST_K,
-                 cycle: CYCLE_K,
-                 lapse: LAPSE_K,
-                 fprom: FPROM_K,
-                 cvol: CVOL_K,
-                 cme: CME_K,
-                 dof: DOF_K,
-                 director: DIRECTOR_ON,
+                 cycle: ctx.CYCLE_K,
+                 lapse: ctx.LAPSE_K,
+                 fprom: ctx.FPROM_K,
+                 cvol: ctx.CVOL_K,
+                 cme: ctx.CME_K,
+                 dof: ctx.DOF_K,
+                 director: ctx.DIRECTOR_ON,
                  adaptMul: compUniforms.uAdapt.value,
                  look: LOOK ? 'sunshine' : '' };
       };
@@ -4421,14 +4168,14 @@ function init(){
       };
       // FASE 4: estado da coroa volumétrica (QA: tier-gate, bake, kill)
       window.__solInfo.coronaInfo = function(){
-        return { steps: CVOL_STEPS, res: CVOL_N, k: CVOL_K,
-                 on: CVOL_STEPS > 0 && CVOL_K > 0.001 && !cvolKilled &&
+        return { steps: CVOL_STEPS, res: CVOL_N, k: ctx.CVOL_K,
+                 on: CVOL_STEPS > 0 && ctx.CVOL_K > 0.001 && !cvolKilled &&
                      subToggle.corona && subToggle.corona3d,
                  ready: cvolReady, killed: cvolKilled, cycles: cvolCycles };
       };
       window.__solInfo.setCvol = function(v){
-        CVOL_K = Math.min(1.5, Math.max(0, +v || 0));
-        return CVOL_K;
+        ctx.CVOL_K = Math.min(1.5, Math.max(0, +v || 0));
+        return ctx.CVOL_K;
       };
       // re-bake síncrono do volume (QA: sob ?hold o bake fatiado congela;
       // depois de setCyclePhase a captura precisa do volume da fase nova)
@@ -4477,7 +4224,7 @@ function init(){
       };
       // FASE 3 — QA do ciclo de 11 anos: fase/índice/sinais correntes...
       window.__solInfo.cycleInfo = function(){
-        return { cycle: CYCLE_K, lapse: LAPSE_K, depth: cycleDepth(),
+        return { cycle: ctx.CYCLE_K, lapse: ctx.LAPSE_K, depth: cycleDepth(),
                  phase: cyclePhase01, n: cycleN, hale: cycleHale,
                  amp: cycleAmpK, pol: cyclePolF, polNorth: cyclePolarN.w,
                  warp: cycleWarp,
@@ -4682,8 +4429,8 @@ function init(){
       // eixos do sweep de calibração (painel de juízes) sem rebuild:
       // knob ao vivo + ganho do núcleo denso da casca
       window.__solInfo.setCme = function(v){
-        CME_K = Math.min(1.5, Math.max(0, +v || 0));
-        return CME_K;
+        ctx.CME_K = Math.min(1.5, Math.max(0, +v || 0));
+        return ctx.CME_K;
       };
       window.__solInfo.setCmeCore = function(x){
         cmeCoreGain = Math.min(2.5, Math.max(0, +x || 0));
@@ -4693,7 +4440,7 @@ function init(){
         var g = cmeGeomAt(cmeT < 900 ? cmeT : 0);
         return { on: cmeT < 900, t: cmeT < 900 ? cmeT : -1, amp: cmeAmp,
                  count: cmeCount, steps: CME_STEPS, killed: cmeKilled,
-                 knob: CME_K, cooldown: +cmeCooldown.toFixed(2),
+                 knob: ctx.CME_K, cooldown: +cmeCooldown.toFixed(2),
                  front: +g.front.toFixed(3), rho: +g.rho.toFixed(3),
                  cx: +g.cx.toFixed(3), env: +g.env.toFixed(3),
                  hdr: +lastCmeHDR.toFixed(3),
@@ -4711,7 +4458,7 @@ function init(){
         return dofFocusOverride;
       };
       window.__solInfo.dofInfo = function(){
-        return { knob: DOF_K, amt: compUniforms.uDof.value,
+        return { knob: ctx.DOF_K, amt: compUniforms.uDof.value,
                  focus: compUniforms.uDofFocus.value,
                  override: dofFocusOverride };
       };
@@ -4724,7 +4471,7 @@ function init(){
       // FASE 5 — QA do modo diretor: salto de relógio (fotografar um
       // beat sem esperar a sequência; os beats disparam na entrada)
       window.__solInfo.directorSkip = function(t){
-        if (!DIRECTOR_ON) return false;
+        if (!ctx.DIRECTOR_ON) return false;
         if (dirT <= -900) return false;
         dirT = Math.max(0, +t || 0);
         return dirT;
@@ -4732,11 +4479,11 @@ function init(){
       // FASE 5 — QA do modo diretor: relógio/beat correntes
       window.__solInfo.directorInfo = function(){
         var beat = -1, t = dirT;
-        if (DIRECTOR_ON && t >= 0){
+        if (ctx.DIRECTOR_ON && t >= 0){
           beat = t < 10 ? 0 : t < 22 ? 1 : t < 30 ? 2 : t < 48 ? 3 :
                  t < 64 ? 4 : t < 78 ? 5 : 6;
         }
-        return { enabled: DIRECTOR_ON, active: directorActive(),
+        return { enabled: ctx.DIRECTOR_ON, active: directorActive(),
                  t: +Math.max(-1, t).toFixed(2), beat: beat, pair: dirPair,
                  flareFired: dirFlareFired, cmeFired: dirCmeFired };
       };
@@ -4819,21 +4566,21 @@ function init(){
 
     function saveKnob(k, v){
       try {
-        savedKnobs[k] = v;
-        localStorage.setItem('solKnobs', JSON.stringify(savedKnobs));
+        ctx.savedKnobs[k] = v;
+        localStorage.setItem('solKnobs', JSON.stringify(ctx.savedKnobs));
       } catch(e){}
     }
     var DEFS = [
       { sec: 'tempo' },
       { k:'speed', label:'Ritmo do tempo', lo:0.05, hi:2, step:0.05, dflt:1,
-        get:function(){ return TIME_SCALE; }, set:function(v){ TIME_SCALE = v; } },
+        get:function(){ return ctx.TIME_SCALE; }, set:function(v){ ctx.TIME_SCALE = v; } },
       { k:'pmode', label:'Oscilações (p-modes)', lo:0, hi:1, step:0.05, dflt:0,
         get:function(){ return sunUniforms.uPmode.value; },
         set:function(v){ sunUniforms.uPmode.value = v; } },
       { k:'cycle', label:'Ciclo de 11 anos', lo:0, hi:1.5, step:0.05, dflt:0,
-        get:function(){ return CYCLE_K; }, set:function(v){ CYCLE_K = v; } },
+        get:function(){ return ctx.CYCLE_K; }, set:function(v){ ctx.CYCLE_K = v; } },
       { k:'lapse', label:'Time-lapse do ciclo', lo:0, hi:1.5, step:0.05, dflt:0,
-        get:function(){ return LAPSE_K; }, set:function(v){ LAPSE_K = v; } },
+        get:function(){ return ctx.LAPSE_K; }, set:function(v){ ctx.LAPSE_K = v; } },
       { sec: 'luz & cor' },
       { k:'bloom', label:'Bloom', lo:0, hi:2.5, step:0.05, dflt:1,
         get:function(){ return BLOOM_STRENGTH_BASE/BLOOM_BASE0; },
@@ -4881,7 +4628,7 @@ function init(){
       { k:'hand', label:'Câmera de mão', lo:0, hi:1.5, step:0.05, dflt:0,
         get:function(){ return HAND_K; }, set:function(v){ HAND_K = v; } },
       { k:'dof', label:'Foco raso (bokeh hex)', lo:0, hi:1.5, step:0.05, dflt:0,
-        get:function(){ return DOF_K; }, set:function(v){ DOF_K = v; } },
+        get:function(){ return ctx.DOF_K; }, set:function(v){ ctx.DOF_K = v; } },
       { sec: 'coroa' },
       { k:'halo', label:'Halo coronal', lo:0, hi:1.6, step:0.05, dflt:0.55,
         get:function(){ return coronaRaysUniforms.uHalo.value; },
@@ -4893,13 +4640,13 @@ function init(){
         get:function(){ return coronaRaysUniforms.uActGain.value; },
         set:function(v){ coronaRaysUniforms.uActGain.value = v; } },
       { k:'cvol', label:'Coroa volumétrica (raymarch)', lo:0, hi:1.5, step:0.05, dflt:0,
-        get:function(){ return CVOL_K; }, set:function(v){ CVOL_K = v; } },
+        get:function(){ return ctx.CVOL_K; }, set:function(v){ ctx.CVOL_K = v; } },
       { k:'cme', label:'CME (erupção)', lo:0, hi:1.5, step:0.05, dflt:0,
-        get:function(){ return CME_K; }, set:function(v){ CME_K = v; } },
+        get:function(){ return ctx.CME_K; }, set:function(v){ ctx.CME_K = v; } },
       { k:'loops', label:'Loops coronais', lo:0, hi:1.5, step:0.05, dflt:0,
         get:function(){ return LOOP_K; }, set:function(v){ LOOP_K = v; } },
       { k:'fprom', label:'Filamento ↔ proeminência', lo:0, hi:1.5, step:0.05, dflt:0,
-        get:function(){ return FPROM_K; }, set:function(v){ FPROM_K = v; } },
+        get:function(){ return ctx.FPROM_K; }, set:function(v){ ctx.FPROM_K = v; } },
       { sec: 'céu' },
       { k:'stars', label:'Estrelas', lo:0, hi:2, step:0.05, dflt:1,
         get:function(){ return stars.material.opacity/STARS_OP0; },
@@ -4949,11 +4696,11 @@ function init(){
     // switch da câmera idle cinematográfica
     var swRow = document.createElement('div'); swRow.className = 'switch';
     var swLab = document.createElement('span'); swLab.textContent = 'Câmera contemplativa';
-    var sw = document.createElement('div'); sw.className = 'sw' + (IDLE_CINE ? ' on' : '');
+    var sw = document.createElement('div'); sw.className = 'sw' + (ctx.IDLE_CINE ? ' on' : '');
     sw.addEventListener('click', function(){
-      IDLE_CINE = !IDLE_CINE;
-      sw.classList.toggle('on', IDLE_CINE);
-      saveKnob('idle', IDLE_CINE ? 1 : 0);
+      ctx.IDLE_CINE = !ctx.IDLE_CINE;
+      sw.classList.toggle('on', ctx.IDLE_CINE);
+      saveKnob('idle', ctx.IDLE_CINE ? 1 : 0);
     });
     swRow.appendChild(swLab); swRow.appendChild(sw);
     panel.appendChild(swRow);
@@ -5029,9 +4776,9 @@ function init(){
     reset.id = 'knobReset'; reset.textContent = 'restaurar padrão';
     reset.addEventListener('click', function(){
       try { localStorage.removeItem('solKnobs'); } catch(e){}
-      savedKnobs = {};
+      ctx.savedKnobs = {};
       sliders.forEach(function(s){ s.d.set(s.d.dflt); s.inp.value = s.d.dflt; s.paint(s.d.dflt); });
-      if (IDLE_CINE){ IDLE_CINE = false; sw.classList.remove('on'); }
+      if (ctx.IDLE_CINE){ ctx.IDLE_CINE = false; sw.classList.remove('on'); }
     });
     panel.appendChild(reset);
     document.body.appendChild(panel);
@@ -5187,26 +4934,26 @@ function init(){
   var dirSavedCme = -1, dirSavedDof = -1;   // -1 = nada a restaurar
   var dirWorldTmp = new THREE.Vector3();
   var dirAng = { th: 0, ph: 0 };
-  function directorActive(){ return DIRECTOR_ON && dirT >= 0; }
+  function directorActive(){ return ctx.DIRECTOR_ON && dirT >= 0; }
   function directorUserExit(){
     if (!directorActive()) return;
     dirT = -999;   // permanente: o usuário assumiu a câmera
-    LAPSE_K = dirSavedLapse;
+    ctx.LAPSE_K = dirSavedLapse;
     dofFocusOverride = -1;
     // devolve os knobs que o diretor emprestou para a vitrine
-    if (dirSavedCme >= 0){ CME_K = dirSavedCme; dirSavedCme = -1; }
-    if (dirSavedDof >= 0){ DOF_K = dirSavedDof; dirSavedDof = -1; }
+    if (dirSavedCme >= 0){ ctx.CME_K = dirSavedCme; dirSavedCme = -1; }
+    if (dirSavedDof >= 0){ ctx.DOF_K = dirSavedDof; dirSavedDof = -1; }
   }
   // início pelo PAINEL (a sequência não pode depender de URL): liga o
   // modo em runtime e garante os knobs mínimos da vitrine — CME e foco
   // raso no valor do preset se estiverem abaixo dele (restaurados na
   // saída). Quem já tem os knobs altos não é tocado.
   function directorStart(){
-    DIRECTOR_ON = true;
+    ctx.DIRECTOR_ON = true;
     dirT = -1;
     dirFlareFired = false; dirCmeFired = false;
-    if (CME_STEPS > 0 && CME_K < 0.85){ dirSavedCme = CME_K; CME_K = 0.9; }
-    if (DOF_K < 0.5){ dirSavedDof = DOF_K; DOF_K = 0.5; }
+    if (CME_STEPS > 0 && ctx.CME_K < 0.85){ dirSavedCme = ctx.CME_K; ctx.CME_K = 0.9; }
+    if (ctx.DOF_K < 0.5){ dirSavedDof = ctx.DOF_K; ctx.DOF_K = 0.5; }
   }
   function dirEase(x){ x = Math.max(0, Math.min(1, x)); return x*x*(3 - 2*x); }
   function dirAimAt(w){
@@ -5240,7 +4987,7 @@ function init(){
     return a + d*k;
   }
   function directorTick(delta, rawDelta){
-    if (dirT < 0){ dirT = 0; dirSavedLapse = LAPSE_K; }
+    if (dirT < 0){ dirT = 0; dirSavedLapse = ctx.LAPSE_K; }
     dirT += delta;
     var t = dirT;
     thetaVel = 0; phiVel = 0;
@@ -5276,7 +5023,7 @@ function init(){
       // B3 — a erupção: flare X no limbo; a casca desprende ~1s depois
       // (slow rise → impulsiva, sincronizada com o envelope do flare)
       if (!dirFlareFired){ dirFlareFired = true; dirForceFlare(dirPair, 1.35); }
-      if (!dirCmeFired && t >= 31.0 && CME_STEPS > 0 && CME_K > 0.001 && !cmeKilled){
+      if (!dirCmeFired && t >= 31.0 && CME_STEPS > 0 && ctx.CME_K > 0.001 && !cmeKilled){
         dirCmeFired = true; launchCME(1.35);
       }
       w = dirRegionWorld(dirPair); dirAimAt(w);
@@ -5293,11 +5040,11 @@ function init(){
       // B5 — time-lapse documental: só a maquinaria de manchas corre
       var up = dirEase((t - 64)/3.0);
       var down = 1 - dirEase((t - 75)/3.0);
-      LAPSE_K = Math.max(dirSavedLapse, 0.85*up*down);
+      ctx.LAPSE_K = Math.max(dirSavedLapse, 0.85*up*down);
       theta += 0.010*rawDelta;
     } else if (t < 84){
       // B6 — assentar de volta ao plano geral
-      LAPSE_K = dirSavedLapse;
+      ctx.LAPSE_K = dirSavedLapse;
       targetCamDist += (fitDist*1.28 - targetCamDist)*(1 - Math.exp(-rawDelta/3.0));
       theta += 0.010*rawDelta;
     } else {
@@ -5311,17 +5058,17 @@ function init(){
   function animate(){
     requestAnimationFrame(animate);
     var frameT0 = performance.now();
-    if (DET && window.__solInfo) window.__solInfo.frame = ++detFrames;
+    if (DET && window.__solInfo) window.__solInfo.frame = ++ctx.detFrames;
     var rawDelta = DET
-      ? ((DET_HOLD > 0 && detFrames > DET_HOLD) ? 0 : (1/60))
+      ? ((DET_HOLD > 0 && ctx.detFrames > DET_HOLD) ? 0 : (1/60))
       : Math.min(clock.getDelta(), 0.1);
-    var delta = rawDelta * TIME_SCALE;
+    var delta = rawDelta * ctx.TIME_SCALE;
     elapsed += delta;
     sunUniforms.uTime.value = elapsed;
     // FASE 5 — modo diretor: coreografa câmera/eventos/knobs por cima
     // do estado (uma comparação sem ?director=1). dirT=-1 é "ainda não
     // começou" (o tick inicia); -999 é "usuário assumiu" (permanente).
-    if (DIRECTOR_ON && dirT > -900) directorTick(delta, rawDelta);
+    if (ctx.DIRECTOR_ON && dirT > -900) directorTick(delta, rawDelta);
 
     simAccum += delta;
     if (subToggle.sim){
@@ -5385,7 +5132,7 @@ function init(){
     // (cycleWarp), sem tocar rotação/sim/proeminências. Default 0:
     // warp fica 0.0 e elapsed+0.0 é bit-exato — baseline intocado.
     if (cycleDepth() > 0.001){
-      var cycMul = Math.max(1.0, CYCLE_K) + LAPSE_K * CYCLE_LAPSE_MUL;
+      var cycMul = Math.max(1.0, ctx.CYCLE_K) + ctx.LAPSE_K * CYCLE_LAPSE_MUL;
       cycleTime += delta * cycMul;
       if (cycMul > 1.0) cycleWarp += delta * (cycMul - 1.0);
       updateCycleState();
@@ -5478,7 +5225,7 @@ function init(){
       // facing que apaga a emissão contra o disco usa 1-s) — no limbo
       // os dois se cruzam e a estrutura continua através da borda.
       // Teto 0.55 = a mesma absorção máxima dos filamentos do bake.
-      if (FPROM_K > 0.001){
+      if (ctx.FPROM_K > 0.001){
         ps.flat.visible = true;
         var facingF = promWorldTmp.copy(ps.flat.userData.dir)
           .applyQuaternion(prominenceGroup.quaternion).dot(camDirN);
@@ -5492,7 +5239,7 @@ function init(){
         // teto 0.45 com fieldK saturado: filamento GONG é cinza-escuro
         // sobre o disco, nunca preto (juiz de realismo F3 — o teto
         // antigo 0.55·fieldK1.2=0.66 saturava o núcleo para preto)
-        fu.uAbsorb.value = Math.min(1.0, FPROM_K) * 0.45 * sF * Math.min(1.0, ps.fieldK);
+        fu.uAbsorb.value = Math.min(1.0, ctx.FPROM_K) * 0.45 * sF * Math.min(1.0, ps.fieldK);
       } else if (ps.flat.visible) ps.flat.visible = false;
     });
     prominenceMeshes.forEach(function(m){
@@ -5542,13 +5289,13 @@ function init(){
     // deriva lenta das cargas e para o time-lapse do ciclo). Com knob 0
     // nada aqui roda além do teste — custo e frame idênticos.
     if (CVOL_STEPS > 0){
-      var cvolOn = CVOL_K > 0.001 && !cvolKilled && subToggle.corona && subToggle.corona3d;
+      var cvolOn = ctx.CVOL_K > 0.001 && !cvolKilled && subToggle.corona && subToggle.corona3d;
       if (cvolOn && !cvolReady) cvolBakeFull();   // ligada ao vivo pelo painel
       coronaVol.visible = cvolOn;
-      coronaRaysUniforms.uCvolMix.value = cvolOn ? Math.min(1.0, CVOL_K) : 0.0;
+      coronaRaysUniforms.uCvolMix.value = cvolOn ? Math.min(1.0, ctx.CVOL_K) : 0.0;
       if (cvolOn){
         coronaVol.quaternion.copy(camera.quaternion);
-        cvolUniforms.uCvol.value = CVOL_K;
+        cvolUniforms.uCvol.value = ctx.CVOL_K;
         cvolUniforms.uTime.value = elapsed;
         cvolUniforms.uActivity.value = coronaRaysUniforms.uActivity.value;
         // mundo -> objeto: transposta da rotação do sunMesh (tilt+spin).
@@ -5595,7 +5342,7 @@ function init(){
       theta += 0.066*rawDelta;
       // ?idle=1: câmera idle cinematográfica — deriva orbital + balanço
       // de latitude + respiração de zoom, tudo senoidal (média zero)
-      if (IDLE_CINE){
+      if (ctx.IDLE_CINE){
         phi += 0.012*Math.sin(elapsed*0.11)*rawDelta;
         targetCamDist += Math.sin(elapsed*0.073)*0.010*rawDelta*targetCamDist;
       }
@@ -5631,11 +5378,11 @@ function init(){
     // aberto); o foco persegue o alvo com lerp curto — focus pull de
     // maquinista, não corte seco. Com knob 0 o ramo escreve 0 e o
     // branch do shader morre.
-    if (DOF_K > 0.001){
+    if (ctx.DOF_K > 0.001){
       var dofCloseK = Math.max(0, Math.min(1, (fitDist/camDist - 1.10)/1.10));
       var dofTgt = (dofFocusOverride >= 0) ? dofFocusOverride : 0.0;
       dofFocusCur += (dofTgt - dofFocusCur) * (1.0 - Math.exp(-rawDelta/0.35));
-      compUniforms.uDof.value = DOF_K * dofCloseK*dofCloseK * 0.026;
+      compUniforms.uDof.value = ctx.DOF_K * dofCloseK*dofCloseK * 0.026;
       compUniforms.uDofFocus.value = dofFocusCur;
     } else compUniforms.uDof.value = 0.0;
     // FASE 1 — brilho HDR REAL do flare na lente: envelope (2 fases) ×

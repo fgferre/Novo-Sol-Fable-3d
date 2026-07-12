@@ -10,6 +10,8 @@ import { createActivity } from './sim/activity.js';
 import { createPIL } from './surface/pil.js';
 import { createChromo } from './surface/chromo.js';
 import { createSunBase, createSunUniforms, createSunMesh } from './surface/sun.js';
+import { createCoronaRays } from './atmosphere/coronaRays.js';
+import { createCoronaVolume } from './atmosphere/coronaVolume.js';
 import { createRenderer, createRenderInfra, createRTType } from './core/renderer.js';
 
 THREE.ColorManagement.enabled = false;
@@ -107,335 +109,16 @@ function init(){
   createSunMesh(ctx);
   var sunMesh = ctx.sunMesh;
 
-  // ---------------------------------------------------------------
-  // (A antiga "casca de brilho" aditiva foi removida: ela criava um anel
-  // branco artificial na borda, o oposto do escurecimento de limbo real.
-  // O brilho externo agora vem de uma coroa suave, abaixo.)
-  // ---------------------------------------------------------------
+  createCoronaRays(ctx);
+  var coronaRays = ctx.coronaRays, coronaOuter = ctx.coronaOuter,
+      coronaRaysUniforms = ctx.coronaRaysUniforms, CORONA_SIZE = ctx.CORONA_SIZE;
 
-  // ---------------------------------------------------------------
-  // Coroa: gradientes radiais suaves. O truque para não virar "anel" nem
-  // lavar o disco é deixar o centro TRANSPARENTE (o disco aparece através)
-  // e o brilho surgir logo além da borda, desaparecendo devagar.
-  // ---------------------------------------------------------------
-  function makeRadialTexture(stops, size){
-    size = size || 512;
-    var c = document.createElement('canvas');
-    c.width = c.height = size;
-    var ctx = c.getContext('2d');
-    var g = ctx.createRadialGradient(size/2,size/2,0,size/2,size/2,size/2);
-    stops.forEach(function(s){ g.addColorStop(s[0], s[1]); });
-    ctx.fillStyle = g;
-    ctx.fillRect(0,0,size,size);
-    var tex = new THREE.CanvasTexture(c);
-    tex.needsUpdate = true;
-    return tex;
-  }
-
-  // (o gradiente interno foi substituído pelo shader de raios abaixo)
-  var coronaOuterTex = makeRadialTexture([
-    [0.00,'rgba(255,150,70,0)'],
-    [0.40,'rgba(255,140,60,0)'],
-    [0.52,'rgba(255,120,48,0.028)'],
-    [0.75,'rgba(255,90,32,0.010)'],
-    [1.00,'rgba(255,70,20,0)']
-  ]);
-
-  // Coroa interna com RAIOS RADIAIS (a assinatura visual de fotos de
-  // eclipse): plano orientado à câmera, com falloff exponencial a partir
-  // do limbo e raias moduladas por ruído angular que evoluem devagar.
-  var CORONA_SIZE = SUN_RADIUS*7.0;
-  // T1.3: halo 0.55 = variante c2 do sweep, a melhor leitura de DP
-  // (transição disco->céu suave, decaimento monotônico, sem anel); os
-  // gates A/D agora capturam com a coroa isolada (qa-elements), então o
-  // halo pleno não os contamina. cray 0.90 é o mínimo que torna os
-  // streamers legíveis; cact 0.50 faz a coroa respirar com o ciclo.
-  var coronaRaysUniforms = {
-    uTime: { value: 0 },
-    uRight: { value: new THREE.Vector3(1,0,0) },
-    uUp: { value: new THREE.Vector3(0,1,0) },
-    uRotY: { value: 0 },
-    uCharges: { value: charges },
-    uActivity: { value: 0.5 },
-    uHalo: { value: knob('halo', 0.55, 0.0, 2.0) },
-    uActGain: { value: knob('cact', 0.50, 0.0, 2.0) },
-    uRayBoost: { value: knob('ray', 0.90, 0.0, 3.0) },
-    // FASE 4: com a coroa volumétrica ligada o plano de raias cede o
-    // protagonismo (fica como base suave de halo). 0.0 default =
-    // multiplicação por 1.0 no shader, bit-exata — baseline intocado.
-    uCvolMix: { value: 0.0 }
-  };
-  var coronaRaysMat = new THREE.ShaderMaterial({
-    uniforms: coronaRaysUniforms,
-    vertexShader: uvMeshVertex,
-    fragmentShader: NOISE_GLSL + '\n' + [
-      'uniform float uTime;',
-      'uniform vec3 uRight;',
-      'uniform vec3 uUp;',
-      'uniform float uRotY;',
-      'uniform vec4 uCharges[10];',
-      'uniform float uActivity;',
-      'uniform float uHalo;',
-      'uniform float uActGain;',
-      'uniform float uRayBoost;',
-      'uniform float uCvolMix;',
-      'varying vec2 vUv;',
-      'void main(){',
-      '  vec2 c = vUv - 0.5;',
-      '  float r = length(c)*2.0;',                 // 0 centro -> 1 borda do plano
-      '  float diskR = 2.0/7.0;',                   // raio do disco solar neste plano
-      '  float ang = atan(c.y, c.x);',
-      // T1.3: a raia vive no REFERENCIAL DO SOL. Direção 3D do ponto do
-      // plano do céu (base da câmera) girada para o espaço do objeto: as
-      // raias acompanham a rotação e as regiões ativas — não são mais um
-      // papel de parede da tela
-      '  vec3 dirW = normalize(uRight*cos(ang) + uUp*sin(ang));',
-      '  float cy = cos(-uRotY); float sy = sin(-uRotY);',
-      '  vec3 dirO = vec3(dirW.x*cy - dirW.z*sy, dirW.y, dirW.x*sy + dirW.z*cy);',
-      // coroa VIVA (backlog M2 nº4): os raios evoluíam a uTime*0.006 —
-      // diff 0.00 em qualquer clipe, a camada morta que quebrava a
-      // ilusão por contraste com as vivas. Três tempos: deriva angular
-      // própria LENTA do padrão (a coroa não é rígida com a fotosfera),
-      // evolução do fbm ~5x mais rápida e flicker 1/f por direção —
-      // a luz treme como em filme de eclipse. Streamers (act) seguem
-      // ancorados às cargas: a física não muda, só o padrão respira.
-      '  float ca = cos(uTime*0.010); float sa = sin(uTime*0.010);',
-      '  vec3 ap = vec3(dirO.x*ca - dirO.z*sa, dirO.y, dirO.x*sa + dirO.z*ca)*2.6;',
-      '  float rays = fbmLight(ap + vec3(0.0, 0.0, uTime*0.030));',
-      '  rays = 0.68 + 0.36*rays;',
-      '  float rays2 = fbmLight(ap*2.7 + vec3(7.3, 0.0, uTime*0.045));',
-      '  rays *= 0.85 + 0.25*rays2;',
-      '  float flick = fbmLight(dirO*1.9 + vec3(3.7, 8.2, uTime*0.55));',
-      '  rays *= 0.90 + 0.20*flick;',
-      // streamers nascem SOBRE as regiões ativas: reforço por carga
-      '  float act = 0.0;',
-      '  for(int i=0;i<10;i++){',
-      '    vec3 cd = uCharges[i].xyz;',
-      '    float cl = length(cd);',
-      '    if (cl < 1e-4) continue;',
-      '    float dA = acos(clamp(dot(dirO, cd/cl), -1.0, 1.0));',
-      '    act += abs(uCharges[i].w) * exp(-dA*dA*9.0);',
-      '  }',
-      '  rays *= 1.0 + uRayBoost*min(act, 1.4);',
-      // falloff: núcleo justo + RESPIRO largo (halo coronal — o bloom não
-      // atravessa o limbo escurecido, T2.1)
-      '  float fall = exp(-(r-diskR)*22.0) + uHalo*exp(-(r-diskR)*7.0);',
-      '  fall *= smoothstep(diskR*0.92, diskR*1.06, r);',
-      '  fall *= smoothstep(0.85, 0.55, r);',        // some bem antes da borda do plano
-      '  vec3 col = mix(vec3(1.0,0.45,0.16), vec3(1.0,0.72,0.38), clamp((r-diskR)*2.2,0.0,1.0));',
-      // amplitude respira com a atividade global do ciclo
-      '  gl_FragColor = vec4(col * fall * rays * 0.16 * (1.0 + uActGain*uActivity) * (1.0 - 0.62*uCvolMix), 1.0);',
-      '}'
-    ].join('\n'),
-    transparent: true,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    depthTest: false
-  });
-  var coronaRays = new THREE.Mesh(new THREE.PlaneGeometry(CORONA_SIZE, CORONA_SIZE), coronaRaysMat);
-  coronaRays.renderOrder = -1;
-  scene.add(coronaRays);
-
-  var coronaOuter = new THREE.Sprite(new THREE.SpriteMaterial({map:coronaOuterTex, blending:THREE.AdditiveBlending, transparent:true, depthWrite:false}));
-  coronaOuter.scale.set(SUN_RADIUS*6.0, SUN_RADIUS*6.0, 1);
-  scene.add(coronaOuter);
-
-  // ---------------------------------------------------------------
-  // FASE 4 — "a coroa de verdade": coroa volumétrica raymarched.
-  // A densidade coronal vive num sampler3D 64³ (payoff do WebGL2)
-  // bakeado na CPU pelo MESMO campo de cargas (bFieldJS), fatiado como
-  // o bake da cromosfera (1 fatia z/frame, snapshot de cargas no
-  // início do ciclo, upload atômico no fim — sem tearing). A topologia
-  // aberta/fechada sai de um proxy físico barato, a UNIPOLARIDADE
-  // |B·r̂|/|B|: folhas de helmet streamer nascem na superfície neutra
-  // (unip≈0) e afinam com a altura (cúspide); buracos coronais são as
-  // regiões unipolares fortes perto da superfície (polos no mínimo do
-  // ciclo — emergente do dipolo polar da F3, sem heurística nova). No
-  // máximo a superfície neutra ondula por todas as latitudes = coroa
-  // "cheia" (refs 09/12); no mínimo sobra o cinturão equatorial +
-  // buracos polares. Tier-gated (cstep=0 => o plano de raias segue
-  // sozinho como fallback); knob cvol default 0 = mesh invisível.
-  // ---------------------------------------------------------------
-  var CVOL_STEPS = TP.cstep | 0;
-  var CVOL_N = 64, CVOL_VR = 3.0, CVOL_ROUT = 2.88;
-  var cvolStep = -1, cvolAccum = 0, cvolReady = false, cvolKilled = false, cvolCycles = 0;
-  var coronaVol = null, cvolUniforms = null, cvolTex = null;
-  var cvolData = null, cvolStage = null;
-  var cvolQ = new Float32Array(40);       // snapshot das 10 cargas (x,y,z,w)
-  var cvolInvRot = new THREE.Matrix3();
-  function snapshotCvolCharges(){
-    for (var i = 0; i < charges.length; i++){
-      cvolQ[i*4]   = charges[i].x; cvolQ[i*4+1] = charges[i].y;
-      cvolQ[i*4+2] = charges[i].z; cvolQ[i*4+3] = charges[i].w;
-    }
-  }
-  // pesos da mistura de densidade — ajustáveis em runtime pelo hook
-  // setCvolShape (sweep de calibração sem rebuild); os defaults são o
-  // resultado do painel de juízes da rodada
-  var cvolWBase = 0.30, cvolWSheet = 0.85, cvolWLoop = 0.55, cvolWHole = 0.62;
-  // densidade coronal num ponto do espaço do objeto (esfera unitária)
-  function cvolDensity(x, y, z){
-    var r = Math.sqrt(x*x + y*y + z*z);
-    if (r < 1.005 || r > CVOL_ROUT) return 0;
-    var bx = 0, by = 0, bz = 0;
-    for (var i = 0; i < 10; i++){
-      var dx = x - cvolQ[i*4], dy = y - cvolQ[i*4+1], dz = z - cvolQ[i*4+2];
-      var r2 = dx*dx + dy*dy + dz*dz + 1e-3;
-      var k = cvolQ[i*4+3] / (r2 * Math.sqrt(r2));
-      bx += dx*k; by += dy*k; bz += dz*k;
-    }
-    var bm = Math.sqrt(bx*bx + by*by + bz*bz) + 1e-9;
-    var unip = Math.abs((bx*x + by*y + bz*z) / (r * bm));
-    // base hidrostática (escala de altura 0.42R: satura na base e morre
-    // em ~2.5-3R como nas fotos de eclipse — refs 09/12)
-    var base = Math.exp(-(r - 1.0) * 2.38);
-    // folha de streamer na superfície neutra; o expoente cresce com a
-    // altura => a folha afunila (base larga ~30-40°, cúspide estreita)
-    var sheet = Math.exp(-unip*unip * (6.0 + 18.0*(r - 1.0)));
-    // coroa baixa presa às regiões ativas (|B| alto, só perto da base)
-    var loopBase = Math.min(1.1, bm*0.5) * Math.exp(-(r - 1.0) * 6.2);
-    // buraco coronal: unipolar forte perto da superfície rarefaz
-    // (interior quase preto na ref-11)
-    var hu = (unip - 0.60) / 0.30;
-    hu = hu < 0 ? 0 : (hu > 1 ? 1 : hu);
-    hu = hu*hu*(3.0 - 2.0*hu);
-    var hole = hu * Math.exp(-(r - 1.0) * 3.3);
-    var dens = base * (cvolWBase + cvolWSheet*sheet + cvolWLoop*loopBase) * (1.0 - cvolWHole*hole);
-    // fade externo: o shell de marcha não corta seco em ROUT
-    var fo = (CVOL_ROUT - 0.06 - r) * 4.0;
-    if (fo < 0) fo = 0; else if (fo > 1) fo = 1;
-    dens *= fo;
-    return dens <= 0 ? 0 : (dens > 1 ? 1 : dens);
-  }
-  function bakeCvolSlice(iz){
-    if (iz >= CVOL_N) return;
-    var inv = (2.0*CVOL_VR) / CVOL_N, off = -CVOL_VR + 0.5*inv;
-    var z = off + iz*inv, rowBase = iz * CVOL_N * CVOL_N;
-    for (var iy = 0; iy < CVOL_N; iy++){
-      var y = off + iy*inv, idx = rowBase + iy*CVOL_N;
-      for (var ix = 0; ix < CVOL_N; ix++){
-        var d = cvolDensity(off + ix*inv, y, z);
-        // sqrt-encode: 8 bits rendem melhor onde a coroa é tênue
-        cvolStage[idx + ix] = (Math.sqrt(d) * 255) | 0;
-      }
-    }
-  }
-  function cvolBakeFull(){
-    snapshotCvolCharges();
-    for (var iz = 0; iz < CVOL_N; iz++) bakeCvolSlice(iz);
-    cvolData.set(cvolStage);
-    cvolTex.needsUpdate = true;
-    cvolReady = true; cvolCycles++; cvolStep = -1;
-  }
-  if (CVOL_STEPS > 0){
-    cvolData = new Uint8Array(CVOL_N*CVOL_N*CVOL_N);
-    cvolStage = new Uint8Array(CVOL_N*CVOL_N*CVOL_N);
-    cvolTex = new THREE.Data3DTexture(cvolData, CVOL_N, CVOL_N, CVOL_N);
-    cvolTex.format = THREE.RedFormat;
-    cvolTex.type = THREE.UnsignedByteType;
-    cvolTex.minFilter = THREE.LinearFilter;
-    cvolTex.magFilter = THREE.LinearFilter;
-    cvolTex.wrapS = cvolTex.wrapT = cvolTex.wrapR = THREE.ClampToEdgeWrapping;
-    cvolTex.unpackAlignment = 1;
-    cvolTex.needsUpdate = true;
-    cvolUniforms = {
-      uVol: { value: cvolTex },
-      uInvRot: { value: cvolInvRot },
-      uCvol: { value: 0 },
-      uActivity: { value: 0.5 },
-      uTime: { value: 0 },
-      // contraste das raias finas procedurais sobre o volume (0 =
-      // liso). 0.55 = v1-fil-suave, vencedora do painel de 3 juízes
-      // da F4 (mediana 7.8: leitura orgânica de eclipse, sem o padrão
-      // "penteado" CG do contraste cheio) — sweep 6×2 via
-      // setCvolFil/setCvolShape, sem rebuild por variante
-      uFil: { value: 0.55 }
-    };
-    var cvolMat = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
-      uniforms: cvolUniforms,
-      vertexShader: [
-        'varying vec3 vWorld;',
-        'void main(){',
-        '  vec4 w = modelMatrix * vec4(position, 1.0);',
-        '  vWorld = w.xyz;',
-        '  gl_Position = projectionMatrix * viewMatrix * w;',
-        '}'
-      ].join('\n'),
-      fragmentShader: NOISE_GLSL + '\n' + [
-        'precision highp sampler3D;',
-        '#define CVOL_STEPS ' + CVOL_STEPS,
-        '#define SUN_R ' + SUN_RADIUS.toFixed(4),
-        'uniform sampler3D uVol;',
-        'uniform mat3 uInvRot;',
-        'uniform float uCvol;',
-        'uniform float uActivity;',
-        'uniform float uTime;',
-        'uniform float uFil;',
-        'varying vec3 vWorld;',
-        // GLSL3: sem gl_FragColor — saída explícita
-        'out vec4 fragColor;',
-        'void main(){',
-        // raio de PERSPECTIVA real (não a aproximação angular do plano
-        // de raias): da câmera pelo vértice do billboard
-        '  vec3 ro = cameraPosition;',
-        '  vec3 rd = normalize(vWorld - cameraPosition);',
-        '  float b = dot(ro, rd);',
-        '  float R = SUN_R * ' + CVOL_ROUT.toFixed(3) + ';',
-        '  float disc = b*b - (dot(ro,ro) - R*R);',
-        '  if (disc <= 0.0){ fragColor = vec4(0.0); return; }',
-        '  float sq = sqrt(disc);',
-        '  float t0 = max(-b - sq, 0.0);',
-        '  float t1 = -b + sq;',
-        // raio que atinge o DISCO não contribui: a coroa à frente do
-        // disco é ~1e-6 do brilho dele (invisível na realidade), e os
-        // transparentes desenham DEPOIS dos opacos — sem este corte o
-        // segmento frontal somaria brilho por cima do disco (QA G1)
-        '  float di = b*b - (dot(ro,ro) - SUN_R*SUN_R);',
-        '  if (di > 0.0){ fragColor = vec4(0.0); return; }',
-        '  if (t1 <= t0 + 1e-4){ fragColor = vec4(0.0); return; }',
-        '  float dt = (t1 - t0) / float(CVOL_STEPS);',
-        // jitter determinístico por pixel (esconde banding; det=ok)
-        '  float jit = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898,78.233)))*43758.5453);',
-        '  float t = t0 + dt*jit;',
-        '  float sum = 0.0; float hsum = 0.0;',
-        '  for (int i = 0; i < CVOL_STEPS; i++){',
-        '    vec3 pO = (uInvRot * (ro + rd*t)) * (1.0/SUN_R);',
-        '    float d = texture(uVol, pO*' + (0.5/CVOL_VR).toFixed(6) + ' + 0.5).r;',
-        '    d = d*d;',                       // decode do sqrt-encode
-        '    sum += d;',
-        '    hsum += d*length(pO);',
-        '    t += dt;',
-        '  }',
-        '  if (sum <= 1e-5){ fragColor = vec4(0.0); return; }',
-        '  float hMean = hsum / sum;',
-        // raias finas + flicker 1/f no referencial do objeto — a mesma
-        // vida do plano de raias (uma avaliação por pixel, não por passo)
-        '  vec3 dirO = normalize(uInvRot * normalize(vWorld));',
-        '  float f1 = fbmLight(dirO*3.1 + vec3(0.0, 0.0, uTime*0.030));',
-        '  float f2 = fbmLight(dirO*7.3 + vec3(5.1, 2.2, uTime*0.045));',
-        '  float flick = fbmLight(dirO*1.9 + vec3(3.7, 8.2, uTime*0.55));',
-        '  float fil = (0.62 + 0.55*f1) * (0.80 + 0.34*f2) * (0.90 + 0.20*flick);',
-        '  fil = 1.0 + (fil - 1.0)*uFil;',
-        // paleta quente do projeto, esfriando com a altura média da luz
-        '  vec3 col = mix(vec3(1.0,0.72,0.42), vec3(1.0,0.46,0.20), clamp((hMean-1.0)*0.75, 0.0, 1.0));',
-        '  float amp = sum * dt * (1.0/SUN_R) * 0.14 * uCvol * fil * (0.70 + 0.60*uActivity);',
-        '  fragColor = vec4(col*amp, 1.0);',
-        '}'
-      ].join('\n'),
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      depthTest: false
-    });
-    coronaVol = new THREE.Mesh(new THREE.PlaneGeometry(CORONA_SIZE, CORONA_SIZE), cvolMat);
-    coronaVol.renderOrder = -1;
-    coronaVol.visible = false;
-    scene.add(coronaVol);
-    // knob ligado desde a carga (?cvol=): bake inicial síncrono com as
-    // cargas do frame 0 (determinístico) — a coroa nunca aparece vazia
-    if (ctx.CVOL_K > 0.001) cvolBakeFull();
-  }
+  createCoronaVolume(ctx);
+  var coronaVol = ctx.coronaVol, cvolUniforms = ctx.cvolUniforms,
+      CVOL_STEPS = ctx.CVOL_STEPS, CVOL_N = ctx.CVOL_N,
+      cvolBakeFull = ctx.cvolBakeFull, bakeCvolSlice = ctx.bakeCvolSlice,
+      snapshotCvolCharges = ctx.snapshotCvolCharges, cvolData = ctx.cvolData,
+      cvolStage = ctx.cvolStage, cvolTex = ctx.cvolTex, cvolInvRot = ctx.cvolInvRot;
 
   // ---------------------------------------------------------------
   // FASE 5 — "Erupção": CME de flux-rope que se desprende em flares
@@ -3055,8 +2738,8 @@ function init(){
         // nem na menor escala, a coroa volta ao plano de gradiente
         // (fallback) e o resto do tier sobrevive. É o gate de código do
         // piso de 24fps: nenhuma medição é pedida ao dono.
-        if (CVOL_STEPS > 0 && !cvolKilled && ctx.CVOL_K > 0.001){
-          cvolKilled = true; tuneEvents++;
+        if (CVOL_STEPS > 0 && !ctx.cvolKilled && ctx.CVOL_K > 0.001){
+          ctx.cvolKilled = true; tuneEvents++;
           tuneCooldown = 4; tuneWin.length = 0;
         } else {
           var k = TIER_ORDER.indexOf(TIER);
@@ -3137,9 +2820,9 @@ function init(){
       // FASE 4: estado da coroa volumétrica (QA: tier-gate, bake, kill)
       window.__solInfo.coronaInfo = function(){
         return { steps: CVOL_STEPS, res: CVOL_N, k: ctx.CVOL_K,
-                 on: CVOL_STEPS > 0 && ctx.CVOL_K > 0.001 && !cvolKilled &&
+                 on: CVOL_STEPS > 0 && ctx.CVOL_K > 0.001 && !ctx.cvolKilled &&
                      subToggle.corona && subToggle.corona3d,
-                 ready: cvolReady, killed: cvolKilled, cycles: cvolCycles };
+                 ready: ctx.cvolReady, killed: ctx.cvolKilled, cycles: ctx.cvolCycles };
       };
       window.__solInfo.setCvol = function(v){
         ctx.CVOL_K = Math.min(1.5, Math.max(0, +v || 0));
@@ -3155,11 +2838,11 @@ function init(){
       // pesos do bake de densidade + contraste das raias procedurais
       window.__solInfo.setCvolShape = function(o){
         o = o || {};
-        if (o.base  !== undefined) cvolWBase  = +o.base;
-        if (o.sheet !== undefined) cvolWSheet = +o.sheet;
-        if (o.loop  !== undefined) cvolWLoop  = +o.loop;
-        if (o.hole  !== undefined) cvolWHole  = +o.hole;
-        return { base: cvolWBase, sheet: cvolWSheet, loop: cvolWLoop, hole: cvolWHole };
+        if (o.base  !== undefined) ctx.cvolWBase  = +o.base;
+        if (o.sheet !== undefined) ctx.cvolWSheet = +o.sheet;
+        if (o.loop  !== undefined) ctx.cvolWLoop  = +o.loop;
+        if (o.hole  !== undefined) ctx.cvolWHole  = +o.hole;
+        return { base: ctx.cvolWBase, sheet: ctx.cvolWSheet, loop: ctx.cvolWLoop, hole: ctx.cvolWHole };
       };
       window.__solInfo.setCvolFil = function(x){
         if (cvolUniforms) cvolUniforms.uFil.value = Math.min(2, Math.max(0, +x || 0));
@@ -4258,8 +3941,8 @@ function init(){
     // deriva lenta das cargas e para o time-lapse do ciclo). Com knob 0
     // nada aqui roda além do teste — custo e frame idênticos.
     if (CVOL_STEPS > 0){
-      var cvolOn = ctx.CVOL_K > 0.001 && !cvolKilled && subToggle.corona && subToggle.corona3d;
-      if (cvolOn && !cvolReady) cvolBakeFull();   // ligada ao vivo pelo painel
+      var cvolOn = ctx.CVOL_K > 0.001 && !ctx.cvolKilled && subToggle.corona && subToggle.corona3d;
+      if (cvolOn && !ctx.cvolReady) cvolBakeFull();   // ligada ao vivo pelo painel
       coronaVol.visible = cvolOn;
       coronaRaysUniforms.uCvolMix.value = cvolOn ? Math.min(1.0, ctx.CVOL_K) : 0.0;
       if (cvolOn){
@@ -4273,19 +3956,19 @@ function init(){
         // updateMatrixWorld() aqui mudava o timing de update da cena
         // e deixava resíduo de 1 LSB nos ciclos de bake (QA F3)
         cvolInvRot.setFromMatrix4(sunMesh.matrixWorld).transpose();
-        cvolAccum += delta;
-        if (cvolStep < 0 && cvolAccum >= 0.9){
-          cvolStep = 0; cvolAccum = 0; snapshotCvolCharges();
+        ctx.cvolAccum += delta;
+        if (ctx.cvolStep < 0 && ctx.cvolAccum >= 0.9){
+          ctx.cvolStep = 0; ctx.cvolAccum = 0; snapshotCvolCharges();
         }
-        if (cvolStep >= 0){
+        if (ctx.cvolStep >= 0){
           // 1 fatia/frame: 2 fatias custavam ~2.9ms de busy p95 no mid
           // (A/B da rodada; orçamento CPU ≤1ms/frame). O ciclo vira
           // ~64 frames + folga de 0.9s — cadência de sobra para a
           // deriva das cargas (~150s) e para o lapse (ciclo em ~45s)
-          bakeCvolSlice(cvolStep);
-          cvolStep += 1;
-          if (cvolStep >= CVOL_N){
-            cvolStep = -1; cvolCycles++;
+          bakeCvolSlice(ctx.cvolStep);
+          ctx.cvolStep += 1;
+          if (ctx.cvolStep >= CVOL_N){
+            ctx.cvolStep = -1; ctx.cvolCycles++;
             cvolData.set(cvolStage);        // upload atômico: sem tearing
             cvolTex.needsUpdate = true;
           }

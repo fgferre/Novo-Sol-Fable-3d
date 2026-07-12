@@ -83,6 +83,7 @@ export function createPIL(ctx){
       return anchor;
     } catch(e){ pilStats.mode = 'fallback'; return null; }
   }
+  ctx.PIL_W = PIL_W; ctx.PIL_H = PIL_H;
   return { pilBrAt: pilBrAt, refreshPILBuffer: refreshPILBuffer,
            samplePILAnchor: samplePILAnchor, pilStats: pilStats };
 }

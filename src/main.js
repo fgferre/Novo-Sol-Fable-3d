@@ -8,6 +8,8 @@ import { createConfig } from './core/config.js';
 import { createGranulation } from './sim/granulation.js';
 import { createActivity } from './sim/activity.js';
 import { createPIL } from './surface/pil.js';
+import { createChromo } from './surface/chromo.js';
+import { createSunBase, createSunUniforms, createSunMesh } from './surface/sun.js';
 import { createRenderer, createRenderInfra, createRTType } from './core/renderer.js';
 
 THREE.ColorManagement.enabled = false;
@@ -64,6 +66,7 @@ function init(){
       .replace(/int i=-6;i<=6/g, 'int i=-3;i<=3')
       .replace(/float\(i\)\/6\.0/g, 'float(i)/3.0');
   }
+  ctx.tuneLic = tuneLic;
 
   createRenderInfra(ctx);
   var kelvinToRGB = ctx.kelvinToRGB, makeFullscreenScene = ctx.makeFullscreenScene,
@@ -81,11 +84,8 @@ function init(){
   var pilBrAt = ctx.pil.pilBrAt, refreshPILBuffer = ctx.pil.refreshPILBuffer,
       samplePILAnchor = ctx.pil.samplePILAnchor, pilStats = ctx.pil.pilStats;
 
-  // ---------------------------------------------------------------
-  // Superfície do Sol
-  // ---------------------------------------------------------------
-  var SUN_RADIUS = 2.2;
-  var sunGeometry = new THREE.SphereGeometry(SUN_RADIUS, SPHERE_SEG, SPHERE_SEG);
+  createSunBase(ctx);
+  var SUN_RADIUS = ctx.SUN_RADIUS, sunGeometry = ctx.sunGeometry;
 
   ctx.act = createActivity(ctx);
   var charges = ctx.act.charges, pairStates = ctx.act.pairStates,
@@ -97,610 +97,15 @@ function init(){
       CYCLE_LAPSE_MUL = ctx.act.CYCLE_LAPSE_MUL;
   ctx.charges = charges; ctx.pairStates = pairStates;
 
-  var sunUniforms = {
-    uTime: { value: 0 },
-    uDispScale: { value: SUN_RADIUS * 0.004 },
-    uChromoTex: { value: null },
-    uChromoFar: { value: null },
-    uChromoTexP: { value: null },
-    uChromoFarP: { value: null },
-    uBakeMix: { value: 1.0 },
-    uGranFreq: { value: TP.granFreq },
-    uCamDist: { value: 6.0 },
-    uCharges: { value: charges },
-    uFlare: { value: new THREE.Vector4(0, 0, 1, 0) },
-    // FASE 1 — moldura das fitas two-ribbon (tudo zero fora de flare):
-    // uFlareGeo = tangente da PIL (xyz) + meia-separação das fitas (w);
-    // uFlarePerp = através da PIL (xyz) + meio-comprimento da fita (w);
-    // uFlareRib = amplitude das fitas (x), largura (y), fase do ruído
-    // de recorte (z) — cada flare rasga diferente.
-    uFlareGeo: { value: new THREE.Vector4(1, 0, 0, 0.02) },
-    uFlarePerp: { value: new THREE.Vector4(0, 0, 1, 0.06) },
-    uFlareRib: { value: new THREE.Vector4(0, 0.010, 0, 1) },
-    uPlageEm: { value: knob('plageglow', 0.35, 0.0, 1.5) },
-    // Oscilações p-mode (heliosismologia): o Sol "toca" em modos acústicos
-    // de ~5 minutos (harmônicos esféricos de baixo grau, Leighton 1962).
-    // Aqui: 3 modos (l=2 m=0, l=2 m=2, l=3 m=1) com períodos comprimidos
-    // (~21-34s de parede; os reais são 296-317s) e amplitude exagerada
-    // ~10^4x (Δr/R real ≈ 10^-7 seria invisível) — mesma honestidade de
-    // VFX da convecção. Default 0 = desligado, frame idêntico ao baseline.
-    uPmode: { value: knob('pmode', 0.0, 0.0, 1.0) },
-    uSimTex: { value: simRTs[0].texture },
-    uSimTexel: { value: simUniforms.uTexel.value }
-  };
-  ctx.sunUniforms = sunUniforms;
+  createSunUniforms(ctx);
+  var sunUniforms = ctx.sunUniforms;
 
-  // ---------------------------------------------------------------
-  // BAKE ESTRUTURAL: as camadas de baixa frequência (turbulência,
-  // filamentos de linha neutra, plage) mudam devagar — não precisam ser
-  // recalculadas por pixel a cada frame. São renderizadas numa textura
-  // equirretangular a ~8Hz; o shader do disco vira um sampler + o que
-  // exige resolução plena (fibrilas LIC, manchas, limbo).
-  //   R = calor de larga escala   G = filamento   B = plage
-  // ---------------------------------------------------------------
-  var CHROMO_W = TP.chromo;
-  var CHROMO_H = CHROMO_W >> 1;
-  var chromoRT = new THREE.WebGLRenderTarget(CHROMO_W, CHROMO_H, simRTOptions);
-  chromoRT.texture.wrapS = THREE.RepeatWrapping;   // costura de longitude
-  var chromoUniforms = {
-    uTime: { value: 0 },
-    uSimTex: { value: simRTs[0].texture },
-    uSimTexel: { value: simUniforms.uTexel.value },
-    uGranFreq: { value: TP.granFreq },
-    uCharges: { value: charges }
-  };
-  var chromoFragment = NOISE_GLSL + '\n' + WORLEY_GLSL + '\n' + [
-    'uniform float uTime;',
-    'uniform sampler2D uSimTex;',
-    'uniform vec2 uSimTexel;',
-    'uniform float uGranFreq;',
-    'uniform vec4 uCharges[10];',
-    'varying vec2 vUv;'].join('\n') + '\n' + SFTDIR_GLSL + '\n' + BFIELD_GLSL + '\n' + LIC_GLSL + '\n' + [
-    'void main(){',
-    '  float lon = vUv.x*6.28318530718;',
-    '  float lat = (vUv.y-0.5)*3.14159265359;',
-    '  vec3 sp = vec3(cos(lat)*cos(lon), sin(lat), cos(lat)*sin(lon));',
-    '  float t = uTime;',
-    // larga escala: convecção (sim) + turbulência com distorção de domínio
-    '  float sim = texture2D(uSimTex, vUv).r;',
-    '  vec3 q = sp * 2.6;',
-    // fases ×0.15 (MACRO_SLOW): a turbulência de larga escala morfa em
-    // dezenas de segundos, não em segundos — era 0.045/0.05/0.06
-    '  vec2 w = vec2(fbm(q + vec3(0.0, 0.0, t*0.00675)), fbm(q + vec3(5.2, 1.3, -t*0.0075)));',
-    '  vec3 rq = q + 1.7*vec3(w.x, w.y, (w.x+w.y)*0.5);',
-    '  float turb = fbm(rq*1.7 + vec3(0.0, 0.0, t*0.009))*0.5+0.5;',
-    '  float heatLS = sim*0.60 + turb*0.40;',
-    '  heatLS = pow(max(heatLS, 0.0), 1.75) + 0.05;',
-    // rede de supergranulação: células ~30Mm; as BORDAS (F2-F1 pequeno)
-    // são a rede cromosférica brilhante que organiza o sol calmo
-    '  vec2 sg = worleyF1F2(sp*23.0 + vec3(0.0, 0.0, t*0.004));',
-    '  float network = 1.0 - smoothstep(0.0, 0.17, sg.y - sg.x);',
-    '  network *= 0.6 + 0.4*(snoise(sp*7.0 + vec3(1.3))*0.5+0.5);',
-    '  heatLS += network * 0.075;',
-    // campo magnético + ruído do sol calmo (idêntico ao shader do disco)
-    '  vec3 B = bField(sp);',
-    // sol calmo: a direção vem do GRADIENTE do fluxo transportado pela
-    // simulação (tapete magnético advectado) + um resto de ruído p/ vida
-    '  B += 0.30 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
-    '                   snoise(sp*2.4 + vec3(4.2,7.1,t*0.006)),',
-    '                   snoise(sp*2.4 + vec3(9.3,2.8,t*0.006)));',
-    '  vec3 gradEv = sftGrad(vUv);',
-    '  B += gradEv * 7.0;',
-    '  float Br = dot(B, sp);',
-    '  float Bmag = length(B) + 1e-5;',
-    // FÍSICA: filamentos e plage agora derivam do Br EVOLUÍDO (canal G
-    // da simulação, transportado pelo escoamento) — não mais do campo
-    // analítico das cargas. Br suavizado com cruz de 5 taps:
-    '  float brEv = texture2D(uSimTex, vUv).g*2.0 - 1.0;',
-    '  brEv = (brEv',
-    '    + (texture2D(uSimTex, vec2(fract(vUv.x + uSimTexel.x*2.0), vUv.y)).g*2.0 - 1.0)',
-    '    + (texture2D(uSimTex, vec2(fract(vUv.x - uSimTexel.x*2.0), vUv.y)).g*2.0 - 1.0)',
-    '    + (texture2D(uSimTex, vec2(vUv.x, clamp(vUv.y + uSimTexel.y*2.0, 0.0, 1.0))).g*2.0 - 1.0)',
-    '    + (texture2D(uSimTex, vec2(vUv.x, clamp(vUv.y - uSimTexel.y*2.0, 0.0, 1.0))).g*2.0 - 1.0)) / 5.0;',
-    '  float gradM = length(gradEv);',
-    // filamentos: linha de INVERSÃO do fluxo transportado (|Br|~0 com
-    // fluxo oposto em volta — é onde filamentos reais se sustentam)
-    '  float nl = abs(brEv) / (abs(brEv) + gradM*1.1 + 0.01);',
-    // filamentos reais são CANAIS largos e difusos (ref-02/03), não
-    // traços de caneta: máscaras mais largas e rampa mais longa
-    // Calibração contra envelope GONG (16 imagens reais 2012-2026, ver
-    // docs/audit-motion.md): canais reais são FINOS (0.005-0.012R),
-    // esparsos (8-15/disco, <1% de área) e independentes — larguras
-    // 0.13/0.21→0.038/0.058, rampas mais curtas, gates mais altos,
-    // filStr com teto menor (corta o colar colado à plage) e ganho
-    // 1.7→2.1 para o núcleo fino continuar legível. A FONTE não muda:
-    // canais seguem nascendo só nas linhas neutras do fluxo evoluído.
-    '  float filW1 = 0.038*(0.55 + 0.9*(fbmLight(sp*3.2 + vec3(9.1, 2.2, 0.0))*0.5+0.5));',
-    '  float filW3 = 0.058*(0.50 + 0.9*(fbmLight(sp*2.1 + vec3(5.5, 0.9, 2.8))*0.5+0.5));',
-    '  float nlw = nl * (0.80 + 0.40*(fbmLight(sp*4.5 + vec3(7.7, 4.1, 1.9))*0.5+0.5));',
-    '  float rib1 = 1.0 - smoothstep(filW1*0.10, filW1*1.15, nlw);',
-    '  float rib3 = 1.0 - smoothstep(filW3*0.10, filW3*1.15, nlw);',
-    '  float filGate1 = smoothstep(0.23, 0.48, fbm(sp*0.70 + vec3(3.3, 7.7, 0.5)));',
-    '  float filGate3 = smoothstep(0.36, 0.58, fbm(sp*0.60 + vec3(6.1, 3.9, 8.2)));',
-    // piso de gradiente mais baixo: filamentos QUIESCENTES longos vivem
-    // em linhas neutras de campo FRACO (refs 02/03) — o piso alto cortava
-    // o canal em fragmentos curtos ("ameba" em vez de serpente)
-    '  float filStr = smoothstep(0.012, 0.05, gradM) * (1.0 - smoothstep(0.5, 1.2, gradM));',
-    '  float fil = max(rib1*filGate1, rib3*filGate3) * filStr;',
-    // ganho: as máscaras multiplicadas raramente chegam a 1 — recupera a
-    // profundidade visível dos filamentos (posição continua vindo do Br).
-    // Ganho menor que antes: 2.4 saturava o clamp e binarizava a borda
-    '  fil = clamp(fil*2.1, 0.0, 1.0);',
-    // plage: concentração forte do fluxo EVOLUÍDO
-    '  float plage = smoothstep(0.26, 0.55, abs(brEv));',
-    // plage real é MOSQUEADA: flocos brilhantes seguindo a rede, não um
-    // disco liso — quebra forte em duas escalas
-    '  float fleck = fbmLight(sp*14.0 + vec3(2.4))*0.5+0.5;',
-    '  fleck = fleck * (0.55 + 0.45*(snoise(sp*34.0 + vec3(8.8))*0.5+0.5));',
-    '  plage *= 0.30 + 0.85*smoothstep(0.30, 0.72, fleck);',
-    // fibrilas grossas também são baked (espaço do objeto: giram com a
-    // esfera). As camadas fina/micro continuam vivas no disco, só de perto.
-    '  vec3 Bt = B - sp*Br;',
-    '  float BtL = length(Bt);',
-    '  float wig = 0.85*snoise(sp*3.4 + vec3(0.0,0.0,t*0.012));',
-    '  vec3 fdir = (BtL > 1e-4)',
-    '    ? (Bt*cos(wig) + cross(sp, Bt)*sin(wig)) / BtL',
-    '    : vec3(0.5773);',
-    '  float fibC = licFibril(sp, fdir, uGranFreq*1.45, 0.14, t);',
-    // filamentos são FEIXES de fios escuros (fibrilas do canal), não
-    // faixas lisas: modular pela textura LIC quebra o contorno contínuo
-    // ("vinco de celofane") em fios — como nas ref-02/03 de perto
-    '  fil *= 0.55 + 0.75*(fibC*0.5+0.5);',
-    '  gl_FragColor = vec4(min(heatLS, 1.0), fil, min(plage, 1.0), 0.5 + 0.5*fibC);',
-    '}'
-  ].join('\n');
-  chromoFragment = tuneLic(chromoFragment);
-  var chromoMaterial = new THREE.ShaderMaterial({ uniforms: chromoUniforms, vertexShader: quadVertex, fragmentShader: chromoFragment });
-  var chromoScene = makeFullscreenScene(chromoMaterial);
+  ctx.chromo = createChromo(ctx);
+  var bakeSets = ctx.bakeSets, bakeChromoSlice = ctx.chromo.bakeChromoSlice,
+      snapshotBakeInputs = ctx.chromo.snapshotBakeInputs;
 
-  // ---------------------------------------------------------------
-  // 2º PASSE: LIC ITERADO em espaço de textura. Borra o resultado do
-  // 1º passe AO LONGO do campo magnético — os próprios "blobs" de
-  // luminância viram feixes varridos de fios longos, como nas fotos
-  // reais em H-alfa, onde até a plage é riscada na direção do campo.
-  // Só leituras de textura: custo desprezível a ~8Hz.
-  // ---------------------------------------------------------------
-  var chromoRT2 = new THREE.WebGLRenderTarget(CHROMO_W, CHROMO_H, simRTOptions);
-  chromoRT2.texture.wrapS = THREE.RepeatWrapping;
-  var smearUniforms = {
-    uSrc: { value: chromoRT.texture },
-    uTime: { value: 0 },
-    uCharges: { value: charges },
-    uTexel: { value: new THREE.Vector2(1/CHROMO_W, 1/CHROMO_H) },
-    uSimTex: { value: simRTs[0].texture },
-    uSimTexel: { value: simUniforms.uTexel.value }
-  };
-  var smearFragment = NOISE_GLSL + '\n' + [
-    'uniform sampler2D uSrc;',
-    'uniform float uTime;',
-    'uniform vec4 uCharges[10];',
-    'uniform vec2 uTexel;',
-    'uniform sampler2D uSimTex;',
-    'uniform vec2 uSimTexel;',
-    'varying vec2 vUv;'].join('\n') + '\n' + SFTDIR_GLSL + '\n' + BFIELD_GLSL + '\n' + [
-    'vec2 sphToUv(vec3 q){',
-    '  return vec2(fract(atan(q.z, q.x)/6.28318530718),',
-    '              asin(clamp(q.y, -1.0, 1.0))/3.14159265359 + 0.5);',
-    '}',
-    'void main(){',
-    '  float lon = vUv.x*6.28318530718;',
-    '  float lat = (vUv.y-0.5)*3.14159265359;',
-    '  vec3 sp = vec3(cos(lat)*cos(lon), sin(lat), cos(lat)*sin(lon));',
-    '  float t = uTime;',
-    '  vec3 B = bField(sp);',
-    // mesma direção do bake: gradiente do fluxo transportado + resto de ruído
-    '  B += 0.30 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
-    '                   snoise(sp*2.4 + vec3(4.2,7.1,t*0.006)),',
-    '                   snoise(sp*2.4 + vec3(9.3,2.8,t*0.006)));',
-    '  B += sftGrad(vUv) * 7.0;',
-    '  vec3 Bt = B - sp*dot(B, sp);',
-    '  float BtL = length(Bt);',
-    '  float wig = 0.85*snoise(sp*3.4 + vec3(0.0,0.0,t*0.012));',
-    '  vec3 dir = (BtL > 1e-4)',
-    '    ? (Bt*cos(wig) + cross(sp, Bt)*sin(wig)) / BtL',
-    '    : vec3(0.5773);',
-    // varredura longa: ±4 passos de ~3 texels ao longo do fluxo
-    '  float stepArc = uTexel.x * 6.28318530718 * 1.6;',
-    '  vec4 acc = vec4(0.0); float wsum = 0.0;',
-    '  for(int i=-4;i<=4;i++){',
-    '    vec3 q = normalize(sp + dir*(float(i)*stepArc));',
-    '    float w = 1.0 - abs(float(i))/5.2;',
-    '    acc += texture2D(uSrc, sphToUv(q)) * w;',
-    '    wsum += w;',
-    '  }',
-    '  vec4 sm = acc / wsum;',
-    // recupera o contraste dos fios após o borrão direcional
-    '  float fib = sm.a*2.0 - 1.0;',
-    '  fib = sign(fib) * pow(abs(fib), 0.62);',
-    '  gl_FragColor = vec4(sm.r, sm.g, sm.b, fib*0.5 + 0.5);',
-    '}'
-  ].join('\n');
-  var smearMaterial = new THREE.ShaderMaterial({ uniforms: smearUniforms, vertexShader: quadVertex, fragmentShader: smearFragment });
-  var smearScene = makeFullscreenScene(smearMaterial);
-
-  // 3 conjuntos de bake (atual / anterior / escrita): o shader lê os dois
-  // primeiros em crossfade enquanto o terceiro é assado fatiado
-  function cloneChromoRT(){
-    var rt = new THREE.WebGLRenderTarget(CHROMO_W, CHROMO_H, simRTOptions);
-    rt.texture.wrapS = THREE.RepeatWrapping;
-    return rt;
-  }
-  var bakeSets = [
-    { c: chromoRT, s: chromoRT2 },
-    { c: cloneChromoRT(), s: cloneChromoRT() },
-    { c: cloneChromoRT(), s: cloneChromoRT() }
-  ];
-  var bakeCur = 0, bakePrev = 0, bakeWrite = 1;
-  var bakeSwapT = 0, bakeCycleDt = 0.25;
-  function bakeChromo(timeNow){
-    chromoUniforms.uTime.value = timeNow;
-    renderer.setRenderTarget(chromoRT);
-    renderer.render(chromoScene, quadCamera);
-    smearUniforms.uTime.value = timeNow;
-    renderer.setRenderTarget(chromoRT2);
-    renderer.render(smearScene, quadCamera);
-    renderer.setRenderTarget(null);
-    sunUniforms.uChromoTex.value = chromoRT2.texture;   // varrido (perto)
-    sunUniforms.uChromoFar.value = chromoRT.texture;    // calmo (longe)
-    sunUniforms.uChromoTexP.value = chromoRT2.texture;
-    sunUniforms.uChromoFarP.value = chromoRT.texture;
-    sunUniforms.uBakeMix.value = 1.0;
-  }
-  bakeChromo(0.0);   // primeira passada: o disco nunca vê textura vazia
-
-  // T3.3: bake FATIADO. O par chromo+smear dominava o frame (medição da
-  // auditoria: frames com bake 3.4x mais lentos — pico bimodal). Cada
-  // ciclo agora são 8 fatias de 1/4 de altura via scissor, uma por
-  // frame: passos 0-3 = faixas do chromo, 4-7 = faixas do smear (o
-  // smear sempre lê um chromoRT completo do MESMO ciclo — sem costura
-  // temporal entre as camadas). Todas as fatias usam o MESMO timestamp,
-  // então não há emenda de fase entre faixas; a cadência por texel fica
-  // ~igual (8 frames a 60fps ≈ os 0.12s antigos).
-  var bakeStep = -1, bakeTime = 0;
-  function bakeChromoSlice(step, timeNow){
-    var band = step % 4;
-    var bandH = CHROMO_H >> 2;
-    var isChromo = step < 4;
-    var ws = bakeSets[bakeWrite];
-    var rt = isChromo ? ws.c : ws.s;
-    rt.scissor.set(0, band*bandH, CHROMO_W, bandH);
-    rt.scissorTest = true;
-    if (isChromo){
-      chromoUniforms.uTime.value = timeNow;
-      renderer.setRenderTarget(ws.c);
-      renderer.render(chromoScene, quadCamera);
-    } else {
-      smearUniforms.uTime.value = timeNow;
-      smearUniforms.uSrc.value = ws.c.texture;
-      renderer.setRenderTarget(ws.s);
-      renderer.render(smearScene, quadCamera);
-    }
-    rt.scissorTest = false;
-    renderer.setRenderTarget(null);
-  }
-  // Coerência intra-ciclo (bug 3 da auditoria de movimento): as fatias
-  // liam uSimTex AO VIVO (o ping-pong troca a cada passo do sim — ~13
-  // passos caem dentro de 1 ciclo a fps baixa) e uCharges mutado por
-  // updateActiveRegions no meio do ciclo → tearing entre bandas de
-  // latitude. Snapshot dos DOIS no início do ciclo: todas as fatias
-  // leem um único estado, coerente com o timestamp único (bakeTime).
-  var bakeSimRT = new THREE.WebGLRenderTarget(SIM_W, SIM_H, simRTOptions);
-  var bakeCopyUniforms = { tSrc: { value: null } };
-  var bakeCopyMaterial = new THREE.ShaderMaterial({ uniforms: bakeCopyUniforms, vertexShader: quadVertex, fragmentShader: [
-    'uniform sampler2D tSrc;',
-    'varying vec2 vUv;',
-    'void main(){ gl_FragColor = texture2D(tSrc, vUv); }'
-  ].join('\n') });
-  var bakeCopyScene = makeFullscreenScene(bakeCopyMaterial);
-  var bakeCharges = charges.map(function(c){ return c.clone(); });
-  chromoUniforms.uCharges.value = bakeCharges;
-  smearUniforms.uCharges.value = bakeCharges;
-  function snapshotBakeInputs(){
-    bakeCopyUniforms.tSrc.value = simRTs[ctx.simIndex].texture;
-    renderer.setRenderTarget(bakeSimRT);
-    renderer.render(bakeCopyScene, quadCamera);
-    renderer.setRenderTarget(null);
-    chromoUniforms.uSimTex.value = bakeSimRT.texture;
-    smearUniforms.uSimTex.value  = bakeSimRT.texture;
-    for (var i=0;i<charges.length;i++) bakeCharges[i].copy(charges[i]);
-  }
-
-  var sunVertexShader = NOISE_GLSL + '\n' + [
-    'uniform float uTime;',
-    'uniform float uDispScale;',
-    'uniform float uPmode;',
-    'varying vec3 vNormalW;',
-    'varying vec3 vPositionW;',
-    'varying vec3 vPosObj;',
-    'varying float vDisp;',
-    'varying float vPm;',
-    'varying vec2 vUvV;',
-    'void main(){',
-    '  vUvV = uv;',
-    '  vPosObj = position;',   // espaço do OBJETO: o padrão gira junto com a esfera
-    '  vec3 seed = position * 1.6 + vec3(0.0, 0.0, uTime*0.045);',
-    '  float n = fbm(seed);',
-    '  vDisp = n;',
-    // p-modes: soma de 3 harmônicos esféricos de baixo grau (polinômios de
-    // Legendre em sin(lat)), períodos incomensuráveis — a superfície
-    // "respira" como um sino tocando em acordes, não como um pistão
-    '  float pmSum = 0.0;',
-    '  if (uPmode > 0.001){',
-    '    vec3 np = normalize(position);',
-    '    float plat = np.y;',
-    '    float plon = atan(np.z, np.x);',
-    '    float p20 = 1.5*plat*plat - 0.5;',
-    '    float p22 = 1.0 - plat*plat;',
-    '    float p31 = plat*sqrt(max(0.0, 1.0 - plat*plat));',
-    '    pmSum = 0.45*p20*sin(uTime*0.299)',
-    '          + 0.35*p22*sin(uTime*0.229 + 2.0*plon)',
-    '          + 0.30*p31*sin(uTime*0.185 + plon);',
-    '    pmSum *= uPmode;',
-    '  }',
-    '  vPm = pmSum;',
-    '  vec3 displaced = position + normal * (n * uDispScale + pmSum * 0.004 * length(position));',
-    '  vec4 worldPos = modelMatrix * vec4(displaced, 1.0);',
-    '  vPositionW = worldPos.xyz;',
-    '  vNormalW = normalize(mat3(modelMatrix) * normal);',
-    '  gl_Position = projectionMatrix * viewMatrix * worldPos;',
-    '}'
-  ].join('\n');
-
-  // ---------------------------------------------------------------
-  // Fragment: plasma por turbulência com distorção de domínio.
-  //   heat = sim(larga escala, evolui na GPU) + fbm(fbm-distorcido)
-  // A cor sai de corpo negro e a SAÍDA É HDR (até ~2.4): o tonemap ACES
-  // comprime e o bloom captura os picos — é isso que dá a sensação de
-  // material EMISSIVO, não de textura iluminada.
-  // Nota: todo ruído usa vPosObj (espaço do objeto). Antes usava posição
-  // de mundo — bug real: o padrão ficava fixo no espaço enquanto a esfera
-  // girava por baixo ("derrapagem" das manchas).
-  // ---------------------------------------------------------------
-  var sunFragmentShader = NOISE_GLSL + '\n' + [
-    'uniform float uTime;',
-    'uniform sampler2D uChromoTex;',
-    'uniform sampler2D uChromoFar;',
-    'uniform sampler2D uChromoTexP;',
-    'uniform sampler2D uChromoFarP;',
-    'uniform float uBakeMix;',
-    'uniform float uGranFreq;',
-    'uniform float uCamDist;',
-    'uniform float uPlageEm;',
-    'uniform vec4 uFlare;',
-    'uniform vec4 uFlareGeo;',
-    'uniform vec4 uFlarePerp;',
-    'uniform vec4 uFlareRib;',
-    'uniform sampler2D uSimTex;',
-    'uniform vec2 uSimTexel;',
-    'varying vec3 vNormalW;',
-    'varying vec3 vPositionW;',
-    'varying vec3 vPosObj;',
-    'varying float vDisp;',
-    'varying float vPm;',
-    'varying vec2 vUvV;',
-    'uniform vec4 uCharges[10];'].join('\n') + '\n' + SFTDIR_GLSL + '\n' + BFIELD_GLSL + '\n' + LIC_GLSL + '\n' + [
-    'void main(){',
-    '  vec3 viewDir = normalize(cameraPosition - vPositionW);',
-    '  vec3 N = normalize(vNormalW);',
-    '  float mu = max(dot(N, viewDir), 0.0);',
-    '  vec3 sp = normalize(vPosObj);',
-    '  float t = uTime;',
-    // --- estrutura baked: R=larga escala, G=filamento, B=plage.
-    // De longe usa o passe calmo (o seeing borraria os feixes); de perto
-    // o passe com LIC iterado, onde tudo é feito de fios varridos ---
-    '  float close = smoothstep(6.2, 3.4, uCamDist);',
-    '  float kNear = clamp(close*1.2 + 0.15, 0.0, 1.0);',
-    // FERVURA contínua (feature nº1 da auditoria de movimento): o bake
-    // dá a EVOLUÇÃO do conteúdo (~8Hz + crossfade), mas entre poses nada
-    // se movia (diff do disco 0.075 sem bake = só grão). Domain-warp do
-    // domínio do bake por uTime, em espaço do OBJETO (gira rígido com a
-    // textura): células na escala da granulação empurram filamentos,
-    // rede e plage continuamente, fração de px por frame — o disco FERVE
-    // em vez de dissolver entre stills.
-    '  float bfq = uGranFreq*0.45;',
-    '  vec2 boil = vec2(snoise(sp*bfq + vec3(0.0, 0.0, t*0.9)),',
-    '                   snoise(sp*bfq + vec3(5.1, 1.7, t*0.9)))',
-    '      + 0.5*vec2(snoise(sp*bfq*2.6 + vec3(2.3, 8.6, t*1.7)),',
-    '                 snoise(sp*bfq*2.6 + vec3(7.7, 3.9, t*1.7)));',
-    '  vec2 buv = vec2(fract(vUvV.x + boil.x*0.0035), clamp(vUvV.y + boil.y*0.0035, 0.0, 1.0));',
-    // crossfade temporal do bake: o plasma evolui contínuo entre o ciclo
-    // anterior e o atual, em vez de saltar em degraus de ~8Hz (a rotação
-    // é por frame; sem isto o conteúdo parecia stop-motion desalinhado)
-    '  vec4 st = mix(mix(texture2D(uChromoFarP, buv), texture2D(uChromoTexP, buv), kNear),',
-    '                mix(texture2D(uChromoFar,  buv), texture2D(uChromoTex,  buv), kNear), uBakeMix);',
-    '  float heat = st.r + vDisp*0.06;',
-    // disciplina tonal H-alfa: o disco é quase plano em luminância; a
-    // larga escala só sugere estrutura — a riqueza vem da textura fina.
-    // De perto acalma MENOS: nas fotos reais (ref-01) plage, rede e
-    // faixas escuras continuam bem visíveis no close-up — achatar a
-    // larga escala 4.5x deixava o zoom um "pelo" uniforme irreal.
-    // de LONGE mais suave ainda: as refs 02/03 mostram sol calmo quase
-    // plano em enquadramento cheio (métrica G: spread 0.10-0.16).
-    // 0.31 dá margem ao gate mesmo com região ativa no centro do disco
-    '  heat = 0.50 + (heat - 0.52)*mix(0.31, 0.26, close);',
-    // --- fibrilas grossas: baked (canal A). De perto, o claro/escuro é
-    // FEITO de fibrilas: a larga escala modula o contraste dos fios ---
-    '  float fibC = st.a*2.0 - 1.0;',
-    '  heat += fibC * mix(0.055, 0.12, close) * (0.65 + 0.70*st.r);',
-    // LOD: de perto, campo magnético + LIC ao vivo dão as camadas finas
-    // (de longe o disco é praticamente só o sampler do bake)
-    '  if (close > 0.003){',
-    '    vec3 B = bField(sp);',
-    // mesma direção do bake (gradiente do fluxo transportado): as camadas
-    // finas ao vivo seguem o MESMO campo evoluído das camadas baked
-    '    B += 0.30 * vec3(snoise(sp*2.4 + vec3(0.0,0.0,t*0.006)),',
-    '                     snoise(sp*2.4 + vec3(4.2,7.1,t*0.006)),',
-    '                     snoise(sp*2.4 + vec3(9.3,2.8,t*0.006)));',
-    '    B += sftGrad(vUvV) * 7.0;',
-    '    vec3 Bt = B - sp*dot(B, sp);',
-    '    float BtL = length(Bt);',
-    '    float wig = 0.85*snoise(sp*3.4 + vec3(0.0,0.0,t*0.012));',
-    '    vec3 fdir = (BtL > 1e-4)',
-    '      ? (Bt*cos(wig) + cross(sp, Bt)*sin(wig)) / BtL',
-    '      : vec3(0.5773);',
-    '    float fibF = licFibril(sp, fdir, uGranFreq*3.5, 0.22, t*1.3);',
-    '    heat += close * fibF * 0.16;',
-    // camada micro: só em zoom máximo, fios finíssimos
-    '    float closer = smoothstep(4.8, 3.5, uCamDist);',
-    '    if (closer > 0.003){',
-    '      heat += closer * licFibril(sp, fdir, uGranFreq*7.0, 0.08, t*1.6) * 0.20;',
-    '    }',
-    '  }',
-    // --- manchas: nos PÉS das cargas magnéticas (regiões ativas) ---
-    // A umbra é desenhada AO VIVO, mas o colar de plage/penumbra vem da
-    // textura warpada pela fervura — avaliar o campo da mancha no MESMO
-    // domínio warpado (spW = sp deslocado pelo boil via tangentes da
-    // esfera) faz a umbra ferver junto com o entorno, em vez de ficar
-    // rígida enquanto o colar balança (diagnóstico pós-LOOP-7).
-    '  float bst = max(sqrt(max(1.0 - sp.y*sp.y, 0.0)), 0.1);',
-    '  vec3 spW = normalize(sp + (vec3(sp.z, 0.0, -sp.x)*(6.2832*boil.x)',
-    '      + vec3(-sp.x*sp.y, 1.0 - sp.y*sp.y, -sp.z*sp.y)*(3.1416*boil.y/bst))*0.0035);',
-    '  float umbra = 0.0; float pen = 0.0; vec3 dirRad = vec3(0.5773);',
-    '  for(int i=0;i<8;i++){',
-    '    vec3 f = normalize(uCharges[i].xyz);',
-    '    float aw = abs(uCharges[i].w);',
-    // FIX manchas abruptas (diagnóstico pós-LOOP-7): a escuridão da
-    // umbra não escalava com a vida da carga — só o raio. Com o piso
-    // 0.03 do updateActiveRegions, a mancha "morta" seguia 100% escura
-    // e TELEPORTAVA ~57° em 1 frame no renascimento (pop a cada
-    // ~40-60s a 60fps). lifeK esmaece a zero antes do teleporte, como
-    // as proeminências já fazem com env; o piso 0.03 vira só guarda
-    // numérica do campo.
-    '    float lifeK = smoothstep(0.04, 0.30, aw);',
-    '    float d = acos(clamp(dot(spW, f), -1.0, 1.0));',
-    // assimetria física do par (lei de Hale na prática): o LÍDER (índice
-    // par) é grande e coeso; o SEGUIDOR (ímpar) é menor e fragmentado —
-    // pares reais nunca são dois olhos gêmeos
-    '    float isFoll = mod(float(i), 2.0);',
-    // contorno irregular: umbra real não é um círculo perfeito
-    '    d *= 1.0 + mix(0.18, 0.38, isFoll)*snoise(spW*24.0 + f*9.0)',
-    '           + mix(0.07, 0.16, isFoll)*snoise(spW*60.0 - f*4.0);',
-    // ESCALA OBSERVADA (ref-07 GONG full-disk): umbras reais têm
-    // 3.5-60 Mm de diâmetro (0.005-0.086 R). Antes chegava a 0.18 R —
-    // uma ordem de grandeza acima de qualquer mancha já registrada
-    '    float r = (0.016 + 0.014*aw) * (1.0 - 0.45*isFoll);',
-    '    float ui0 = 1.0 - smoothstep(r*0.55, r, d);',
-    '    float ui = ui0 * lifeK;',
-    '    float pi = clamp((1.0 - smoothstep(r, r*2.3, d)) - ui0, 0.0, 1.0) * lifeK;',
-    '    umbra = max(umbra, ui);',
-    '    if (pi > pen){',
-    '      pen = pi;',
-    '      vec3 tc = f - sp*dot(f, sp);',
-    '      float tl = length(tc);',
-    '      if (tl > 1e-4) dirRad = tc/tl;',
-    '    }',
-    '  }',
-    '  if (pen > 0.002){',
-    '    float pf = licFibril(sp, dirRad, 62.0, 0.09, t);',
-    '    pen *= 0.45 + 0.95*(pf*0.5+0.5);',
-    '  }',
-    // --- plage: onde o campo é forte (em volta das regiões ativas),
-    // mas fora das manchas — brilha sem nunca chegar ao branco ---
-    '  float plage = st.b * (1.0 - umbra - pen*0.7);',
-    // 0.34 (era 0.22): sweep T2.2 — plage mais quente SEM mover o spread
-    // do sol calmo (gate G ficou em 0.29, contraste localizado)
-    '  heat = heat*(1.0 - umbra*0.96 - pen*0.38) + clamp(plage, 0.0, 1.0)*0.34;',
-    // --- flare TWO-RIBBON (FASE 1, pendência audit-loop6 ref-08):
-    // flash IMPULSIVO compacto no topo do laço (uFlare.w, a reconexão
-    // em si) + DUAS fitas cromosféricas paralelas à PIL local que se
-    // AFASTAM na fase gradual (uFlareGeo.w cresce) — a assinatura
-    // clássica dos flares em H-alfa. A moldura tangente/perp vem do
-    // PRÓPRIO campo de cargas (setFlareFrame). Fora de flare os dois
-    // gates são 0 e o bloco inteiro é pulado (frame = baseline). ---
-    '  float flareGlow = 0.0;',
-    '  float flareRibG = 0.0;',
-    '  if (uFlare.w + uFlareRib.x > 0.004){',
-    '    float fdist = acos(clamp(dot(sp, uFlare.xyz), -1.0, 1.0));',
-    // máscara de localidade: mata o eco antipodal das coords do plano
-    // tangente (dot com a tangente volta a ~0 do outro lado da esfera)
-    '    float floc = 1.0 - smoothstep(0.22, 0.32, fdist);',
-    '    if (floc > 0.002){',
-    '      float frib = 0.55 + 0.45*(fbmLight(sp*26.0 + vec3(3.9))*0.5+0.5);',
-    // laço ~4x mais forte (backlog M2 nº5): o flash local era +3% por
-    // 1 frame — "lâmpada" que perdia para o escurecimento da íris e o
-    // evento lia INVERTIDO (o mundo escurecia mais do que o flare
-    // brilhava). O pico agora domina a leitura; a íris responde menos.
-    '      flareGlow = uFlare.w * exp(-fdist*fdist*700.0) * frib * floc;',
-    // fitas: coordenadas angulares no plano tangente da PIL (válidas
-    // localmente; floc já limitou o domínio)
-    '      float fdx = dot(sp, uFlareGeo.xyz);',
-    '      float fdy = dot(sp, uFlarePerp.xyz);',
-    '      float falong = exp(-fdx*fdx/(uFlarePerp.w*uFlarePerp.w));',
-    // fitas reais NÃO são barras de aerógrafo (reality-check vs o X17
-    // de 2003-10-28 em H-alfa): o PAR curva junto (dobra de baixa freq
-    // compartilhada), cada fita ainda ondula POR CONTA PRÓPRIA (kinks
-    // independentes — fitas reais não são paralelas perfeitas), o
-    // brilho quebra em STRANDS com vãos, e o par é ASSIMÉTRICO — uma
-    // fita mais brilhante/estreita que a outra (lado sorteado por
-    // evento via a fase uFlareRib.z)
-    '      float fbend = fbmLight(sp*12.0 + vec3(uFlareRib.z*0.7)) * 0.022;',
-    '      float fwob1 = fbend + fbmLight(sp*34.0 + vec3(uFlareRib.z*1.3)) * 0.014;',
-    '      float fwob2 = fbend + fbmLight(sp*34.0 + vec3(uFlareRib.z*1.3 + 9.2)) * 0.014;',
-    '      float fasy = (fract(uFlareRib.z*0.173) > 0.5) ? 1.0 : -1.0;',
-    // FASE 2 (débito LOD): frequência dos strands escalada pelo zoom
-    // (uFlareRib.w, 1 no fit e além, cresce ao aproximar) — o recorte
-    // granula mais fino de perto em vez de virar blobs de aerógrafo
-    '      float frag1 = 0.25 + 0.95*smoothstep(0.25, 0.75, fbmLight(sp*(230.0*uFlareRib.w) + vec3(uFlareRib.z))*0.5+0.5);',
-    '      float frag2 = 0.25 + 0.95*smoothstep(0.25, 0.75, fbmLight(sp*(230.0*uFlareRib.w) + vec3(uFlareRib.z+4.7))*0.5+0.5);',
-    '      float fd1 = (fdy + fwob1 - uFlareGeo.w)/(uFlareRib.y*(1.0 - 0.15*fasy));',
-    '      float fd2 = (fdy + fwob2 + uFlareGeo.w)/(uFlareRib.y*(1.0 + 0.15*fasy));',
-    '      flareRibG = uFlareRib.x * falong * (exp(-fd1*fd1)*frag1*(1.0 + 0.24*fasy)',
-    '                                        + exp(-fd2*fd2)*frag2*(1.0 - 0.24*fasy)) * floc;',
-    '      heat += flareGlow*0.9 + flareRibG*0.55;',
-    '    }',
-    '  }',
-    // --- filamentos (linhas neutras) vêm do bake; exclusão de manchas aqui ---
-    '  float fil = st.g * clamp(1.0 - umbra - pen, 0.0, 1.0);',
-    // 0.55 (era 0.30): canais de filamento "tinta serpenteando" (ref-03);
-    // de graça para o gate G — o falloff do fil é local
-    '  heat *= 1.0 - fil*0.55;',
-    '  heat = clamp(heat, 0.0, 1.24);',
-    // --- paleta H-alfa: emissão em banda estreita (656nm) exibida em
-    // falsa-cor laranja, como em astrofotografia real. Não é corpo negro:
-    // a matiz é quase constante; heat modula LUMINÂNCIA e desloca a matiz
-    // só um pouco para o amarelo nas áreas quentes (plage).
-    '  vec3 color = mix(vec3(1.0, 0.34, 0.06), vec3(1.0, 0.62, 0.24), smoothstep(0.15, 1.05, heat));',
-    // plage quase branca (refs 01/03, sweep T2.2): desvio de matiz para
-    // creme SÓ onde plage E heat são altos — mosqueado preservado, 0% clip
-    '  color = mix(color, vec3(1.0, 0.86, 0.62), 0.55 * smoothstep(0.55, 1.0, clamp(plage, 0.0, 1.0)) * smoothstep(0.72, 1.12, heat));',
-    '  color *= mix(0.16, 1.42, smoothstep(0.04, 1.08, heat));',
-    '  color += vec3(1.0, 0.55, 0.22) * flareGlow * 3.6;',   // pico HDR do flare (~4x, backlog M2 nº5)
-    // fitas: cromosfera aquecida a ~branco (mais neutra que o flash);
-    // HDR um degrau abaixo do núcleo (2.2: acima disso o ACES achata os
-    // strands num oval liso) — o bloom desenha o par de riscos
-    '  color += vec3(1.0, 0.74, 0.46) * flareRibG * 2.2;',
-    // --- escurecimento + avermelhamento de limbo (lei linear, u=0.72) ---
-    '  float limbU = 0.30;',   // núcleo H-alfa: u≈0.25-0.30 na literatura (bem mais suave que contínuo)
-    '  color *= (1.0-limbU) + limbU*mu;',
-    '  float edge = pow(1.0-mu, 1.7);',
-    '  color.g *= 1.0 - edge*0.30;',
-    '  color.b *= 1.0 - edge*0.50;',
-    '  color *= 1.0 - edge*0.15;',
-    // fina cromosfera avermelhada na borda, com espículas (ruído fino)
-    '  float spic = 0.7 + 0.5*fbmLight(sp*46.0 + vec3(0.0, 0.0, t*0.5));',
-    // 1.15 (era 0.4): a borda quente da ref-02 e fonte HDR p/ o bloom do
-    // limbo; 1.30 já começava a ler como anel em monitor claro
-    '  color += vec3(1.0, 0.30, 0.10) * pow(1.0-mu, 3.5) * 1.15 * spic;',
-    // plage como fonte HDR (>1.0): é o que faz o bloom finalmente ler
-    // como bloom (glow suave em volta das regiões ativas, ref-03) sem
-    // tocar na luminância mediana do disco
-    '  color += vec3(1.0, 0.70, 0.32) * clamp(plage, 0.0, 1.0) * uPlageEm;',
-    // p-mode: a crista da onda acústica é levemente mais quente/brilhante
-    // (perturbação de temperatura acompanha a de deslocamento)
-    '  color *= 1.0 + vPm * 0.05;',
-    '  gl_FragColor = vec4(color, 1.0);',
-    '}'
-  ].join('\n');
-
-  sunFragmentShader = tuneLic(sunFragmentShader);
-
-  var sunMaterial = new THREE.ShaderMaterial({
-    uniforms: sunUniforms,
-    vertexShader: sunVertexShader,
-    fragmentShader: sunFragmentShader
-  });
-  var sunMesh = new THREE.Mesh(sunGeometry, sunMaterial);
-  scene.add(sunMesh);
+  createSunMesh(ctx);
+  var sunMesh = ctx.sunMesh;
 
   // ---------------------------------------------------------------
   // (A antiga "casca de brilho" aditiva foi removida: ela criava um anel
@@ -4654,35 +4059,35 @@ function init(){
     // por frame — o custo do par chromo+smear se dilui e o pior frame
     // deixa de ser 3.4x o frame típico
     chromoAccum += delta;
-    if (bakeStep < 0 && chromoAccum >= 0.12 && subToggle.bake){
+    if (ctx.bakeStep < 0 && chromoAccum >= 0.12 && subToggle.bake){
       chromoAccum = 0;
-      bakeStep = 0;
-      bakeTime = elapsed;
+      ctx.bakeStep = 0;
+      ctx.bakeTime = elapsed;
       snapshotBakeInputs();
     }
-    if (bakeStep >= 0){
-      bakeChromoSlice(bakeStep, bakeTime);
-      bakeStep++;
-      if (bakeStep >= 8){
-        bakeStep = -1; perfBakes.push(frameT0);
-        bakePrev = bakeCur; bakeCur = bakeWrite;
-        bakeWrite = (bakeCur === bakePrev) ? (bakeCur+1)%3 : 3 - bakeCur - bakePrev;
+    if (ctx.bakeStep >= 0){
+      bakeChromoSlice(ctx.bakeStep, ctx.bakeTime);
+      ctx.bakeStep++;
+      if (ctx.bakeStep >= 8){
+        ctx.bakeStep = -1; perfBakes.push(frameT0);
+        ctx.bakePrev = ctx.bakeCur; ctx.bakeCur = ctx.bakeWrite;
+        ctx.bakeWrite = (ctx.bakeCur === ctx.bakePrev) ? (ctx.bakeCur+1)%3 : 3 - ctx.bakeCur - ctx.bakePrev;
         // clamp 4.5: cobre o ciclo a speed=3/fps baixa (~2.4s×0.85) — o
         // antigo 1.5 fechava o fade cedo e congelava as camadas baked
         // por 3 de 8 frames por ciclo (QA da iteração 1)
-        bakeCycleDt = Math.max(0.05, Math.min(4.5, (elapsed - bakeSwapT)*0.85));
-        bakeSwapT = elapsed;
-        sunUniforms.uChromoTex.value  = bakeSets[bakeCur].s.texture;
-        sunUniforms.uChromoFar.value  = bakeSets[bakeCur].c.texture;
-        sunUniforms.uChromoTexP.value = bakeSets[bakePrev].s.texture;
-        sunUniforms.uChromoFarP.value = bakeSets[bakePrev].c.texture;
+        ctx.bakeCycleDt = Math.max(0.05, Math.min(4.5, (elapsed - ctx.bakeSwapT)*0.85));
+        ctx.bakeSwapT = elapsed;
+        sunUniforms.uChromoTex.value  = bakeSets[ctx.bakeCur].s.texture;
+        sunUniforms.uChromoFar.value  = bakeSets[ctx.bakeCur].c.texture;
+        sunUniforms.uChromoTexP.value = bakeSets[ctx.bakePrev].s.texture;
+        sunUniforms.uChromoFarP.value = bakeSets[ctx.bakePrev].c.texture;
       }
     }
     // crossfade avança TODO frame, fora do gate de fatias: sem congelar
     // nos frames de espera (fps>67) nem truncar em ~0.875. O fade dura
     // 85% do ciclo medido, então o mix SATURA em 1.0 antes do swap — e
     // no swap (prev:=cur, mix:=0) a imagem exibida é a MESMA, sem pop.
-    sunUniforms.uBakeMix.value = Math.min(1, (elapsed - bakeSwapT)/bakeCycleDt);
+    sunUniforms.uBakeMix.value = Math.min(1, (elapsed - ctx.bakeSwapT)/ctx.bakeCycleDt);
 
     sunMesh.rotation.y += ROT_SPEED * delta;
     prominenceGroup.rotation.y = sunMesh.rotation.y;

@@ -156,6 +156,30 @@ do ciclo), tracking da região com a rotação real, qualquer input
 devolve o controle. `qa:phase5` novo (14 checks K/L/M). Refs novas:
 ref-13 (LASCO C2 flux-rope) e ref-14 (proeminência eruptiva STEREO).
 
+## Pós-roadmap (2026-07, decidido com o dono após a Fase 5)
+
+Com as 5 fases entregues, o plano seguinte ataca os débitos acumulados
+em **3 blocos sequenciais, 1 PR cada** (ordem decidida pelo dono:
+infra → física → movimento). Cada bloco tem prompt de kick-off
+autossuficiente na raiz do repo:
+
+1. **`PROMPT-INFRA-MODULAR.md`** — modularização completa do
+   `src/main.js` (~5.880 linhas → ~20 módulos por domínio + orquestrador
+   de ~700), padrão factory+ctx, 14 estágios com gate de paridade
+   BIT-EXATA por commit (A/B worktree `--max-frac 0`), ordem de consumo
+   do srand preservada por construção. O "loop de infra" prometido na
+   Fase 0.
+2. **`PROMPT-FASE-6.md`** — acabamento físico: manchas de verdade
+   (multiplicidade no máximo + proporção GONG, knob `spots` via manchas
+   VIRTUAIS num uniform array só do shader do disco — zero custo no
+   bake), plumas polares + cúspide no raymarch da coroa, estrias
+   helicoidais do rope + contraste de cavidade no CME.
+3. **`PROMPT-RODADA-MOVIMENTO.md`** — harness de julgamento TEMPORAL
+   (`qa:motion2`): sequências determinísticas de frames, índice de
+   flicker/estroboscopia por região, tiras de filme julgáveis pelo
+   painel — fecha o ponto cego de "julgamos tudo em stills" (flags F4
+   e F5).
+
 ## Não-objetivos (decididos)
 MHD de primeiros princípios; interação com magnetosfera terrestre (não há
 Terra em cena); transferência radiativa espectral completa; WebGPU/TSL

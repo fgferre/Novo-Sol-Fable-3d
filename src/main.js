@@ -4878,6 +4878,12 @@ function init(){
                  focus: compUniforms.uDofFocus.value,
                  override: dofFocusOverride };
       };
+      // FASE 5 — modo diretor por HOOK (o mesmo caminho do botão do
+      // painel: liga em runtime, sem URL, com empréstimo de knobs)
+      window.__solInfo.directorStart = function(){
+        directorStart();
+        return window.__solInfo.directorInfo();
+      };
       // FASE 5 — QA do modo diretor: salto de relógio (fotografar um
       // beat sem esperar a sequência; os beats disparam na entrada)
       window.__solInfo.directorSkip = function(t){
@@ -4959,10 +4965,11 @@ function init(){
       ' letter-spacing:.05em;transition:background .25s}',
       '#knobReset:hover{background:rgba(255,140,50,.12)}',
       // botão do preset (mesma linguagem do reset, cheio de laranja)
-      '#lookBtn{margin-top:14px;width:100%;padding:9px 0;border-radius:9px;cursor:pointer;',
+      '#lookBtn,#dirBtn{margin-top:14px;width:100%;padding:9px 0;border-radius:9px;cursor:pointer;',
       ' border:1px solid rgba(255,170,90,.45);background:rgba(255,140,50,.16);color:#ffd9a8;',
       ' font-size:12px;letter-spacing:.05em;transition:background .25s}',
-      '#lookBtn:hover{background:rgba(255,140,50,.28)}',
+      '#lookBtn:hover,#dirBtn:hover{background:rgba(255,140,50,.28)}',
+      '#dirBtn{margin-top:8px}',
       // seletor segmentado de tier (troca exige recarregar — decisão de boot)
       '#tierRow{display:flex;gap:6px;margin:8px 0 2px}',
       '#tierRow button{flex:1;padding:7px 0;border-radius:8px;cursor:pointer;font-size:11px;',
@@ -5129,6 +5136,19 @@ function init(){
       });
     });
     panel.appendChild(lookBtn);
+    // FASE 5 — modo diretor SEM URL: a sequência-atração é controle
+    // in-app como tudo o mais. O botão fecha o painel e entrega a
+    // câmera ao diretor; qualquer arrasto/scroll/tecla devolve o
+    // controle (e restaura os knobs emprestados).
+    var dirBtn = document.createElement('button');
+    dirBtn.id = 'dirBtn';
+    dirBtn.textContent = '▶ modo diretor (sequência)';
+    dirBtn.addEventListener('click', function(){
+      directorStart();
+      panel.classList.remove('open');
+      btn.classList.remove('open');
+    });
+    panel.appendChild(dirBtn);
 
     // ---- diagnóstico ----------------------------------------------
     var secDiag = document.createElement('div'); secDiag.className = 'sec';
@@ -5327,6 +5347,7 @@ function init(){
   var dirPair = 0;
   var dirFlareFired = false, dirCmeFired = false;
   var dirSavedLapse = 0;
+  var dirSavedCme = -1, dirSavedDof = -1;   // -1 = nada a restaurar
   var dirWorldTmp = new THREE.Vector3();
   var dirAng = { th: 0, ph: 0 };
   function directorActive(){ return DIRECTOR_ON && dirT >= 0; }
@@ -5335,6 +5356,20 @@ function init(){
     dirT = -999;   // permanente: o usuário assumiu a câmera
     LAPSE_K = dirSavedLapse;
     dofFocusOverride = -1;
+    // devolve os knobs que o diretor emprestou para a vitrine
+    if (dirSavedCme >= 0){ CME_K = dirSavedCme; dirSavedCme = -1; }
+    if (dirSavedDof >= 0){ DOF_K = dirSavedDof; dirSavedDof = -1; }
+  }
+  // início pelo PAINEL (a sequência não pode depender de URL): liga o
+  // modo em runtime e garante os knobs mínimos da vitrine — CME e foco
+  // raso no valor do preset se estiverem abaixo dele (restaurados na
+  // saída). Quem já tem os knobs altos não é tocado.
+  function directorStart(){
+    DIRECTOR_ON = true;
+    dirT = -1;
+    dirFlareFired = false; dirCmeFired = false;
+    if (CME_STEPS > 0 && CME_K < 0.85){ dirSavedCme = CME_K; CME_K = 0.9; }
+    if (DOF_K < 0.5){ dirSavedDof = DOF_K; DOF_K = 0.5; }
   }
   function dirEase(x){ x = Math.max(0, Math.min(1, x)); return x*x*(3 - 2*x); }
   function dirAimAt(w){

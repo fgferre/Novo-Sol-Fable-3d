@@ -12,6 +12,8 @@ import { createChromo } from './surface/chromo.js';
 import { createSunBase, createSunUniforms, createSunMesh } from './surface/sun.js';
 import { createCoronaRays } from './atmosphere/coronaRays.js';
 import { createCoronaVolume } from './atmosphere/coronaVolume.js';
+import { createCME } from './atmosphere/cme.js';
+import { createSpicules } from './atmosphere/spicules.js';
 import { createRenderer, createRenderInfra, createRTType } from './core/renderer.js';
 
 THREE.ColorManagement.enabled = false;
@@ -120,620 +122,15 @@ function init(){
       snapshotCvolCharges = ctx.snapshotCvolCharges, cvolData = ctx.cvolData,
       cvolStage = ctx.cvolStage, cvolTex = ctx.cvolTex, cvolInvRot = ctx.cvolInvRot;
 
-  // ---------------------------------------------------------------
-  // FASE 5 — "Erupção": CME de flux-rope que se desprende em flares
-  // GRANDES. A casca é raymarched ANALÍTICA (sem textura 3D): uma
-  // bolha elipsoidal auto-similar — alongada ao longo do eixo do rope
-  // (a tangente da PIL congelada no evento) — cujo centro sobe e cujo
-  // raio cresce ∝ distância (meio-ângulo ~constante, como nas CMEs
-  // reais). A frente brilhante é a casca fina; a cavidade é o interior
-  // rarefeito; o núcleo denso é a proeminência ejetada (blob que vira
-  // as PARTÍCULAS nos tiers com transform feedback). O brilho leva o
-  // peso de THOMSON sin²(ângulo ao plano do céu): CME no limbo é
-  // brilhante, CME de frente ("halo") é tênue — física, não estética.
-  // Cinemática em FORMA FECHADA (rise lento → aceleração sincronizada
-  // com a fase impulsiva do flare → cruzeiro auto-similar): saltar o
-  // relógio via hook reproduz qualquer instante, determinístico.
-  // Knob cme default 0 = nenhum evento dispara, mesh invisível, frame
-  // e custo idênticos ao baseline.
-  // ---------------------------------------------------------------
-  var CME_STEPS = TP.cmestep | 0;
-  var CME_PTS_N = TP.cmen | 0;
-  var CME_ROUT = 3.30;              // a marcha vai além do cvol (2.88)
-  var cmeT = 999, cmeAmp = 0, cmeCooldown = 0, cmeCount = 0;
-  var cmeKilled = false;            // kill-switch do auto-tune (padrão cvolKilled)
-  var cmeDir = new THREE.Vector3(0, 0, 1);
-  var cmeAxis = new THREE.Vector3(1, 0, 0);
-  var cmeSeedVal = 0;
-  var lastCmeHDR = 0;
-  // ganho do núcleo denso — mediana do painel de 3 juízes da F5
-  // (1.3/1.4/0.9): com o boost do shader, 1.3 fecha a leitura de
-  // "três partes" (frente/cavidade/núcleo) sem virar cometa
-  var cmeCoreGain = 1.3;
-  var cmeWorldTmp = new THREE.Vector3();
-  // cinemática fechada: v(t) = 0.045 + 0.19·smoothstep((t-1.2)/2.6);
-  // D(t) = ∫v dt tem primitiva analítica (x³ − x⁴/2 no trecho suave) —
-  // rise lento do rope (~1.2s, o rope infla no lugar), aceleração
-  // impulsiva SINCRONIZADA com a fase impulsiva do flare, cruzeiro
-  // constante. Evento visível ~7-8s — o mesmo fôlego do rescaldo
-  // gradual do flare (τ≈6s), tempo comprimido de VFX como tudo aqui.
-  function cmeSmoothInt(x){
-    if (x <= 0) return 0;
-    if (x >= 1) return x - 0.5;
-    var x3 = x*x*x;
-    return x3 - 0.5*x3*x;
-  }
-  function cmeDist(t){
-    return 0.045*t + 0.19*2.6*cmeSmoothInt((t - 1.2)/2.6);
-  }
-  // geometria auto-similar do instante t (escreve em cmeGeomOut — sem
-  // alocação; usada pelo update, pelos hooks e pelo QA). Meio-ângulo
-  // de expansão ~26° (rho cresce 0.45/R percorrido — CMEs típicas têm
-  // 25-35°); brilho superficial dilui com a expansão (conservação de
-  // massa na casca) e a frente esmaece ao alcançar a borda do domínio.
-  var cmeGeomOut = { d:0, cx:0, rho:0, w:0, front:0, env:0 };
-  function cmeGeomAt(t){
-    var d = cmeDist(t);
-    var rho = 0.16 + 0.45*d;
-    var cx = 1.09 + d;
-    var rise = t/0.7; rise = rise < 0 ? 0 : (rise > 1 ? 1 : rise);
-    rise = rise*rise*(3.0 - 2.0*rise);
-    var dil = Math.pow(0.16/rho, 0.88);
-    var front = cx + rho;
-    var fo = 1.0 - Math.min(1, Math.max(0, (front - 2.75)/0.50));
-    cmeGeomOut.d = d; cmeGeomOut.cx = cx; cmeGeomOut.rho = rho;
-    cmeGeomOut.w = 0.034 + 0.046*d;   // casca mais fina = rim com mais contraste
-    cmeGeomOut.front = front;
-    cmeGeomOut.env = rise * dil * fo;
-    return cmeGeomOut;
-  }
-  function launchCME(amp){
-    cmeT = 0;
-    cmeAmp = amp;
-    cmeDir.copy(surfFlareDir);
-    cmeAxis.copy(flareTanDir);
-    cmeSeedVal = cmeRand()*100.0;
-    cmeCooldown = 20;
-    cmeCount++;
-    cmePtsSpawnArm();   // partículas re-armam a janela de respawn
-  }
-  // gatilho: chamado quando um flare dispara (natural ou forçado). Só
-  // flare GRANDE solta CME — a probabilidade cresce com a amplitude
-  // (X-class ~certo, M-class raro), no stream próprio cmeRand.
-  function maybeLaunchCME(){
-    if (ctx.CME_K <= 0.001 || CME_STEPS <= 0 || cmeKilled) return false;
-    if (cmeT < 900 || cmeCooldown > 0) return false;
-    var p = (surfFlareAmp - 0.85)/0.45;
-    p = Math.max(0, Math.min(1, p)) * Math.min(1, ctx.CME_K);
-    if (p <= 0 || cmeRand() >= p) return false;
-    launchCME(surfFlareAmp);
-    return true;
-  }
-  var cmeMesh = null, cmeUniforms = null;
-  var cmeInvRot = new THREE.Matrix3();
-  if (CME_STEPS > 0){
-    cmeUniforms = {
-      uInvRotC: { value: cmeInvRot },
-      uCmeDir: { value: cmeDir },
-      uCmeAxis: { value: cmeAxis },
-      // x = distância do centro da bolha, y = raio, z = espessura da
-      // casca, w = amplitude (envelope × knob × Thomson global no JS)
-      uCmeKin: { value: new THREE.Vector4(1.1, 0.18, 0.045, 0) },
-      // x = ganho do núcleo, y = tempo, z = seed do evento, w = livre
-      uCmeMat: { value: new THREE.Vector4(0.9, 0, 0, 0) }
-    };
-    var cmeMatShader = new THREE.ShaderMaterial({
-      glslVersion: THREE.GLSL3,
-      uniforms: cmeUniforms,
-      vertexShader: [
-        'varying vec3 vWorld;',
-        'void main(){',
-        '  vec4 w = modelMatrix * vec4(position, 1.0);',
-        '  vWorld = w.xyz;',
-        '  gl_Position = projectionMatrix * viewMatrix * w;',
-        '}'
-      ].join('\n'),
-      fragmentShader: NOISE_GLSL + '\n' + [
-        '#define CME_STEPS ' + CME_STEPS,
-        '#define SUN_R ' + SUN_RADIUS.toFixed(4),
-        'uniform mat3 uInvRotC;',
-        'uniform vec3 uCmeDir;',
-        'uniform vec3 uCmeAxis;',
-        'uniform vec4 uCmeKin;',
-        'uniform vec4 uCmeMat;',
-        'varying vec3 vWorld;',
-        'out vec4 fragColor;',
-        'void main(){',
-        '  vec3 ro = cameraPosition;',
-        '  vec3 rd = normalize(vWorld - cameraPosition);',
-        '  float b = dot(ro, rd);',
-        '  float R = SUN_R * ' + CME_ROUT.toFixed(3) + ';',
-        '  float disc = b*b - (dot(ro,ro) - R*R);',
-        '  if (disc <= 0.0){ fragColor = vec4(0.0); return; }',
-        '  float sq = sqrt(disc);',
-        '  float t0 = max(-b - sq, 0.0);',
-        '  float t1 = -b + sq;',
-        // o raio que atinge o DISCO não contribui (mesmo corte do cvol:
-        // a coroa à frente do disco é invisível e os transparentes
-        // desenham depois dos opacos — sem isto somaria sobre o disco)
-        '  float di = b*b - (dot(ro,ro) - SUN_R*SUN_R);',
-        '  if (di > 0.0){ fragColor = vec4(0.0); return; }',
-        '  if (t1 <= t0 + 1e-4){ fragColor = vec4(0.0); return; }',
-        // marcha no espaço do OBJETO (uma transformação, marcha linear)
-        '  float invR = 1.0/SUN_R;',
-        '  vec3 roO = (uInvRotC * ro) * invR;',
-        '  vec3 rdO = normalize(uInvRotC * rd);',
-        '  vec3 c = uCmeDir * uCmeKin.x;',
-        '  float rho = uCmeKin.y;',
-        '  float wSh = uCmeKin.z;',
-        // amostragem CERTA da casca fina: marchar só o trecho do raio
-        // que cruza a ESFERA ENVOLVENTE da bolha (raio rho+3.2w·k do
-        // alongamento). Sem isto, 16-32 passos na corda inteira de
-        // ~6.6R pulam uma casca de ~0.05R — vira névoa sem borda em
-        // vez do rim de path-length do Thomson.
-        '  float rBub = (rho + 3.2*wSh) * 1.38;',
-        '  vec3 oc = roO - c;',
-        '  float bB = dot(oc, rdO);',
-        '  float dB = bB*bB - (dot(oc,oc) - rBub*rBub);',
-        '  if (dB <= 0.0){ fragColor = vec4(0.0); return; }',
-        '  float sqB = sqrt(dB);',
-        '  float tA = max(-bB - sqB, max(t0*invR, 0.0));',
-        '  float tB = min(-bB + sqB, t1*invR);',
-        '  if (tB <= tA + 1e-5){ fragColor = vec4(0.0); return; }',
-        '  float dtO = (tB - tA) / float(CME_STEPS);',
-        '  float jit = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898,78.233)))*43758.5453);',
-        '  float tO = tA + dtO*jit;',
-        '  float sum = 0.0; float hsum = 0.0; float ksum = 0.0;',
-        '  for (int i = 0; i < CME_STEPS; i++){',
-        '    vec3 p = roO + rdO*tO;',
-        '    tO += dtO;',
-        '    float r = length(p);',
-        '    float fade = smoothstep(1.01, 1.06, r);',
-        '    if (fade <= 0.0) continue;',
-        // casca elipsoidal: alongada ao longo do eixo do rope (croissant)
-        '    vec3 q = p - c;',
-        '    float qa = dot(q, uCmeAxis);',
-        '    float dc = length(q - uCmeAxis*(qa*0.26));',
-        // casca engrossa rumo à BASE (as pernas do rope enraizadas no
-        // limbo — flag 3/3 do painel: "bolha destacada"; a ref-13
-        // mantém as pernas até o occulter)
-        '    float wEff = wSh*(1.0 + 1.4*exp(-(r - 1.0)*2.8));',
-        '    float shell = exp(-((dc - rho)*(dc - rho))/(wEff*wEff));',
-        // pernas ancoradas: material só no hemisfério do evento
-        '    float ca = dot(p, uCmeDir)/max(r, 1e-4);',
-        '    shell *= smoothstep(0.02, 0.42, ca);',
-        // núcleo denso (a proeminência ejetada) atrás do centro da
-        // bolha — mais compacto e 2.2x mais forte (painel: núcleo era
-        // "sub-liminar", a leitura três-partes só fechava com core alto)
-        '    vec3 pk = p - uCmeDir*(uCmeKin.x - rho*0.34);',
-        '    float rk = rho*0.30;',
-        '    float core = exp(-dot(pk,pk)/(rk*rk)) * (uCmeMat.x*2.2);',
-        // fios do rope: fbm no referencial da bolha (a textura ACOMPANHA
-        // a casca em vez de ficar pregada no espaço)
-        '    float n = fbmLight(q*(2.4/max(rho, 0.2)) + vec3(uCmeMat.z, uCmeMat.z*0.31, 0.0));',
-        '    float fil = 0.68 + 0.55*n;',
-        // peso de Thomson por amostra: sin² do ângulo ao plano do céu.
-        // O núcleo (material denso de proeminência) sente MENOS o
-        // Thomson — brilha por densidade, não só por geometria.
-        '    float mu = dot(p, rdO)/max(r, 1e-4);',
-        '    float thom = 1.0 - mu*mu;',
-        '    float d = shell*fil*(0.22 + 0.78*thom)*fade + core*(0.50 + 0.50*thom)*fade;',
-        '    sum += d;',
-        '    hsum += d*clamp((r - 1.0)*0.8, 0.0, 1.0);',
-        '    ksum += core*fade;',
-        '  }',
-        '  if (sum <= 1e-5){ fragColor = vec4(0.0); return; }',
-        '  float hK = hsum/sum;',
-        // luz branca espalhada (Thomson), QUENTE e emissiva (painel de
-        // cinema: o tom marrom sobre o céu azul lia como "fumaça/
-        // fuligem") — o núcleo puxa ao vermelho de proeminência
-        '  vec3 col = mix(vec3(1.0, 0.88, 0.70), vec3(1.0, 0.66, 0.42), clamp(hK*0.8 + (ksum/sum)*0.6, 0.0, 1.0));',
-        '  float amp = sum * dtO * 1.05 * uCmeKin.w;',
-        '  fragColor = vec4(col*amp, 1.0);',
-        '}'
-      ].join('\n'),
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      depthTest: false
-    });
-    cmeMesh = new THREE.Mesh(new THREE.PlaneGeometry(CORONA_SIZE, CORONA_SIZE), cmeMatShader);
-    cmeMesh.renderOrder = -0.75;   // depois da coroa (-1), antes da arcada escura (-0.5)
-    cmeMesh.visible = false;
-    scene.add(cmeMesh);
-  }
+  createCME(ctx);
+  var cmeMesh = ctx.cmeMesh, cmeUniforms = ctx.cmeUniforms, cmePts = ctx.cmePts,
+      cmeGeomAt = ctx.cmeGeomAt, launchCME = ctx.launchCME,
+      maybeLaunchCME = ctx.maybeLaunchCME, updateCME = ctx.updateCME,
+      CME_STEPS = ctx.CME_STEPS, CME_PTS_N = ctx.CME_PTS_N,
+      cmeInvRot = ctx.cmeInvRot, cmeDir = ctx.cmeDir;
 
-  // ---------------------------------------------------------------
-  // FASE 5 — partículas do ejecta por TRANSFORM FEEDBACK (o payoff
-  // WebGL2 nº 2 do roadmap): advecção 100% na GPU (posição+velocidade
-  // em ping-pong de VBOs, rasterizer discard no passo de sim), zero
-  // readback, zero alocação por frame. O material do núcleo do CME
-  // acompanha a expansão auto-similar da casca; uma fração "chove" de
-  // volta (chuva coronal do rescaldo). Render: 2 THREE.Points fixos
-  // (um por VBO, GLBufferAttribute) alternando visibilidade — os VAOs
-  // do three ficam estáveis, sem rebuild por frame. Tiers sem
-  // partículas (cmen=0) ou sem WebGL2: subsistema inteiro ausente.
-  // ---------------------------------------------------------------
-  var cmePts = { on:false, cur:0, prog:null, tf:null, vaos:[null,null],
-                 posBuf:[null,null], velBuf:[null,null],
-                 meshes:[null,null], uLoc:null, armT:-1 };
-  function cmePtsSpawnArm(){ if (cmePts.on) cmePts.armT = 0; }
-  (function buildCmeParticles(){
-    if (CME_PTS_N <= 0 || CME_STEPS <= 0) return;
-    var gl = renderer.getContext();
-    if (!renderer.capabilities.isWebGL2) return;
-    var vsrc = [
-      '#version 300 es',
-      'precision highp float;',
-      'uniform float uDt;',
-      'uniform float uT;',
-      'uniform float uSeed;',
-      'uniform float uRespawn;',
-      'uniform vec3 uDir;',
-      'uniform vec3 uAxis;',
-      'uniform vec4 uKin;',   // x=cx, y=rho, z=vel de expansão, w=amp do evento
-      'in vec4 aPos;',        // xyz (R=1) + vida
-      'in vec4 aVel;',        // xyz + tipo (0 casca/ejecta, 1 chuva)
-      'out vec4 tfPos;',
-      'out vec4 tfVel;',
-      'float h1(float n){ return fract(sin(n)*43758.5453123); }',
-      'void main(){',
-      '  float id = float(gl_VertexID);',
-      '  vec4 P = aPos; vec4 V = aVel;',
-      '  if (P.w <= 0.0){',
-      '    if (uRespawn > 0.5){',
-      // nasce na base do rope: leque ao longo do eixo da PIL (o
-      // material da proeminência que ergue), determinístico por id+seed
-      '      float a1 = h1(id*1.618 + uSeed);',
-      '      float a2 = h1(id*2.717 + uSeed*1.37);',
-      '      float a3 = h1(id*3.141 + uSeed*2.09);',
-      '      float a4 = h1(id*4.669 + uSeed*0.53);',
-      // leque COLIMADO (painel de cinema: o spray abria ~10h-4h para
-      // um evento de 1h) mas ALONGADO em raio — o material lê como a
-      // COLUNA que ergue da ref-14, não como bola nem como leque
-      '      vec3 perp = normalize(cross(uDir, uAxis));',
-      '      vec3 base = normalize(uDir + uAxis*(a1 - 0.5)*0.80 + perp*(a2 - 0.5)*0.34);',
-      '      P.xyz = base*(1.03 + 0.60*a3*a3);',   // mais denso na base, cauda rala
-      '      P.w = 0.60 + 0.80*a4;',
-      // dispersão de velocidade por partícula: sem ela o campo-alvo
-      // comum recolapsa o enxame num blob coeso de borda dura
-      '      V.xyz = base*(0.02 + 0.10*a2)',
-      '             + uAxis*(a1 - 0.5)*0.05 + perp*(a4 - 0.5)*0.05;',
-      '      V.w = step(0.72, a1);',           // ~28% viram chuva coronal
-      '    }',
-      '  } else {',
-      '    vec3 c = uDir*uKin.x;',
-      '    vec3 rel = P.xyz - c;',
-      '    float rl = length(rel) + 1e-5;',
-      // campo de velocidade auto-similar: radial a partir do centro da
-      // bolha + arrasto do vento na direção do evento
-      '    vec3 vT = (rel/rl)*uKin.z*(0.40 + 0.60*clamp(rl/max(uKin.y, 0.05), 0.0, 1.4))',
-      '            + uDir*uKin.z*0.55;',
-      '    if (V.w > 0.5 && uT > 4.0){',
-      // chuva coronal: no rescaldo, a fração presa drena de volta
-      '      vT = -normalize(P.xyz)*0.20;',
-      '    }',
-      '    V.xyz += (vT - V.xyz)*min(1.0, uDt*2.2);',
-      // cintilação de trajetória barata (não é curl de verdade, mas
-      // quebra o alinhamento perfeito sem textura de campo)
-      '    float w1 = h1(id*7.77)*6.2831;',
-      '    V.xyz += vec3(sin(uT*1.9 + w1), sin(uT*2.3 + w1*1.7), cos(uT*2.1 + w1))*(uDt*0.012);',
-      '    P.xyz += V.xyz*uDt;',
-      '    float r = length(P.xyz);',
-      '    P.w -= uDt*(0.085 + 0.05*h1(id*5.55));',
-      '    if (r < 1.005 || r > 3.45) P.w = 0.0;',
-      '  }',
-      '  tfPos = P;',
-      '  tfVel = V;',
-      '  gl_Position = vec4(0.0, 0.0, 0.0, 1.0);',
-      '  gl_PointSize = 1.0;',
-      '}'
-    ].join('\n');
-    var fsrc = '#version 300 es\nprecision highp float;\nout vec4 o;\nvoid main(){ o = vec4(0.0); }';
-    function sh(type, src){
-      var s = gl.createShader(type);
-      gl.shaderSource(s, src); gl.compileShader(s);
-      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)){
-        console.error('CME TF shader: ' + gl.getShaderInfoLog(s));
-        return null;
-      }
-      return s;
-    }
-    var vs = sh(gl.VERTEX_SHADER, vsrc), fs = sh(gl.FRAGMENT_SHADER, fsrc);
-    if (!vs || !fs) return;
-    var prog = gl.createProgram();
-    gl.attachShader(prog, vs); gl.attachShader(prog, fs);
-    gl.transformFeedbackVaryings(prog, ['tfPos', 'tfVel'], gl.SEPARATE_ATTRIBS);
-    gl.linkProgram(prog);
-    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)){
-      console.error('CME TF link: ' + gl.getProgramInfoLog(prog));
-      return;
-    }
-    var init = new Float32Array(CME_PTS_N*4);   // vida 0 = morta (spawn no evento)
-    for (var bi = 0; bi < 2; bi++){
-      cmePts.posBuf[bi] = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, cmePts.posBuf[bi]);
-      gl.bufferData(gl.ARRAY_BUFFER, init, gl.DYNAMIC_COPY);
-      cmePts.velBuf[bi] = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, cmePts.velBuf[bi]);
-      gl.bufferData(gl.ARRAY_BUFFER, init, gl.DYNAMIC_COPY);
-    }
-    gl.bindBuffer(gl.ARRAY_BUFFER, null);
-    var locPos = gl.getAttribLocation(prog, 'aPos');
-    var locVel = gl.getAttribLocation(prog, 'aVel');
-    for (var vi = 0; vi < 2; vi++){
-      var vao = gl.createVertexArray();
-      gl.bindVertexArray(vao);
-      gl.bindBuffer(gl.ARRAY_BUFFER, cmePts.posBuf[vi]);
-      gl.enableVertexAttribArray(locPos);
-      gl.vertexAttribPointer(locPos, 4, gl.FLOAT, false, 16, 0);
-      gl.bindBuffer(gl.ARRAY_BUFFER, cmePts.velBuf[vi]);
-      gl.enableVertexAttribArray(locVel);
-      gl.vertexAttribPointer(locVel, 4, gl.FLOAT, false, 16, 0);
-      cmePts.vaos[vi] = vao;
-    }
-    gl.bindVertexArray(null);
-    gl.bindBuffer(gl.ARRAY_BUFFER, null);
-    cmePts.tf = gl.createTransformFeedback();
-    cmePts.prog = prog;
-    cmePts.uLoc = {
-      dt: gl.getUniformLocation(prog, 'uDt'),
-      t: gl.getUniformLocation(prog, 'uT'),
-      seed: gl.getUniformLocation(prog, 'uSeed'),
-      resp: gl.getUniformLocation(prog, 'uRespawn'),
-      dir: gl.getUniformLocation(prog, 'uDir'),
-      axis: gl.getUniformLocation(prog, 'uAxis'),
-      kin: gl.getUniformLocation(prog, 'uKin')
-    };
-    // render: 2 Points fixos, um por VBO de posição (VAO do three estável)
-    var ptsMat = new THREE.ShaderMaterial({
-      uniforms: {
-        uPx: { value: 30.0 },
-        uAmp: { value: 0.0 }
-      },
-      vertexShader: [
-        '#define SUN_R ' + SUN_RADIUS.toFixed(4),
-        'attribute vec4 aPos;',
-        'attribute vec4 aVel;',
-        'varying float vLife;',
-        'varying float vKind;',
-        'varying vec2 vDir;',
-        'varying float vStretch;',
-        'uniform float uPx;',
-        'float hsz(float n){ return fract(sin(n)*43758.5453123); }',
-        'void main(){',
-        '  vLife = aPos.w;',
-        '  vKind = aVel.w;',
-        '  vec4 mv = modelViewMatrix * vec4(aPos.xyz*SUN_R, 1.0);',
-        '  gl_Position = projectionMatrix * mv;',
-        // direção da VELOCIDADE em tela: o sprite vira um risco
-        // alongado no rumo do movimento (painel 3/3: pontos uniformes
-        // liam como confete/glitter — material filamentar não é dot)
-        '  vec4 mv2 = modelViewMatrix * vec4((aPos.xyz + aVel.xyz*0.35)*SUN_R, 1.0);',
-        '  vec4 c1 = projectionMatrix * mv2;',
-        '  vec2 sd = c1.xy/max(abs(c1.w), 1e-4) - gl_Position.xy/max(abs(gl_Position.w), 1e-4);',
-        '  float sl = length(sd);',
-        '  vDir = sl > 1e-5 ? sd/sl : vec2(1.0, 0.0);',
-        '  vStretch = clamp(sl*30.0, 0.0, 2.4);',
-        // mistura de grãos finos e flocos (70% pequenos, cauda ~3x)
-        '  float g = hsz(aPos.x*57.3 + aPos.y*23.1 + aPos.z*11.7);',
-        '  float sz = uPx*(0.35 + 0.45*vKind + 1.6*g*g*g)/max(0.1, -mv.z);',
-        '  gl_PointSize = clamp(sz*(1.0 + 0.5*vStretch), 0.0, 6.5) * step(0.001, vLife);',
-        '}'
-      ].join('\n'),
-      fragmentShader: [
-        'varying float vLife;',
-        'varying float vKind;',
-        'varying vec2 vDir;',
-        'varying float vStretch;',
-        'uniform float uAmp;',
-        'void main(){',
-        '  vec2 d = gl_PointCoord - 0.5;',
-        // gaussiana ALONGADA na direção do movimento (streak), fina na
-        // normal — em repouso volta ao grão redondo
-        '  float t = dot(d, vDir);',
-        '  float n = d.x*vDir.y - d.y*vDir.x;',
-        '  float a = exp(-(t*t*10.0/(1.0 + 2.2*vStretch) + n*n*(10.0 + 8.0*vStretch)));',
-        '  a *= smoothstep(0.0, 0.15, vLife) * min(1.0, vLife);',
-        '  vec3 col = mix(vec3(1.0, 0.52, 0.26), vec3(1.0, 0.76, 0.50), 0.25 + 0.5*vKind);',
-        '  gl_FragColor = vec4(col*(a*uAmp*0.30), 1.0);',
-        '}'
-      ].join('\n'),
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      depthTest: true
-    });
-    for (var mi = 0; mi < 2; mi++){
-      var geo = new THREE.BufferGeometry();
-      geo.setAttribute('aPos', new THREE.GLBufferAttribute(cmePts.posBuf[mi], gl.FLOAT, 4, 4, CME_PTS_N));
-      geo.setAttribute('aVel', new THREE.GLBufferAttribute(cmePts.velBuf[mi], gl.FLOAT, 4, 4, CME_PTS_N));
-      geo.setDrawRange(0, CME_PTS_N);
-      geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(0,0,0), SUN_RADIUS*4);
-      var pm = new THREE.Points(geo, ptsMat);
-      pm.frustumCulled = false;
-      pm.visible = false;
-      pm.rotation.z = 0.1265;        // mesmo tilt dos demais grupos do objeto
-      pm.renderOrder = 0.5;          // aditivo, depois das emissões da esfera
-      scene.add(pm);
-      cmePts.meshes[mi] = pm;
-    }
-    cmePts.ptsMat = ptsMat;
-    cmePts.on = true;
-  })();
-  // um passo de simulação por TRANSFORM FEEDBACK: lê do VBO corrente,
-  // escreve no outro, alterna. Rasterizer discard: nenhum fragmento.
-  // Depois devolve o estado GL ao three (resetState) — o custo é ~zero
-  // e elimina qualquer suposição sobre caches de binding.
-  function cmePtsTick(dt, respawn){
-    var gl = renderer.getContext();
-    var src = cmePts.cur, dst = 1 - src;
-    gl.useProgram(cmePts.prog);
-    gl.uniform1f(cmePts.uLoc.dt, dt);
-    gl.uniform1f(cmePts.uLoc.t, cmeT);
-    gl.uniform1f(cmePts.uLoc.seed, cmeSeedVal);
-    gl.uniform1f(cmePts.uLoc.resp, respawn ? 1.0 : 0.0);
-    gl.uniform3f(cmePts.uLoc.dir, cmeDir.x, cmeDir.y, cmeDir.z);
-    gl.uniform3f(cmePts.uLoc.axis, cmeAxis.x, cmeAxis.y, cmeAxis.z);
-    var g = cmeGeomOut;   // preenchido pelo update do frame
-    // velocidade de expansão = derivada aproximada do D(t) na fase atual
-    var vExp = 0.045 + 0.19*Math.min(1, Math.max(0, (cmeT - 1.2)/2.6));
-    gl.uniform4f(cmePts.uLoc.kin, g.cx, g.rho, vExp, cmeAmp);
-    gl.bindVertexArray(cmePts.vaos[src]);
-    gl.enable(gl.RASTERIZER_DISCARD);
-    gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, cmePts.tf);
-    gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, cmePts.posBuf[dst]);
-    gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 1, cmePts.velBuf[dst]);
-    gl.beginTransformFeedback(gl.POINTS);
-    gl.drawArrays(gl.POINTS, 0, CME_PTS_N);
-    gl.endTransformFeedback();
-    gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, null);
-    gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 1, null);
-    gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, null);
-    gl.disable(gl.RASTERIZER_DISCARD);
-    gl.bindVertexArray(null);
-    renderer.resetState();
-    cmePts.cur = dst;
-  }
-  // update por frame do CME (relógio, uniforms, visibilidade, lente).
-  // Com knob 0 ou sem evento: só comparações — custo ~zero, sem estado.
-  function updateCME(delta){
-    if (cmeCooldown > 0) cmeCooldown -= delta;
-    var active = cmeT < 900;
-    if (active){
-      cmeT += delta;
-      cmeGeomAt(cmeT);
-      if (cmeGeomOut.front > CME_ROUT || cmeT > 18){ cmeT = 999; active = false; }
-    }
-    var on = active && ctx.CME_K > 0.001 && CME_STEPS > 0 && !cmeKilled && subToggle.cme;
-    lastCmeHDR = 0;
-    if (cmeMesh) cmeMesh.visible = on;
-    var ptsOn = on && cmePts.on && subToggle.cmepts;
-    if (cmePts.on){
-      cmePts.meshes[0].visible = ptsOn && cmePts.cur === 0;
-      cmePts.meshes[1].visible = ptsOn && cmePts.cur === 1;
-    }
-    if (!on) return;
-    var g = cmeGeomOut;
-    // peso de Thomson GLOBAL para a lente/QA: sin² do ângulo do evento
-    // ao plano do céu (o shader refina por amostra)
-    cmeWorldTmp.copy(cmeDir).applyQuaternion(sunMesh.quaternion);
-    var muC = cmeWorldTmp.dot(camDirN);
-    var thom = 1.0 - muC*muC;
-    lastCmeHDR = g.env * cmeAmp * (0.25 + 0.75*thom) * Math.min(1.5, ctx.CME_K);
-    cmeMesh.quaternion.copy(camera.quaternion);
-    cmeInvRot.setFromMatrix4(sunMesh.matrixWorld).transpose();
-    cmeUniforms.uCmeKin.value.set(g.cx, g.rho, g.w,
-      g.env * cmeAmp * Math.min(1.5, ctx.CME_K));
-    // o núcleo esmaece conforme o material vira partículas/se dispersa
-    cmeUniforms.uCmeMat.value.set(cmeCoreGain*Math.exp(-cmeT*0.10), cmeT, cmeSeedVal, 0);
-    if (ptsOn){
-      if (cmePts.armT >= 0) cmePts.armT += delta;
-      var respawn = cmePts.armT >= 0 && cmePts.armT < 0.9;
-      cmePtsTick(delta, respawn);
-      // esmaece com o envelope do evento (sem corte seco no fim; o
-      // +0.15 mantém a chuva coronal legível no rescaldo). Base 0.55:
-      // o painel flagrou a nuvem SATURANDO (knob perceptualmente
-      // inerte porque o aditivo estourava no tonemap)
-      cmePts.ptsMat.uniforms.uAmp.value = 0.42 * Math.min(1.5, ctx.CME_K) *
-        (0.35 + 0.65*thom) * Math.min(1, cmeAmp) *
-        Math.min(1, 2.2*g.env + 0.15);
-      // pós-tick: a visibilidade segue o VBO recém-escrito
-      cmePts.meshes[0].visible = cmePts.cur === 0;
-      cmePts.meshes[1].visible = cmePts.cur === 1;
-    }
-  }
-
-  // ---------------------------------------------------------------
-  // Espículas: franja "felpuda" do limbo. Casca fina em torno do disco;
-  // a opacidade vem de ruído de alta frequência ANGULAR (fios individuais)
-  // com comprimento de franja irregular — o limbo real em H-alfa nunca é
-  // uma borda geométrica limpa (ref-05).
-  // ---------------------------------------------------------------
-  var SPICULE_R = SUN_RADIUS*1.042;
-  // mu na borda interna da casca (onde o disco a oculta):
-  var SPICULE_MU0 = Math.sqrt(1.0 - (SUN_RADIUS*SUN_RADIUS)/(SPICULE_R*SPICULE_R));
-  var spiculeUniforms = { uTime: { value: 0 }, uMu0: { value: SPICULE_MU0 },
-                          uSimTex: { value: simRTs[0].texture } };
-  ctx.spiculeUniforms = spiculeUniforms;
-  var spiculeMat = new THREE.ShaderMaterial({
-    uniforms: spiculeUniforms,
-    vertexShader: [
-      'varying vec3 vNormalW;',
-      'varying vec3 vPositionW;',
-      'varying vec3 vPosObj;',
-      'void main(){',
-      '  vPosObj = position;',
-      '  vec4 worldPos = modelMatrix * vec4(position, 1.0);',
-      '  vPositionW = worldPos.xyz;',
-      '  vNormalW = normalize(mat3(modelMatrix) * normal);',
-      '  gl_Position = projectionMatrix * viewMatrix * worldPos;',
-      '}'
-    ].join('\n'),
-    fragmentShader: NOISE_GLSL + '\n' + [
-      'uniform float uTime;',
-      'uniform float uMu0;',
-      'uniform sampler2D uSimTex;',
-      'varying vec3 vNormalW;',
-      'varying vec3 vPositionW;',
-      'varying vec3 vPosObj;',
-      'void main(){',
-      '  vec3 viewDir = normalize(cameraPosition - vPositionW);',
-      '  vec3 N = normalize(vNormalW);',
-      '  float mu = dot(N, viewDir);',
-      '  if (mu < 0.0) { discard; }',
-      // h: 0 na borda do disco -> 1 na silhueta externa da casca.
-      // Deixamos h ir um pouco NEGATIVO (sobre o disco) para a franja
-      // nascer colada na borda, sem vão.
-      '  float h = 1.0 - mu/uMu0;',
-      '  if (h < -0.35) { discard; }',
-      // coordenada angular estável ao longo do limbo (espaço do objeto,
-      // gira com o Sol): posição projetada perpendicular à direção de visão
-      '  vec3 sil = normalize(vPosObj - viewDir*dot(vPosObj, viewDir));',
-      // T1.2: as espículas SENTEM o campo evoluído. |Br| do sim na direção
-      // da silhueta (mesma textura que faz filamentos/plage no disco):
-      // onde uma região ativa cruza o limbo, a franja fica mais alta,
-      // mais tufada e mais densa; no sol calmo, mais rala — como as
-      // espículas reais, mais vigorosas na borda da rede magnética forte
-      '  float slon = atan(sil.z, sil.x);',
-      '  float slat = asin(clamp(sil.y, -1.0, 1.0));',
-      '  vec2 suv = vec2(fract(slon/6.28318530718), slat/3.14159265359 + 0.5);',
-      '  float brEvS = texture2D(uSimTex, suv).g*2.0 - 1.0;',
-      '  float fieldK = smoothstep(0.10, 0.50, abs(brEvS));',
-      // fios finíssimos, quase constantes na radial: veludo, não engrenagem
-      '  float th1 = snoise(sil*95.0 + vec3(0.0, 0.0, uTime*0.10));',
-      '  float th2 = snoise(sil*185.0 + vec3(7.7, 0.0, uTime*0.16));',
-      '  float threads = 0.5 + 0.5*(th1*0.6 + th2*0.5);',
-      // comprimento irregular da franja, variando rápido ao longo do limbo
-      '  float len = 0.24 + 0.34*(0.5 + 0.5*snoise(sil*22.0 + vec3(3.1)));',
-      // moitas: espículas nascem AGRUPADAS na rede — tufos altos esparsos
-      // se erguem sobre a franja rasa (ref-05); o campo forte agrava
-      '  float clump = max(snoise(sil*6.5 + vec3(8.8, 0.0, uTime*0.03)), 0.0);',
-      '  clump = min(clump + 0.45*fieldK*clump, 1.4);',
-      '  len += 0.62*clump*clump;',
-      '  len *= 0.85 + 0.42*fieldK;',
-      '  float fringe = 1.0 - smoothstep(len*0.25, len, max(h, 0.0));',
-      // some suavemente por cima do disco (h<0) para fundir com a borda
-      '  fringe *= smoothstep(-0.35, -0.05, h);',
-      // DENSIDADE também varia ao longo do limbo (ref-05): a altura já
-      // tinha moitas, mas o alfa constante virava veludo uniforme —
-      // grama real tem trechos ralos quase carecas entre tufos densos
-      '  float bald = smoothstep(-0.55, 0.20, snoise(sil*3.7 + vec3(4.2, 0.0, uTime*0.02)));',
-      '  float dens = (0.35 + 0.65*bald) * (0.80 + 0.45*clump);',
-      '  dens *= 0.80 + 0.50*fieldK;',
-      '  float a = fringe * (0.22 + 0.42*smoothstep(0.35, 0.85, threads)) * 0.55 * dens;',
-      // pontas mais escuras: a franja derrete no céu, não brilha mais que o disco
-      '  vec3 col = mix(vec3(0.85,0.24,0.07), vec3(0.38,0.06,0.02), smoothstep(0.0, 1.0, max(h,0.0)));',
-      '  gl_FragColor = vec4(col, a);',
-      '}'
-    ].join('\n'),
-    transparent: true,
-    blending: THREE.AdditiveBlending,
-    depthWrite: false,
-    side: THREE.FrontSide
-  });
-  var spiculeMesh = new THREE.Mesh(new THREE.SphereGeometry(SPICULE_R, SPHERE_SEG, SPHERE_SEG), spiculeMat);
-  scene.add(spiculeMesh);
+  createSpicules(ctx);
+  var spiculeMesh = ctx.spiculeMesh, spiculeUniforms = ctx.spiculeUniforms;
 
   // ---------------------------------------------------------------
   // Proeminências solares (arcos de plasma). A cor foge de blackbody
@@ -1692,14 +1089,14 @@ function init(){
           // presente até no controle sem knobs). Gate 0.55→1.05 no
           // relógio do evento; em t>=2.5 (check B4) já vale 1.
           var arcGate = Math.min(1, Math.max(0, (surfFlareT - 0.55)/0.5));
-          envA = flareEnvGrad(ta) * 1.25 * surfFlareAmp * arcGate;
+          envA = flareEnvGrad(ta) * 1.25 * ctx.surfFlareAmp * arcGate;
           var hotK = Math.exp(-ta*0.30);
           loopHotArr[LOOP_AMB + i] = hotK;
           // FASE 4 (débito F1): o laço que ESFRIA troca emissão por
           // ABSORÇÃO — o envelope escuro cresce com (1-hot) e decai
           // no dobro do fôlego do gradual (a arcada fria demora a
           // drenar; em H-alfa ela persiste escura sobre o disco)
-          envAbs = flareEnvGrad(ta*0.5) * (1.0 - hotK) * surfFlareAmp * arcGate;
+          envAbs = flareEnvGrad(ta*0.5) * (1.0 - hotK) * ctx.surfFlareAmp * arcGate;
         }
       }
       if (envA < 0.004) envA = 0;
@@ -2729,8 +2126,8 @@ function init(){
         // cai antes da coroa volumétrica: é efeito EPISÓDICO; se nem a
         // menor escala segura o frame durante uma erupção, a erupção
         // não pode afundar o tier inteiro.
-        if (CME_STEPS > 0 && !cmeKilled && ctx.CME_K > 0.001){
-          cmeKilled = true; tuneEvents++;
+        if (CME_STEPS > 0 && !ctx.cmeKilled && ctx.CME_K > 0.001){
+          ctx.cmeKilled = true; tuneEvents++;
           tuneCooldown = 4; tuneWin.length = 0;
         } else
         // FASE 4: antes de rebaixar o tier persistido, derruba a coroa
@@ -2768,6 +2165,7 @@ function init(){
       window.__solInfo.perf = function(){
         function stats(buf, n){
           if (!n) return { avg: 0, p95: 0 };
+  ctx.subToggle = subToggle;
           var a = Array.prototype.slice.call(buf, 0, n).sort(function(x,y){ return x-y; });
           var s = 0; for (var i=0;i<n;i++) s += a[i];
           return { avg: +(s/n).toFixed(2),
@@ -2957,7 +2355,7 @@ function init(){
       window.__solInfo.forceFlareAt = function(i){
         surfFlareDir.copy(promStates[i].meshes[0].userData.dir).normalize();
         surfFlareT = 0;
-        surfFlareAmp = 1.2;   // QA: o gatilho natural seta via |w|; o forçado usa amp fixa
+        ctx.surfFlareAmp = 1.2;   // QA: o gatilho natural seta via |w|; o forçado usa amp fixa
         setFlareFrame(surfFlareDir);
         scheduleFlareArcade();
         return !!agitateNearestProm(surfFlareDir);
@@ -2972,7 +2370,7 @@ function init(){
           (ps.lead.y + ps.foll.y)*0.5,
           (ps.lead.z + ps.foll.z)*0.5).normalize();
         surfFlareT = 0;
-        surfFlareAmp = 1.2;
+        ctx.surfFlareAmp = 1.2;
         setFlareFrame(surfFlareDir);
         scheduleFlareArcade();
         agitateNearestProm(surfFlareDir);
@@ -2983,7 +2381,7 @@ function init(){
       // (impulsiva/gradual) de forma determinística
       window.__solInfo.setFlareClock = function(t){ surfFlareT = t; };
       window.__solInfo.flareInfo = function(){
-        return { t: surfFlareT, amp: surfFlareAmp,
+        return { t: surfFlareT, amp: ctx.surfFlareAmp,
                  imp: flareEnvImp(surfFlareT), grad: flareEnvGrad(surfFlareT),
                  sep: sunUniforms.uFlareGeo.value.w,
                  dir: [surfFlareDir.x, surfFlareDir.y, surfFlareDir.z],
@@ -3063,7 +2461,7 @@ function init(){
           (ps.lead.y + ps.foll.y)*0.5,
           (ps.lead.z + ps.foll.z)*0.5).normalize();
         surfFlareT = 0;
-        surfFlareAmp = 1.35;
+        ctx.surfFlareAmp = 1.35;
         setFlareFrame(surfFlareDir);
         scheduleFlareArcade();
         agitateNearestProm(surfFlareDir);
@@ -3072,9 +2470,9 @@ function init(){
         return [cmeDir.x, cmeDir.y, cmeDir.z];
       };
       window.__solInfo.setCmeClock = function(t){
-        if (cmeT >= 900) return false;
-        cmeT = Math.max(0, +t || 0);
-        cmeGeomAt(cmeT);
+        if (ctx.cmeT >= 900) return false;
+        ctx.cmeT = Math.max(0, +t || 0);
+        cmeGeomAt(ctx.cmeT);
         return true;
       };
       // eixos do sweep de calibração (painel de juízes) sem rebuild:
@@ -3084,17 +2482,17 @@ function init(){
         return ctx.CME_K;
       };
       window.__solInfo.setCmeCore = function(x){
-        cmeCoreGain = Math.min(2.5, Math.max(0, +x || 0));
-        return cmeCoreGain;
+        ctx.cmeCoreGain = Math.min(2.5, Math.max(0, +x || 0));
+        return ctx.cmeCoreGain;
       };
       window.__solInfo.cmeInfo = function(){
-        var g = cmeGeomAt(cmeT < 900 ? cmeT : 0);
-        return { on: cmeT < 900, t: cmeT < 900 ? cmeT : -1, amp: cmeAmp,
-                 count: cmeCount, steps: CME_STEPS, killed: cmeKilled,
-                 knob: ctx.CME_K, cooldown: +cmeCooldown.toFixed(2),
+        var g = cmeGeomAt(ctx.cmeT < 900 ? ctx.cmeT : 0);
+        return { on: ctx.cmeT < 900, t: ctx.cmeT < 900 ? ctx.cmeT : -1, amp: ctx.cmeAmp,
+                 count: ctx.cmeCount, steps: CME_STEPS, killed: ctx.cmeKilled,
+                 knob: ctx.CME_K, cooldown: +ctx.cmeCooldown.toFixed(2),
                  front: +g.front.toFixed(3), rho: +g.rho.toFixed(3),
                  cx: +g.cx.toFixed(3), env: +g.env.toFixed(3),
-                 hdr: +lastCmeHDR.toFixed(3),
+                 hdr: +ctx.lastCmeHDR.toFixed(3),
                  dir: [cmeDir.x, cmeDir.y, cmeDir.z],
                  pts: { on: cmePts.on, n: CME_PTS_N,
                         visible: cmePts.on ? (cmePts.meshes[0].visible || cmePts.meshes[1].visible) : false } };
@@ -3477,6 +2875,7 @@ function init(){
   var chromoAccum = 0;
   // temporários do frame (reutilizados: nada de alocação por frame)
   var camDirN = new THREE.Vector3();
+  ctx.camDirN = camDirN;
   var promNormal = new THREE.Vector3();
   var promWorldTmp = new THREE.Vector3();
   var camRightTmp = new THREE.Vector3();
@@ -3508,14 +2907,16 @@ function init(){
   }
   // flare de SUPERFÍCIE: laço brilhante na plage de uma região madura
   var surfFlareT = 999;
-  var surfFlareAmp = 1.0;
+  ctx.surfFlareAmp = 1.0;
   var surfFlareCooldown = 8 + srand()*10;
   var surfFlareDir = new THREE.Vector3(0, 0, 1);
+  ctx.surfFlareDir = surfFlareDir;
   // moldura da PIL no ponto do flare: na linha neutra o campo
   // HORIZONTAL aponta ATRAVÉS dela (da polaridade + para a −) — o
   // "perp" sai direto do próprio campo de cargas e a tangente fecha o
   // triedro. Vale para o gatilho natural E para o forceFlareAt de QA.
   var flareTanDir = new THREE.Vector3(1, 0, 0);
+  ctx.flareTanDir = flareTanDir;
   var flarePerpDir = new THREE.Vector3(0, 0, 1);
   var flareSeedVal = 0;
   var flareBtmp = new THREE.Vector3();
@@ -3555,7 +2956,7 @@ function init(){
       (ps.lead.z + ps.foll.z)*0.5 + (srand()-0.5)*0.06
     ).normalize();
     // amplitude ∝ |w| da região que flareia (X-class só em região forte)
-    surfFlareAmp = Math.min(1.5, 0.55 + 0.55*Math.abs(ps.lead.w));
+    ctx.surfFlareAmp = Math.min(1.5, 0.55 + 0.55*Math.abs(ps.lead.w));
     setFlareFrame(surfFlareDir);   // moldura das fitas na PIL local
     scheduleFlareArcade();         // arcada re-semeada para ESTE evento
     agitateNearestProm(surfFlareDir);
@@ -3627,7 +3028,7 @@ function init(){
       (ps.lead.y + ps.foll.y)*0.5,
       (ps.lead.z + ps.foll.z)*0.5).normalize();
     surfFlareT = 0;
-    surfFlareAmp = amp;
+    ctx.surfFlareAmp = amp;
     setFlareFrame(surfFlareDir);
     scheduleFlareArcade();
     agitateNearestProm(surfFlareDir);
@@ -3675,7 +3076,7 @@ function init(){
       // B3 — a erupção: flare X no limbo; a casca desprende ~1s depois
       // (slow rise → impulsiva, sincronizada com o envelope do flare)
       if (!dirFlareFired){ dirFlareFired = true; dirForceFlare(dirPair, 1.35); }
-      if (!dirCmeFired && t >= 31.0 && CME_STEPS > 0 && ctx.CME_K > 0.001 && !cmeKilled){
+      if (!dirCmeFired && t >= 31.0 && CME_STEPS > 0 && ctx.CME_K > 0.001 && !ctx.cmeKilled){
         dirCmeFired = true; launchCME(1.35);
       }
       w = dirRegionWorld(dirPair); dirAimAt(w);
@@ -3809,8 +3210,8 @@ function init(){
     // fita alonga junto — a geometria toda deriva de surfFlareT
     var sfImp = flareEnvImp(surfFlareT);
     var sfGrad = flareEnvGrad(surfFlareT);
-    var sfEnv = sfImp * 1.7 * surfFlareAmp;
-    var sfRib = (0.45*sfImp + 0.85*sfGrad) * 1.7 * surfFlareAmp;
+    var sfEnv = sfImp * 1.7 * ctx.surfFlareAmp;
+    var sfRib = (0.45*sfImp + 0.85*sfGrad) * 1.7 * ctx.surfFlareAmp;
     if (sfEnv < 0.004) sfEnv = 0;
     if (sfRib < 0.004) sfRib = 0;
     var sfSep = 0.018 + 0.050*(1.0 - Math.exp(-surfFlareT*0.45));
@@ -4064,7 +3465,7 @@ function init(){
       // evento ⇒ soma 0.0, bit-exato — convenção F3/F4)
       var aTarget = 1.0 / (1.0 + ADAPT_K*(0.42*cover
         + 0.20*coronaRaysUniforms.uActivity.value*cover + 0.25*flareHDR
-        + 0.10*lastCmeHDR));
+        + 0.10*ctx.lastCmeHDR));
       var aTau = (aTarget < adaptCur) ? 0.5 : 3.0;
       adaptCur += (aTarget - adaptCur) * (1.0 - Math.exp(-rawDelta/aTau));
       compUniforms.uAdapt.value = adaptCur * (1.0 + ADAPT_K*0.85*flareHDR);

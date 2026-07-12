@@ -2142,10 +2142,11 @@ function init(){
       '      float a3 = h1(id*3.141 + uSeed*2.09);',
       '      float a4 = h1(id*4.669 + uSeed*0.53);',
       // leque COLIMADO (painel de cinema: o spray abria ~10h-4h para
-      // um evento de 1h — cone de CME real é estreito)
+      // um evento de 1h) mas ALONGADO em raio — o material lê como a
+      // COLUNA que ergue da ref-14, não como bola nem como leque
       '      vec3 perp = normalize(cross(uDir, uAxis));',
-      '      vec3 base = normalize(uDir + uAxis*(a1 - 0.5)*0.62 + perp*(a2 - 0.5)*0.30);',
-      '      P.xyz = base*(1.03 + 0.42*a3*a3);',   // mais denso na base, cauda rala
+      '      vec3 base = normalize(uDir + uAxis*(a1 - 0.5)*0.80 + perp*(a2 - 0.5)*0.34);',
+      '      P.xyz = base*(1.03 + 0.60*a3*a3);',   // mais denso na base, cauda rala
       '      P.w = 0.60 + 0.80*a4;',
       // dispersão de velocidade por partícula: sem ela o campo-alvo
       // comum recolapsa o enxame num blob coeso de borda dura
@@ -2387,7 +2388,7 @@ function init(){
       // +0.15 mantém a chuva coronal legível no rescaldo). Base 0.55:
       // o painel flagrou a nuvem SATURANDO (knob perceptualmente
       // inerte porque o aditivo estourava no tonemap)
-      cmePts.ptsMat.uniforms.uAmp.value = 0.55 * Math.min(1.5, CME_K) *
+      cmePts.ptsMat.uniforms.uAmp.value = 0.42 * Math.min(1.5, CME_K) *
         (0.35 + 0.65*thom) * Math.min(1, cmeAmp) *
         Math.min(1, 2.2*g.env + 0.15);
       // pós-tick: a visibilidade segue o VBO recém-escrito

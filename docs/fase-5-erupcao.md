@@ -181,9 +181,12 @@ fotografia Sunshine / caçador de artefatos), executado como Workflow.
 - Flags convergentes (3/3) CORRIGIDAS na própria rodada:
   - *ejecta lia como confete/glitter de pontos uniformes* → sprites
     viraram STREAKS orientados pela velocidade em tela (gaussiana
-    alongada no rumo do movimento), leque colimado (0.62/0.30 vs
-    1.05/0.50) e amplitude reduzida (a nuvem saturava no tonemap e o
-    knob ficava perceptualmente inerte);
+    alongada no rumo do movimento), leque colimado e amplitude
+    reduzida (a nuvem saturava no tonemap e o knob ficava
+    perceptualmente inerte). A 1ª colimação (0.62/0.30) super-corrigiu
+    — a nuvem virou "bola de algodão"; a calibração final (0.80/0.34 +
+    faixa radial 0.60) alonga a pluma em COLUNA, como o material que
+    ergue na ref-14;
   - *casca "bolha destacada" sem pernas* → a espessura da casca cresce
     rumo à base (`wEff = w·(1+1.4·e^{−2.8(r−1)})`) — o pé do rope fica
     enraizado no limbo como na ref-13;

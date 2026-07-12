@@ -28,6 +28,11 @@ baselines de paridade.
 Fase 3: `?cycle=1` liga o ciclo solar de 11 anos (Spörer, Hale,
 reversão polar), `?lapse=1` o time-lapse documental do ciclo e
 `?fprom=1` a continuidade filamento↔proeminência.
+Fase 4: `?cvol=1` liga a coroa volumétrica raymarched (tier mid+).
+Fase 5: `?cme=1` liga as CMEs (casca de flux-rope + partículas em
+flares grandes; tier mid+), `?dof=1` o foco raso hexagonal em
+close-ups e `?director=1` a sequência-atração (recomendado com
+`?look=sunshine`; qualquer input devolve o controle).
 Painel de ajustes no ⚙ (salvo em localStorage).
 
 ## QA
@@ -40,6 +45,7 @@ npm run qa:shot        # screenshots desktop/portrait/zoom
 npm run qa:phase1      # Fase 1: loops, flare two-ribbon, starburst/íris
 npm run qa:phase3      # Fase 3: ciclo de 11 anos + filamento↔proeminência
 npm run qa:phase4      # Fase 4: coroa volumétrica raymarched + arcada escura
+npm run qa:phase5      # Fase 5: CME/erupção + foco raso + modo diretor
 ```
 
 O modo determinístico (`?det=1&seed=N&hold=F`) fixa RNG e dt e congela o

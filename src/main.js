@@ -2344,8 +2344,11 @@ function init(){
       if (cmePts.armT >= 0) cmePts.armT += delta;
       var respawn = cmePts.armT >= 0 && cmePts.armT < 0.9;
       cmePtsTick(delta, respawn);
+      // esmaece com o envelope do evento (sem corte seco no fim; o
+      // +0.15 mantém a chuva coronal legível no rescaldo)
       cmePts.ptsMat.uniforms.uAmp.value = 0.7 * Math.min(1.5, CME_K) *
-        (0.35 + 0.65*thom) * Math.min(1, cmeAmp);
+        (0.35 + 0.65*thom) * Math.min(1, cmeAmp) *
+        Math.min(1, 2.2*g.env + 0.15);
       // pós-tick: a visibilidade segue o VBO recém-escrito
       cmePts.meshes[0].visible = cmePts.cur === 0;
       cmePts.meshes[1].visible = cmePts.cur === 1;

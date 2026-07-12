@@ -20,6 +20,8 @@ import { createStars } from './scene/stars.js';
 import { createPipeline } from './post/pipeline.js';
 import { createControls } from './camera/controls.js';
 import { createPerf } from './core/perf.js';
+import { createFlares } from './surface/flares.js';
+import { createDirector } from './camera/director.js';
 import { createRenderer, createRenderInfra, createRTType } from './core/renderer.js';
 
 THREE.ColorManagement.enabled = false;
@@ -341,7 +343,7 @@ function init(){
       // ~84° entre a mira e o frame capturado (a proeminência mirada some
       // p/ dentro do disco ou atrás do limbo). Congelar/ajustar a rotação
       // torna a captura determinística sem tocar no resto da animação.
-      window.__solInfo.setRotSpeed = function(v){ ROT_SPEED = v; };
+      window.__solInfo.setRotSpeed = function(v){ ctx.ROT_SPEED = v; };
       // QA: posição de TELA da âncora da proeminência i (px) + fatores de
       // intensidade correntes dos dois cartões — tira a ambiguidade de
       // "qual mancha na foto é o alvo" nas sessões de órbita
@@ -544,20 +546,20 @@ function init(){
       // beat sem esperar a sequência; os beats disparam na entrada)
       window.__solInfo.directorSkip = function(t){
         if (!ctx.DIRECTOR_ON) return false;
-        if (dirT <= -900) return false;
-        dirT = Math.max(0, +t || 0);
-        return dirT;
+        if (ctx.dirT <= -900) return false;
+        ctx.dirT = Math.max(0, +t || 0);
+        return ctx.dirT;
       };
       // FASE 5 — QA do modo diretor: relógio/beat correntes
       window.__solInfo.directorInfo = function(){
-        var beat = -1, t = dirT;
+        var beat = -1, t = ctx.dirT;
         if (ctx.DIRECTOR_ON && t >= 0){
           beat = t < 10 ? 0 : t < 22 ? 1 : t < 30 ? 2 : t < 48 ? 3 :
                  t < 64 ? 4 : t < 78 ? 5 : 6;
         }
         return { enabled: ctx.DIRECTOR_ON, active: directorActive(),
-                 t: +Math.max(-1, t).toFixed(2), beat: beat, pair: dirPair,
-                 flareFired: dirFlareFired, cmeFired: dirCmeFired };
+                 t: +Math.max(-1, t).toFixed(2), beat: beat, pair: ctx.dirPair,
+                 flareFired: ctx.dirFlareFired, cmeFired: ctx.dirCmeFired };
       };
     }
   } catch(_){}
@@ -915,78 +917,13 @@ function init(){
   var MACRO_SLOW = 0.15;
   ctx.MACRO_SLOW = MACRO_SLOW;
   var SIM_DT = 0.6*MACRO_SLOW;
-  var ROT_SPEED = 0.042;
+  ctx.ROT_SPEED = 0.042;
 
-  // FASE 1 — envelope de DUAS FASES (pendência do audit-loop6, ref-08):
-  //  - IMPULSIVA: o flash da reconexão no topo do laço — sobe em ~0.25s
-  //    e morre em ~2s (era o único envelope antes);
-  //  - GRADUAL: fitas + arcada pós-flare — sobe em ~2s e decai com
-  //    τ≈6s, o rescaldo que flares reais mostram em H-alfa por minutos.
-  function flareEnvImp(ft){
-    return (1.0 - Math.exp(-ft*10.0)) * Math.exp(-ft*1.6);
-  }
-  function flareEnvGrad(ft){
-    return ft <= 0 ? 0 : (1.0 - Math.exp(-ft*1.4)) * Math.exp(-ft*0.16);
-  }
-  ctx.flareEnvGrad = flareEnvGrad;
-  // flare de SUPERFÍCIE: laço brilhante na plage de uma região madura
-  ctx.surfFlareT = 999;
-  ctx.surfFlareAmp = 1.0;
-  var surfFlareCooldown = 8 + srand()*10;
-  var surfFlareDir = new THREE.Vector3(0, 0, 1);
-  ctx.surfFlareDir = surfFlareDir;
-  // moldura da PIL no ponto do flare: na linha neutra o campo
-  // HORIZONTAL aponta ATRAVÉS dela (da polaridade + para a −) — o
-  // "perp" sai direto do próprio campo de cargas e a tangente fecha o
-  // triedro. Vale para o gatilho natural E para o forceFlareAt de QA.
-  var flareTanDir = new THREE.Vector3(1, 0, 0);
-  ctx.flareTanDir = flareTanDir;
-  var flarePerpDir = new THREE.Vector3(0, 0, 1);
-  ctx.flarePerpDir = flarePerpDir;
-  var flareSeedVal = 0;
-  var flareBtmp = new THREE.Vector3();
-  function setFlareFrame(dir){
-    var B = bFieldJS(dir);
-    flareBtmp.copy(B).addScaledVector(dir, -B.dot(dir));
-    if (flareBtmp.lengthSq() < 1e-8){
-      // campo degenerado: qualquer perpendicular estável serve
-      flareBtmp.set(-dir.y, dir.x, 0);
-      if (flareBtmp.lengthSq() < 1e-8) flareBtmp.set(0, -dir.z, dir.y);
-    }
-    flarePerpDir.copy(flareBtmp).normalize();
-    flareTanDir.crossVectors(dir, flarePerpDir).normalize();
-    flareSeedVal = loopRand()*100.0;   // recorte das fitas muda por evento
-  }
-  // flare <-> proeminência: a reconexão que ilumina a superfície também
-  // injeta energia no plasma suspenso — o flare AGITA/ERGUE a proeminência
-  // madura ancorada mais perto (< ~60°); as outras não sentem nada
-  function agitateNearestProm(dir){
-    var bestPs = null, bestDot = 0.5;
-    promStates.forEach(function(pp){
-      if ((pp.env || 0) < 0.35) return;   // jovem/moribunda não responde
-      var d = pp.meshes[0].userData.dir.dot(dir);
-      if (d > bestDot){ bestDot = d; bestPs = pp; }
-    });
-    if (bestPs) bestPs.agitT = 0;
-    return bestPs;
-  }
-  function triggerSurfaceFlare(){
-    var live = pairStates.filter(function(ps){ return Math.abs(ps.lead.w) > Math.abs(ps.baseQ)*0.6; });
-    if (!live.length) return false;
-    var ps = live[Math.floor(srand()*live.length)];
-    // ponto entre o par (onde os laços de flare reais acontecem), com jitter
-    surfFlareDir.set(
-      (ps.lead.x + ps.foll.x)*0.5 + (srand()-0.5)*0.06,
-      (ps.lead.y + ps.foll.y)*0.5 + (srand()-0.5)*0.06,
-      (ps.lead.z + ps.foll.z)*0.5 + (srand()-0.5)*0.06
-    ).normalize();
-    // amplitude ∝ |w| da região que flareia (X-class só em região forte)
-    ctx.surfFlareAmp = Math.min(1.5, 0.55 + 0.55*Math.abs(ps.lead.w));
-    setFlareFrame(surfFlareDir);   // moldura das fitas na PIL local
-    scheduleFlareArcade();         // arcada re-semeada para ESTE evento
-    agitateNearestProm(surfFlareDir);
-    return true;
-  }
+  createFlares(ctx);
+  var setFlareFrame = ctx.setFlareFrame, agitateNearestProm = ctx.agitateNearestProm,
+      triggerSurfaceFlare = ctx.triggerSurfaceFlare, flareEnvImp = ctx.flareEnvImp,
+      flareEnvGrad = ctx.flareEnvGrad, surfFlareDir = ctx.surfFlareDir,
+      flareTanDir = ctx.flareTanDir, flarePerpDir = ctx.flarePerpDir;
 
   if (hintEl) {
     hintEl.textContent = hasTouch
@@ -995,144 +932,9 @@ function init(){
   }
   setTimeout(function(){ if(hintEl) hintEl.style.opacity='0'; }, 6000);
 
-  // ---------------------------------------------------------------
-  // FASE 5 — MODO DIRETOR (?director=1): sequência-atração
-  // determinística que amarra as 5 fases — plano geral, push-in com
-  // foco raso na região ativa (tracking da rotação real), recuo ao
-  // limbo, flare grande + CME com rescaldo, retirada wide e time-lapse
-  // documental do ciclo — tudo POR CIMA dos mesmos knobs/estados dos
-  // hooks (nenhum caminho novo de render). Qualquer input do usuário
-  // (arrastar/scroll/tecla) devolve o controle e restaura os knobs que
-  // o diretor moveu. Sem ?director=1 nada daqui roda.
-  // ---------------------------------------------------------------
-  var dirT = -1;
-  var dirPair = 0;
-  var dirFlareFired = false, dirCmeFired = false;
-  var dirSavedLapse = 0;
-  var dirSavedCme = -1, dirSavedDof = -1;   // -1 = nada a restaurar
-  var dirWorldTmp = new THREE.Vector3();
-  var dirAng = { th: 0, ph: 0 };
-  function directorActive(){ return ctx.DIRECTOR_ON && dirT >= 0; }
-  function directorUserExit(){
-    if (!directorActive()) return;
-    dirT = -999;   // permanente: o usuário assumiu a câmera
-    ctx.LAPSE_K = dirSavedLapse;
-    ctx.dofFocusOverride = -1;
-    // devolve os knobs que o diretor emprestou para a vitrine
-    if (dirSavedCme >= 0){ ctx.CME_K = dirSavedCme; dirSavedCme = -1; }
-    if (dirSavedDof >= 0){ ctx.DOF_K = dirSavedDof; dirSavedDof = -1; }
-  }
-  ctx.directorUserExit = directorUserExit;
-  // início pelo PAINEL (a sequência não pode depender de URL): liga o
-  // modo em runtime e garante os knobs mínimos da vitrine — CME e foco
-  // raso no valor do preset se estiverem abaixo dele (restaurados na
-  // saída). Quem já tem os knobs altos não é tocado.
-  function directorStart(){
-    ctx.DIRECTOR_ON = true;
-    dirT = -1;
-    dirFlareFired = false; dirCmeFired = false;
-    if (CME_STEPS > 0 && ctx.CME_K < 0.85){ dirSavedCme = ctx.CME_K; ctx.CME_K = 0.9; }
-    if (ctx.DOF_K < 0.5){ dirSavedDof = ctx.DOF_K; ctx.DOF_K = 0.5; }
-  }
-  function dirEase(x){ x = Math.max(0, Math.min(1, x)); return x*x*(3 - 2*x); }
-  function dirAimAt(w){
-    dirAng.ph = Math.acos(Math.max(-1, Math.min(1, w.y)));
-    dirAng.th = Math.atan2(w.z, w.x);
-  }
-  function dirRegionWorld(i){
-    var ps = pairStates[i % pairStates.length];
-    return dirWorldTmp.set(
-      (ps.lead.x + ps.foll.x)*0.5,
-      (ps.lead.y + ps.foll.y)*0.5,
-      (ps.lead.z + ps.foll.z)*0.5).normalize()
-      .applyQuaternion(sunMesh.quaternion);
-  }
-  function dirForceFlare(i, amp){
-    var ps = pairStates[i % pairStates.length];
-    surfFlareDir.set(
-      (ps.lead.x + ps.foll.x)*0.5,
-      (ps.lead.y + ps.foll.y)*0.5,
-      (ps.lead.z + ps.foll.z)*0.5).normalize();
-    ctx.surfFlareT = 0;
-    ctx.surfFlareAmp = amp;
-    setFlareFrame(surfFlareDir);
-    scheduleFlareArcade();
-    agitateNearestProm(surfFlareDir);
-  }
-  function dirLerpAngle(a, b, k){
-    var d = b - a;
-    while (d > Math.PI) d -= Math.PI*2;
-    while (d < -Math.PI) d += Math.PI*2;
-    return a + d*k;
-  }
-  function directorTick(delta, rawDelta){
-    if (dirT < 0){ dirT = 0; dirSavedLapse = ctx.LAPSE_K; }
-    dirT += delta;
-    var t = dirT;
-    ctx.thetaVel = 0; ctx.phiVel = 0;
-    var horizon = Math.acos(Math.min(1, SUN_RADIUS/Math.max(ctx.camDist, SUN_RADIUS*1.001)));
-    var w, k;
-    if (t < 10){
-      // B0 — plano geral: o Sol inteiro, respiração lenta para dentro
-      w = dirRegionWorld(dirPair); dirAimAt(w);
-      k = 1 - Math.exp(-rawDelta/6.0);
-      ctx.theta = dirLerpAngle(ctx.theta, dirAng.th - 0.9, k);
-      ctx.phi += (Math.PI*0.46 - ctx.phi)*k;
-      ctx.targetCamDist = ctx.fitDist*(1.28 - 0.018*Math.min(t, 10));
-      ctx.dofFocusOverride = -1;
-    } else if (t < 22){
-      // B1 — push-in: tracking da região protagonista (ela gira com o
-      // Sol e a câmera a persegue), foco raso no centro do quadro
-      w = dirRegionWorld(dirPair); dirAimAt(w);
-      k = 1 - Math.exp(-rawDelta/2.2);
-      ctx.theta = dirLerpAngle(ctx.theta, dirAng.th, k);
-      ctx.phi += (dirAng.ph - ctx.phi)*k;
-      ctx.targetCamDist += (minDist*1.30 - ctx.targetCamDist)*(1 - Math.exp(-rawDelta/3.0));
-      ctx.dofFocusOverride = 0.0;
-    } else if (t < 30){
-      // B2 — reposição ao limbo: a região desliza para a borda (o
-      // palco do Thomson) e o foco puxa ao horizonte
-      w = dirRegionWorld(dirPair); dirAimAt(w);
-      k = 1 - Math.exp(-rawDelta/2.6);
-      ctx.theta = dirLerpAngle(ctx.theta, dirAng.th + horizon*0.94, k);
-      ctx.phi += (dirAng.ph*0.5 + Math.PI*0.25 - ctx.phi)*k;
-      ctx.targetCamDist += (ctx.fitDist*0.78 - ctx.targetCamDist)*(1 - Math.exp(-rawDelta/3.0));
-      ctx.dofFocusOverride = 1.0;
-    } else if (t < 48){
-      // B3 — a erupção: flare X no limbo; a casca desprende ~1s depois
-      // (slow rise → impulsiva, sincronizada com o envelope do flare)
-      if (!dirFlareFired){ dirFlareFired = true; dirForceFlare(dirPair, 1.35); }
-      if (!dirCmeFired && t >= 31.0 && CME_STEPS > 0 && ctx.CME_K > 0.001 && !ctx.cmeKilled){
-        dirCmeFired = true; launchCME(1.35);
-      }
-      w = dirRegionWorld(dirPair); dirAimAt(w);
-      k = 1 - Math.exp(-rawDelta/4.5);
-      ctx.theta = dirLerpAngle(ctx.theta, dirAng.th + horizon*0.94, k*0.4);
-      ctx.targetCamDist += (ctx.fitDist*0.92 - ctx.targetCamDist)*(1 - Math.exp(-rawDelta/8.0));
-      ctx.dofFocusOverride = 1.0;
-    } else if (t < 64){
-      // B4 — retirada: a casca cruza a coroa, a arcada escura fica
-      ctx.dofFocusOverride = -1;
-      ctx.targetCamDist += (ctx.fitDist*1.30 - ctx.targetCamDist)*(1 - Math.exp(-rawDelta/6.0));
-      ctx.theta += 0.012*rawDelta;
-    } else if (t < 78){
-      // B5 — time-lapse documental: só a maquinaria de manchas corre
-      var up = dirEase((t - 64)/3.0);
-      var down = 1 - dirEase((t - 75)/3.0);
-      ctx.LAPSE_K = Math.max(dirSavedLapse, 0.85*up*down);
-      ctx.theta += 0.010*rawDelta;
-    } else if (t < 84){
-      // B6 — assentar de volta ao plano geral
-      ctx.LAPSE_K = dirSavedLapse;
-      ctx.targetCamDist += (ctx.fitDist*1.28 - ctx.targetCamDist)*(1 - Math.exp(-rawDelta/3.0));
-      ctx.theta += 0.010*rawDelta;
-    } else {
-      // loop: próxima volta com outra região protagonista
-      dirT = 0; dirPair = (dirPair + 1) % pairStates.length;
-      dirFlareFired = false; dirCmeFired = false;
-    }
-    ctx.phi = Math.max(0.18, Math.min(Math.PI - 0.18, ctx.phi));
-  }
+  createDirector(ctx);
+  var directorTick = ctx.directorTick, directorActive = ctx.directorActive,
+      directorStart = ctx.directorStart;
 
   function animate(){
     requestAnimationFrame(animate);
@@ -1145,9 +947,9 @@ function init(){
     ctx.elapsed += delta;
     sunUniforms.uTime.value = ctx.elapsed;
     // FASE 5 — modo diretor: coreografa câmera/eventos/knobs por cima
-    // do estado (uma comparação sem ?director=1). dirT=-1 é "ainda não
+    // do estado (uma comparação sem ?director=1). ctx.dirT=-1 é "ainda não
     // começou" (o tick inicia); -999 é "usuário assumiu" (permanente).
-    if (ctx.DIRECTOR_ON && dirT > -900) directorTick(delta, rawDelta);
+    if (ctx.DIRECTOR_ON && ctx.dirT > -900) directorTick(delta, rawDelta);
 
     simAccum += delta;
     if (subToggle.sim){
@@ -1199,7 +1001,7 @@ function init(){
     // no swap (prev:=cur, mix:=0) a imagem exibida é a MESMA, sem pop.
     sunUniforms.uBakeMix.value = Math.min(1, (ctx.elapsed - ctx.bakeSwapT)/ctx.bakeCycleDt);
 
-    sunMesh.rotation.y += ROT_SPEED * delta;
+    sunMesh.rotation.y += ctx.ROT_SPEED * delta;
     prominenceGroup.rotation.y = sunMesh.rotation.y;
     spiculeMesh.rotation.y = sunMesh.rotation.y;
     loopGroup.rotation.y = sunMesh.rotation.y;
@@ -1219,8 +1021,8 @@ function init(){
     // ciclo de vida das regiões ativas (o bake absorve as mudanças a ~8Hz)
     updateActiveRegions(ctx.elapsed + ctx.cycleWarp);
     // flare de superfície: ataque rápido, decaimento lento
-    surfFlareCooldown -= delta;
-    if (surfFlareCooldown <= 0){
+    ctx.surfFlareCooldown -= delta;
+    if (ctx.surfFlareCooldown <= 0){
       if (triggerSurfaceFlare()){
         ctx.surfFlareT = 0;
         // FASE 5: flare grande pode soltar CME (sorteio no stream
@@ -1228,7 +1030,7 @@ function init(){
         maybeLaunchCME();
       }
       // sol ativo flareia mais: cooldown encolhe com a atividade global
-      surfFlareCooldown = (12 + srand()*14) / (0.5 + 1.1*coronaRaysUniforms.uActivity.value);
+      ctx.surfFlareCooldown = (12 + srand()*14) / (0.5 + 1.1*coronaRaysUniforms.uActivity.value);
     }
     ctx.surfFlareT += delta;
     // FASE 1 — duas fases: núcleo impulsivo + fitas (impulso curto e
@@ -1250,7 +1052,7 @@ function init(){
     // perto (ctx.camDist < fit) o ruído de recorte fica proporcionalmente
     // mais fino, mantendo a densidade de strands EM TELA; de longe fica
     // 1.0 (look calibrado da Fase 1 intocado)
-    sunUniforms.uFlareRib.value.set(sfRib, 0.010, flareSeedVal,
+    sunUniforms.uFlareRib.value.set(sfRib, 0.010, ctx.flareSeedVal,
       Math.min(2.6, Math.max(1.0, ctx.fitDist/ctx.camDist)));
     // loops coronais + arcada pós-flare (FASE 1): ciclo de vida,
     // traços amortizados e envelopes — tudo sem alocação
@@ -1504,7 +1306,7 @@ function init(){
       compUniforms.uBurstPos.value.set(burstProj.x*0.5 + 0.5, burstProj.y*0.5 + 0.5);
       compUniforms.uBurst.value = (burstProj.z < 1.0) ? ctx.BURST_K * flareHDR : 0.0;
       // rotação: assinatura fixa por EVENTO + deriva ínfima (lente viva)
-      compUniforms.uBurstRot.value = flareSeedVal*0.7 + Math.sin(ctx.elapsed*0.9 + flareSeedVal)*0.03;
+      compUniforms.uBurstRot.value = ctx.flareSeedVal*0.7 + Math.sin(ctx.elapsed*0.9 + ctx.flareSeedVal)*0.03;
     } else compUniforms.uBurst.value = 0.0;
     // ----------------------------------------------------------------
 

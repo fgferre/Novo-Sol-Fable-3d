@@ -18,6 +18,8 @@ import { createProminences } from './atmosphere/prominences.js';
 import { createLoops } from './atmosphere/loops.js';
 import { createStars } from './scene/stars.js';
 import { createPipeline } from './post/pipeline.js';
+import { createControls } from './camera/controls.js';
+import { createPerf } from './core/perf.js';
 import { createRenderer, createRenderInfra, createRTType } from './core/renderer.js';
 
 THREE.ColorManagement.enabled = false;
@@ -171,357 +173,15 @@ function init(){
       resizeTargets = ctx.resizeTargets, cineProj = ctx.cineProj,
       flareWorldTmp = ctx.flareWorldTmp, burstProj = ctx.burstProj;
 
-  // ---------------------------------------------------------------
-  // Controles de câmera (arraste/1 dedo = orbita; roda/2 dedos = zoom)
-  // ---------------------------------------------------------------
-  var V_HALF_FOV = (42 * Math.PI / 180) / 2;
-  var R_FIT = SUN_RADIUS * 1.15;
+  createControls(ctx);
+  var updateCamera = ctx.updateCamera, computeFitDist = ctx.computeFitDist,
+      pointers = ctx.pointers, minDist = ctx.minDist, maxDist = ctx.maxDist;
 
-  function computeFitDist(){
-    var aspect = window.innerWidth / window.innerHeight;
-    var d = R_FIT / Math.tan(V_HALF_FOV);
-    d *= Math.max(1, 1 / aspect);
-    return d;
-  }
-
-  var theta = Math.PI*0.62, phi = Math.PI*0.42;
-  var thetaVel = 0, phiVel = 0;          // inércia do giro (rad/s)
-  var fitDist = computeFitDist();
-  var camDist = fitDist;
-  var targetCamDist = fitDist;           // zoom amortecido: camDist persegue este alvo
-  var minDist = SUN_RADIUS*1.5, maxDist = 30;
-  var lastInteraction = 0;
-
-  var pointers = new Map();
-  var rotLast = null;
-  var rotId = null;
-  var pinchPrevDist = 0;
-  var flingSamples = [];
-
-  function updateCamera(){
-    var th = theta, ph = phi;
-    // offsets de "mão" aplicados só na POSE do frame (theta/phi reais
-    // ficam intactos: soltar o knob volta exatamente ao enquadramento)
-    if (ctx.HAND_K > 0.001){
-      var ht = ctx.elapsed || 0;
-      th += ctx.HAND_K*(0.0042*Math.sin(ht*0.291) + 0.0023*Math.sin(ht*0.833+1.7) + 0.0008*Math.sin(ht*2.31+0.4));
-      ph += ctx.HAND_K*(0.0031*Math.sin(ht*0.247+0.9) + 0.0017*Math.sin(ht*0.911+2.6) + 0.0007*Math.sin(ht*2.73+1.2));
-    }
-    var sp = Math.sin(ph);
-    camera.position.set(
-      camDist*sp*Math.cos(th),
-      camDist*Math.cos(ph),
-      camDist*sp*Math.sin(th)
-    );
-    camera.lookAt(0,0,0);
-  }
-
-  function pointerDistance(){
-    var pts = Array.from(pointers.values());
-    if (pts.length < 2) return 0;
-    var dx = pts[0].x - pts[1].x;
-    var dy = pts[0].y - pts[1].y;
-    return Math.sqrt(dx*dx + dy*dy);
-  }
-
-  function onPointerDown(e){
-    directorUserExit();   // FASE 5: input devolve a câmera ao usuário
-    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    try { renderer.domElement.setPointerCapture(e.pointerId); } catch(_){}
-    if (pointers.size === 1){
-      rotId = e.pointerId;
-      rotLast = { x: e.clientX, y: e.clientY };
-      thetaVel = 0; phiVel = 0;
-      flingSamples.length = 0;
-      // gesto do HUD: dispara se o dedo ficar parado até o timer vencer
-      hudDown = { x: e.clientX, y: e.clientY };
-      clearTimeout(hudTimer);
-      hudTimer = setTimeout(function(){
-        if (hudDown && pointers.size === 1) hudToggle();
-      }, 1000);
-    } else if (pointers.size === 2){
-      rotId = null; rotLast = null;
-      pinchPrevDist = pointerDistance();
-      hudDown = null; clearTimeout(hudTimer);
-    }
-    lastInteraction = performance.now();
-  }
-
-  function onPointerMove(e){
-    if (!pointers.has(e.pointerId)) return;
-    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (hudDown && (Math.abs(e.clientX - hudDown.x) > 9 ||
-                    Math.abs(e.clientY - hudDown.y) > 9)){
-      hudDown = null; clearTimeout(hudTimer);
-    }
-
-    if (pointers.size >= 2){
-      var d = pointerDistance();
-      if (pinchPrevDist > 0 && d > 0){
-        targetCamDist *= pinchPrevDist / d;
-        targetCamDist = Math.max(minDist, Math.min(maxDist, targetCamDist));
-      }
-      pinchPrevDist = d;
-      lastInteraction = performance.now();
-      return;
-    }
-
-    if (e.pointerId === rotId && rotLast){
-      var dx = e.clientX - rotLast.x;
-      var dy = e.clientY - rotLast.y;
-      rotLast.x = e.clientX; rotLast.y = e.clientY;
-      // semântica "agarrar o globo" (Google Earth/Maps): a superfície
-      // acompanha o dedo nos DOIS eixos. Antes o horizontal era invertido
-      // (câmera orbitava no sentido do dedo => superfície ia ao contrário)
-      // enquanto o vertical já acompanhava — eixos misturados.
-      var dth = dx*0.0055;
-      var dph = -dy*0.0055;
-      theta += dth;
-      phi   += dph;
-      phi = Math.max(0.18, Math.min(Math.PI-0.18, phi));
-      // velocidade instantânea (suavizada) para o "arremesso" ao soltar
-      var nowT = performance.now();
-      var dtv = Math.max(0.008, (nowT - (onPointerMove._t || nowT-16))/1000);
-      onPointerMove._t = nowT;
-      thetaVel = thetaVel*0.65 + (dth/dtv)*0.35;
-      phiVel   = phiVel*0.65   + (dph/dtv)*0.35;
-      // janela p/ estimar o fling no soltar por deslocamento acumulado:
-      // robusto a stalls de frame (o estimador acima despenca se um único
-      // intervalo entre eventos vier longo). Usa o timestamp do EVENTO:
-      // reflete o ritmo real do gesto mesmo com a thread principal travada
-      var evT = (e.timeStamp && e.timeStamp > 0) ? e.timeStamp : nowT;
-      flingSamples.push({ t: evT, th: theta, ph: phi });
-      if (flingSamples.length > 12) flingSamples.shift();
-      lastInteraction = nowT;
-    }
-  }
-
-  function endPointer(e){
-    if (pointers.has(e.pointerId)) pointers.delete(e.pointerId);
-    hudDown = null; clearTimeout(hudTimer);
-    try { renderer.domElement.releasePointerCapture(e.pointerId); } catch(_){}
-    if (pointers.size === 1){
-      var remaining = pointers.entries().next().value;
-      rotId = remaining[0];
-      rotLast = { x: remaining[1].x, y: remaining[1].y };
-      pinchPrevDist = 0;
-    } else if (pointers.size === 0){
-      rotId = null; rotLast = null; pinchPrevDist = 0;
-      // fling pela janela de deslocamento (~180ms): pega a amostra mais
-      // antiga ainda recente e deriva a velocidade média — não depende do
-      // espaçamento dos eventos individuais
-      var nowE = performance.now();
-      var nS = flingSamples.length;
-      if (nS >= 2){
-        var newest = flingSamples[nS-1];
-        var pick = null;
-        for (var fi = 0; fi < nS; fi++){
-          if (nowE - flingSamples[fi].t <= 180){ pick = flingSamples[fi]; break; }
-        }
-        // eventos muito espaçados (máquina lenta/stall): a janela só contém
-        // a última amostra (deslocamento zero) — usa a penúltima, que
-        // carrega a última perna real do gesto
-        if (pick === null || pick === newest) pick = flingSamples[nS-2];
-        if (pick !== newest){
-          var dtF = Math.max(0.016, (newest.t - pick.t)/1000);
-          thetaVel = (newest.th - pick.th)/dtF;
-          phiVel   = (newest.ph - pick.ph)/dtF;
-        }
-      }
-      // com 0-1 amostras, fica o estimador suavizado do arraste
-      flingSamples.length = 0;
-    }
-    lastInteraction = performance.now();
-  }
-
-  function onWheel(e){
-    e.preventDefault();
-    directorUserExit();   // FASE 5: input devolve a câmera ao usuário
-    targetCamDist += e.deltaY*0.0035*targetCamDist;
-    targetCamDist = Math.max(minDist, Math.min(maxDist, targetCamDist));
-    lastInteraction = performance.now();
-  }
-
-  // ---- polimento AAA de controles ----
-  // duplo clique / toque duplo: alterna entre enquadramento e close-up
-  function toggleFrame(){
-    var closeDist = Math.max(minDist*1.12, fitDist*0.42);
-    targetCamDist = (targetCamDist > fitDist*0.72) ? closeDist : fitDist;
-    lastInteraction = performance.now();
-  }
-  var lastTap = { t: -1e9, x: 0, y: 0 };
-  function onTapCheck(e){
-    if (e.pointerType !== 'touch') return;
-    var now = performance.now();
-    var dx = e.clientX - lastTap.x, dy = e.clientY - lastTap.y;
-    if (now - lastTap.t < 320 && (dx*dx + dy*dy) < 32*32){
-      toggleFrame();
-      lastTap.t = -1e9;
-    } else {
-      lastTap = { t: now, x: e.clientX, y: e.clientY };
-    }
-  }
-  // teclado: setas giram (com a mesma inércia do arraste), +/- aproxima,
-  // R volta ao enquadramento — acessível sem mouse
-  function onKeyDown(e){
-    directorUserExit();   // FASE 5: input devolve a câmera ao usuário
-    var k = e.key;
-    var handled = true;
-    // passo imediato + impulso de inércia: responde já no keydown mesmo
-    // se o próximo frame demorar (máquinas lentas), sem mudar o "feel"
-    if (k === 'ArrowLeft')       { thetaVel += 2.0; theta += 0.08; }
-    else if (k === 'ArrowRight') { thetaVel -= 2.0; theta -= 0.08; }
-    else if (k === 'ArrowUp')    { phiVel   -= 1.5; phi = Math.max(0.18, phi - 0.06); }
-    else if (k === 'ArrowDown')  { phiVel   += 1.5; phi = Math.min(Math.PI-0.18, phi + 0.06); }
-    else if (k === '+' || k === '=') targetCamDist = Math.max(minDist, targetCamDist*0.82);
-    else if (k === '-' || k === '_') targetCamDist = Math.min(maxDist, targetCamDist*1.22);
-    else if (k === 'r' || k === 'R') targetCamDist = fitDist;
-    else handled = false;
-    if (handled){
-      e.preventDefault();
-      lastInteraction = performance.now();
-    }
-  }
-
-  renderer.domElement.style.touchAction = 'none';
-  renderer.domElement.style.cursor = 'grab';
-  renderer.domElement.addEventListener('pointerdown', function(e){
-    renderer.domElement.style.cursor = 'grabbing';
-    onPointerDown(e);
-    onTapCheck(e);
-  });
-  renderer.domElement.addEventListener('pointermove', onPointerMove);
-  renderer.domElement.addEventListener('pointerup', function(e){
-    renderer.domElement.style.cursor = 'grab';
-    endPointer(e);
-  });
-  renderer.domElement.addEventListener('pointercancel', endPointer);
-  renderer.domElement.addEventListener('lostpointercapture', endPointer);
-  renderer.domElement.addEventListener('wheel', onWheel, {passive:false});
-  renderer.domElement.addEventListener('dblclick', function(e){ e.preventDefault(); toggleFrame(); });
-  renderer.domElement.addEventListener('contextmenu', function(e){ e.preventDefault(); });
-  window.addEventListener('keydown', onKeyDown);
-
-  // ---------------------------------------------------------------
-  // Instrumentação de performance: ring de ~4s de intervalos frame-a-
-  // frame e de custo CPU do corpo do animate; draw calls acumulados
-  // por FRAME (autoReset off + reset manual — com bloom/bake/sim o
-  // frame tem vários render() e o autoReset só mostraria o último);
-  // bakes/s numa janela de 5s. Toggles de subsistema para o profiler
-  // medir custo por A/B sem recarregar.
-  // ---------------------------------------------------------------
-  renderer.info.autoReset = false;
-  var perfFrameMs = new Float32Array(240);
-  var perfBusyMs  = new Float32Array(240);
-  var perfIdx = 0, perfN = 0, perfLastT = 0, perfCalls = 0;
-  var perfBakes = [];
-  var subToggle = { sim:true, bake:true, bloom:true, spicules:true,
-                    corona:true, prominences:true, stars:true, loops:true,
-                    corona3d:true,     // FASE 4: A/B do raymarch isolado
-                    cme:true, cmepts:true };   // FASE 5: A/B da casca/partículas
-  ctx.subToggle = subToggle;
-
-  // HUD de perf on-device: ?hud=1 liga na carga; segurar um dedo PARADO
-  // ~1s alterna (o arquivo aberto localmente no iPhone não tem como
-  // receber query string nem abrir console — o gesto resolve os dois).
-  var hudEl = document.createElement('div');
-  hudEl.style.cssText = 'position:fixed;top:10px;right:10px;z-index:40;' +
-    'font:11px/1.5 ui-monospace,Menlo,monospace;color:#aef;' +
-    'background:rgba(0,10,20,0.55);padding:6px 9px;border-radius:8px;' +
-    'pointer-events:none;white-space:pre;display:none';
-  document.body.appendChild(hudEl);
-  var hudOn = urlQ.hud === '1';
-  if (hudOn) hudEl.style.display = 'block';
-  var hudTimer = 0, hudDown = null, hudAccum = 0;
-  function hudToggle(){ hudOn = !hudOn; hudEl.style.display = hudOn ? 'block' : 'none'; }
-
-  // ---------------------------------------------------------------
-  // T3.2: auto-tune em runtime. Trocar o TIER ao vivo exigiria
-  // reconstruir shaders e render targets; o que é barato mudar é a
-  // ESCALA de render (pixelRatio -> canvas + sceneRT + bloom; sim e
-  // bake têm tamanho fixo e não mudam de cara). Então: p95 do frame
-  // acima de 18ms desce a escala 1.0 -> 0.85 -> 0.7; p95 < 9ms
-  // sustentado por 10s sobe de volta (histerese pelos degraus + janela
-  // limpa a cada troca). Nos EXTREMOS, persiste uma recomendação de
-  // tier no localStorage para a PRÓXIMA carga — assim um aparelho que
-  // não segura nem 0.7 abre direto num tier menor, e um que sobra
-  // fôlego por 30s no teto abre num maior.
-  // ---------------------------------------------------------------
-  var SCALE_STEPS = [1.0, 0.85, 0.7];
-  var baseDpr = ctx.pixelRatio;
-  var scaleIdx = 0, tuneWin = [], tuneGoodT = 0, tuneCooldown = 0, tuneEvents = 0;
-  var autoTuneOn = (urlQ.tune === '1') ||
-                   (!urlQ.tier && !(parseFloat(urlQ.scale) > 0) && !isSoftwareGL);
-  function applyRenderScale(i){
-    scaleIdx = Math.max(0, Math.min(SCALE_STEPS.length-1, i));
-    ctx.pixelRatio = baseDpr * SCALE_STEPS[scaleIdx];
-    renderer.setPixelRatio(ctx.pixelRatio);
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    resizeTargets();
-    tuneEvents++;
-  }
-  function persistTier(t){ try { localStorage.setItem('solTier', t); } catch(e){} }
-  var TIER_ORDER = ['low', 'mid', 'high', 'ultra'];
-  // Alvos por classe de aparelho: no desktop degrada acima de 18ms p95
-  // (~55fps) como antes; no móvel o compromisso decidido é OUTRO — piso
-  // de 24fps (42ms p95): o aparelho segura o tier/escala enquanto estiver
-  // acima disso em vez de se rebaixar até o low para perseguir 60.
-  var TUNE_HI = coarsePointer ? 42 : 18;
-  var TUNE_LO = coarsePointer ? 21 : 9;
-  function autoTune(delta, frameMs){
-    // aba em background/stall: rAF é estrangulado a ~1fps e o p95 iria
-    // rebaixar (e persistir!) um tier por culpa do navegador, não da GPU.
-    // ?tune=1 (opt-in de QA) relaxa a guarda: sob SwiftShader TODO frame
-    // passa de 250ms e o teste do auto-tune ficava inerte.
-    if ((frameMs > 250 || document.hidden) && urlQ.tune !== '1') return;
-    tuneWin.push(frameMs);
-    if (tuneWin.length > 150) tuneWin.shift();
-    tuneCooldown -= delta;
-    if (tuneWin.length < 30 || tuneCooldown > 0) return;
-    var a = tuneWin.slice().sort(function(x, y){ return x - y; });
-    var p95 = a[Math.floor(a.length*0.95)];
-    if (p95 > TUNE_HI){
-      tuneGoodT = 0;
-      if (scaleIdx < SCALE_STEPS.length-1){
-        applyRenderScale(scaleIdx+1);
-        tuneCooldown = 4; tuneWin.length = 0;
-      } else {
-        // FASE 5: primeiro degrau do kill — o CME (casca + partículas)
-        // cai antes da coroa volumétrica: é efeito EPISÓDICO; se nem a
-        // menor escala segura o frame durante uma erupção, a erupção
-        // não pode afundar o tier inteiro.
-        if (CME_STEPS > 0 && !ctx.cmeKilled && ctx.CME_K > 0.001){
-          ctx.cmeKilled = true; tuneEvents++;
-          tuneCooldown = 4; tuneWin.length = 0;
-        } else
-        // FASE 4: antes de rebaixar o tier persistido, derruba a coroa
-        // volumétrica em runtime — se o aparelho não segura o raymarch
-        // nem na menor escala, a coroa volta ao plano de gradiente
-        // (fallback) e o resto do tier sobrevive. É o gate de código do
-        // piso de 24fps: nenhuma medição é pedida ao dono.
-        if (CVOL_STEPS > 0 && !ctx.cvolKilled && ctx.CVOL_K > 0.001){
-          ctx.cvolKilled = true; tuneEvents++;
-          tuneCooldown = 4; tuneWin.length = 0;
-        } else {
-          var k = TIER_ORDER.indexOf(TIER);
-          if (k > 0){ persistTier(TIER_ORDER[k-1]); tuneCooldown = 1e9; }
-        }
-      }
-    } else if (p95 < TUNE_LO){
-      tuneGoodT += delta;
-      if (scaleIdx > 0 && tuneGoodT > 10){
-        applyRenderScale(scaleIdx-1);
-        tuneGoodT = 0; tuneCooldown = 6; tuneWin.length = 0;
-      } else if (scaleIdx === 0 && tuneGoodT > 30){
-        var k2 = TIER_ORDER.indexOf(TIER);
-        // ultra é só para ponteiro fino (desktop): DPR 3 + malha 192
-        // afogariam um celular que por acaso sustente 60 no high
-        var kMax = coarsePointer ? 2 : TIER_ORDER.length - 1;
-        if (k2 < kMax && !urlQ.tier){ persistTier(TIER_ORDER[k2+1]); }
-        tuneGoodT = -1e9;   // uma recomendação por sessão
-      }
-    } else tuneGoodT = 0;
-  }
+  createPerf(ctx);
+  var subToggle = ctx.subToggle, hudEl = ctx.hudEl, hudToggle = ctx.hudToggle,
+      persistTier = ctx.persistTier, autoTune = ctx.autoTune, autoTuneOn = ctx.autoTuneOn,
+      SCALE_STEPS = ctx.SCALE_STEPS, TIER_ORDER = ctx.TIER_ORDER,
+      perfFrameMs = ctx.perfFrameMs, perfBusyMs = ctx.perfBusyMs, perfBakes = ctx.perfBakes;
 
   // estado exposto para QA automatizado (leitura + posicionamento de câmera)
   try {
@@ -536,13 +196,13 @@ function init(){
         }
         var now = performance.now();
         while (perfBakes.length && now - perfBakes[0] > 5000) perfBakes.shift();
-        var f = stats(perfFrameMs, perfN);
+        var f = stats(perfFrameMs, ctx.perfN);
         return { tier: TIER, scale: RENDER_SCALE, dpr: ctx.pixelRatio,
-                 autoScale: SCALE_STEPS[scaleIdx],
-                 tune: { on: autoTuneOn, events: tuneEvents },
-                 frames: perfN, ms: f, busy: stats(perfBusyMs, perfN),
+                 autoScale: SCALE_STEPS[ctx.scaleIdx],
+                 tune: { on: autoTuneOn, events: ctx.tuneEvents },
+                 frames: ctx.perfN, ms: f, busy: stats(perfBusyMs, ctx.perfN),
                  fps: f.avg > 0 ? +(1000/f.avg).toFixed(1) : 0,
-                 calls: perfCalls, bakesPerSec: +(perfBakes.length/5).toFixed(2),
+                 calls: ctx.perfCalls, bakesPerSec: +(perfBakes.length/5).toFixed(2),
                  toggles: JSON.parse(JSON.stringify(subToggle)),
                  size: [renderer.domElement.width, renderer.domElement.height] };
       };
@@ -576,7 +236,7 @@ function init(){
                  look: LOOK ? 'sunshine' : '' };
       };
       window.__solInfo.perfReset = function(){
-        perfN = 0; perfIdx = 0; perfLastT = 0; perfBakes.length = 0;
+        ctx.perfN = 0; ctx.perfIdx = 0; ctx.perfLastT = 0; perfBakes.length = 0;
       };
       // FASE 4: estado da coroa volumétrica (QA: tier-gate, bake, kill)
       window.__solInfo.coronaInfo = function(){
@@ -621,9 +281,9 @@ function init(){
         return subToggle[name];
       };
       window.__solInfo.state = function(){
-        return { camDist: camDist, targetCamDist: targetCamDist, theta: theta, phi: phi,
-                 thetaVel: thetaVel, phiVel: phiVel,
-                 rotY: sunMesh.rotation.y, fitDist: fitDist, minDist: minDist };
+        return { camDist: ctx.camDist, targetCamDist: ctx.targetCamDist, theta: ctx.theta, phi: ctx.phi,
+                 thetaVel: ctx.thetaVel, phiVel: ctx.phiVel,
+                 rotY: sunMesh.rotation.y, fitDist: ctx.fitDist, minDist: minDist };
       };
       window.__solInfo.regions = function(){
         return pairStates.map(function(ps){
@@ -808,10 +468,10 @@ function init(){
                  candidates: pilStats.candidates, aligned: !!a.pilTangent };
       };
       window.__solInfo.setView = function(th, ph, dist){
-        theta = th; phi = Math.max(0.18, Math.min(Math.PI-0.18, ph));
-        targetCamDist = camDist = Math.max(minDist, Math.min(maxDist, dist));
-        thetaVel = 0; phiVel = 0;
-        lastInteraction = performance.now();
+        ctx.theta = th; ctx.phi = Math.max(0.18, Math.min(Math.PI-0.18, ph));
+        ctx.targetCamDist = ctx.camDist = Math.max(minDist, Math.min(maxDist, dist));
+        ctx.thetaVel = 0; ctx.phiVel = 0;
+        ctx.lastInteraction = performance.now();
         updateCamera();
       };
       // FASE 5 — QA do CME: força a erupção no par i (flare grande +
@@ -1151,10 +811,10 @@ function init(){
     secDiag.textContent = 'diagnóstico'; panel.appendChild(secDiag);
     var hudRow = document.createElement('div'); hudRow.className = 'switch';
     var hudLab = document.createElement('span'); hudLab.textContent = 'HUD de FPS';
-    var hudSw = document.createElement('div'); hudSw.className = 'sw' + (hudOn ? ' on' : '');
+    var hudSw = document.createElement('div'); hudSw.className = 'sw' + (ctx.hudOn ? ' on' : '');
     hudSw.addEventListener('click', function(){
       hudToggle();
-      hudSw.classList.toggle('on', hudOn);
+      hudSw.classList.toggle('on', ctx.hudOn);
     });
     hudRow.appendChild(hudLab); hudRow.appendChild(hudSw);
     panel.appendChild(hudRow);
@@ -1219,10 +879,10 @@ function init(){
     renderer.setSize(window.innerWidth, window.innerHeight);
     resizeTargets();
     var newFit = computeFitDist();
-    if (fitDist > 0){ camDist *= newFit / fitDist; targetCamDist *= newFit / fitDist; }
-    fitDist = newFit;
-    camDist = Math.max(minDist, Math.min(maxDist, camDist));
-    targetCamDist = Math.max(minDist, Math.min(maxDist, targetCamDist));
+    if (ctx.fitDist > 0){ ctx.camDist *= newFit / ctx.fitDist; ctx.targetCamDist *= newFit / ctx.fitDist; }
+    ctx.fitDist = newFit;
+    ctx.camDist = Math.max(minDist, Math.min(maxDist, ctx.camDist));
+    ctx.targetCamDist = Math.max(minDist, Math.min(maxDist, ctx.targetCamDist));
   }
   window.addEventListener('resize', onResize);
 
@@ -1362,6 +1022,7 @@ function init(){
     if (dirSavedCme >= 0){ ctx.CME_K = dirSavedCme; dirSavedCme = -1; }
     if (dirSavedDof >= 0){ ctx.DOF_K = dirSavedDof; dirSavedDof = -1; }
   }
+  ctx.directorUserExit = directorUserExit;
   // início pelo PAINEL (a sequência não pode depender de URL): liga o
   // modo em runtime e garante os knobs mínimos da vitrine — CME e foco
   // raso no valor do preset se estiverem abaixo dele (restaurados na
@@ -1408,34 +1069,34 @@ function init(){
     if (dirT < 0){ dirT = 0; dirSavedLapse = ctx.LAPSE_K; }
     dirT += delta;
     var t = dirT;
-    thetaVel = 0; phiVel = 0;
-    var horizon = Math.acos(Math.min(1, SUN_RADIUS/Math.max(camDist, SUN_RADIUS*1.001)));
+    ctx.thetaVel = 0; ctx.phiVel = 0;
+    var horizon = Math.acos(Math.min(1, SUN_RADIUS/Math.max(ctx.camDist, SUN_RADIUS*1.001)));
     var w, k;
     if (t < 10){
       // B0 — plano geral: o Sol inteiro, respiração lenta para dentro
       w = dirRegionWorld(dirPair); dirAimAt(w);
       k = 1 - Math.exp(-rawDelta/6.0);
-      theta = dirLerpAngle(theta, dirAng.th - 0.9, k);
-      phi += (Math.PI*0.46 - phi)*k;
-      targetCamDist = fitDist*(1.28 - 0.018*Math.min(t, 10));
+      ctx.theta = dirLerpAngle(ctx.theta, dirAng.th - 0.9, k);
+      ctx.phi += (Math.PI*0.46 - ctx.phi)*k;
+      ctx.targetCamDist = ctx.fitDist*(1.28 - 0.018*Math.min(t, 10));
       ctx.dofFocusOverride = -1;
     } else if (t < 22){
       // B1 — push-in: tracking da região protagonista (ela gira com o
       // Sol e a câmera a persegue), foco raso no centro do quadro
       w = dirRegionWorld(dirPair); dirAimAt(w);
       k = 1 - Math.exp(-rawDelta/2.2);
-      theta = dirLerpAngle(theta, dirAng.th, k);
-      phi += (dirAng.ph - phi)*k;
-      targetCamDist += (minDist*1.30 - targetCamDist)*(1 - Math.exp(-rawDelta/3.0));
+      ctx.theta = dirLerpAngle(ctx.theta, dirAng.th, k);
+      ctx.phi += (dirAng.ph - ctx.phi)*k;
+      ctx.targetCamDist += (minDist*1.30 - ctx.targetCamDist)*(1 - Math.exp(-rawDelta/3.0));
       ctx.dofFocusOverride = 0.0;
     } else if (t < 30){
       // B2 — reposição ao limbo: a região desliza para a borda (o
       // palco do Thomson) e o foco puxa ao horizonte
       w = dirRegionWorld(dirPair); dirAimAt(w);
       k = 1 - Math.exp(-rawDelta/2.6);
-      theta = dirLerpAngle(theta, dirAng.th + horizon*0.94, k);
-      phi += (dirAng.ph*0.5 + Math.PI*0.25 - phi)*k;
-      targetCamDist += (fitDist*0.78 - targetCamDist)*(1 - Math.exp(-rawDelta/3.0));
+      ctx.theta = dirLerpAngle(ctx.theta, dirAng.th + horizon*0.94, k);
+      ctx.phi += (dirAng.ph*0.5 + Math.PI*0.25 - ctx.phi)*k;
+      ctx.targetCamDist += (ctx.fitDist*0.78 - ctx.targetCamDist)*(1 - Math.exp(-rawDelta/3.0));
       ctx.dofFocusOverride = 1.0;
     } else if (t < 48){
       // B3 — a erupção: flare X no limbo; a casca desprende ~1s depois
@@ -1446,31 +1107,31 @@ function init(){
       }
       w = dirRegionWorld(dirPair); dirAimAt(w);
       k = 1 - Math.exp(-rawDelta/4.5);
-      theta = dirLerpAngle(theta, dirAng.th + horizon*0.94, k*0.4);
-      targetCamDist += (fitDist*0.92 - targetCamDist)*(1 - Math.exp(-rawDelta/8.0));
+      ctx.theta = dirLerpAngle(ctx.theta, dirAng.th + horizon*0.94, k*0.4);
+      ctx.targetCamDist += (ctx.fitDist*0.92 - ctx.targetCamDist)*(1 - Math.exp(-rawDelta/8.0));
       ctx.dofFocusOverride = 1.0;
     } else if (t < 64){
       // B4 — retirada: a casca cruza a coroa, a arcada escura fica
       ctx.dofFocusOverride = -1;
-      targetCamDist += (fitDist*1.30 - targetCamDist)*(1 - Math.exp(-rawDelta/6.0));
-      theta += 0.012*rawDelta;
+      ctx.targetCamDist += (ctx.fitDist*1.30 - ctx.targetCamDist)*(1 - Math.exp(-rawDelta/6.0));
+      ctx.theta += 0.012*rawDelta;
     } else if (t < 78){
       // B5 — time-lapse documental: só a maquinaria de manchas corre
       var up = dirEase((t - 64)/3.0);
       var down = 1 - dirEase((t - 75)/3.0);
       ctx.LAPSE_K = Math.max(dirSavedLapse, 0.85*up*down);
-      theta += 0.010*rawDelta;
+      ctx.theta += 0.010*rawDelta;
     } else if (t < 84){
       // B6 — assentar de volta ao plano geral
       ctx.LAPSE_K = dirSavedLapse;
-      targetCamDist += (fitDist*1.28 - targetCamDist)*(1 - Math.exp(-rawDelta/3.0));
-      theta += 0.010*rawDelta;
+      ctx.targetCamDist += (ctx.fitDist*1.28 - ctx.targetCamDist)*(1 - Math.exp(-rawDelta/3.0));
+      ctx.theta += 0.010*rawDelta;
     } else {
       // loop: próxima volta com outra região protagonista
       dirT = 0; dirPair = (dirPair + 1) % pairStates.length;
       dirFlareFired = false; dirCmeFired = false;
     }
-    phi = Math.max(0.18, Math.min(Math.PI - 0.18, phi));
+    ctx.phi = Math.max(0.18, Math.min(Math.PI - 0.18, ctx.phi));
   }
 
   function animate(){
@@ -1586,11 +1247,11 @@ function init(){
     sunUniforms.uFlareGeo.value.set(flareTanDir.x, flareTanDir.y, flareTanDir.z, sfSep);
     sunUniforms.uFlarePerp.value.set(flarePerpDir.x, flarePerpDir.y, flarePerpDir.z, sfLen);
     // FASE 2 (débito LOD): w = fator de zoom dos STRANDS das fitas — de
-    // perto (camDist < fit) o ruído de recorte fica proporcionalmente
+    // perto (ctx.camDist < fit) o ruído de recorte fica proporcionalmente
     // mais fino, mantendo a densidade de strands EM TELA; de longe fica
     // 1.0 (look calibrado da Fase 1 intocado)
     sunUniforms.uFlareRib.value.set(sfRib, 0.010, flareSeedVal,
-      Math.min(2.6, Math.max(1.0, fitDist/camDist)));
+      Math.min(2.6, Math.max(1.0, ctx.fitDist/ctx.camDist)));
     // loops coronais + arcada pós-flare (FASE 1): ciclo de vida,
     // traços amortizados e envelopes — tudo sem alocação
     updateLoops(delta);
@@ -1744,25 +1405,25 @@ function init(){
 
     // inércia: continua girando ao soltar, com amortecimento exponencial
     if (pointers.size === 0){
-      theta += thetaVel*rawDelta;
-      phi   += phiVel*rawDelta;
-      phi = Math.max(0.18, Math.min(Math.PI-0.18, phi));
+      ctx.theta += ctx.thetaVel*rawDelta;
+      ctx.phi   += ctx.phiVel*rawDelta;
+      ctx.phi = Math.max(0.18, Math.min(Math.PI-0.18, ctx.phi));
       var damp = Math.exp(-2.6*rawDelta);
-      thetaVel *= damp; phiVel *= damp;
-      if (Math.abs(thetaVel) < 0.002) thetaVel = 0;
-      if (Math.abs(phiVel) < 0.002) phiVel = 0;
+      ctx.thetaVel *= damp; ctx.phiVel *= damp;
+      if (Math.abs(ctx.thetaVel) < 0.002) ctx.thetaVel = 0;
+      if (Math.abs(ctx.phiVel) < 0.002) ctx.phiVel = 0;
     }
     // zoom amortecido
-    camDist += (targetCamDist - camDist) * (1.0 - Math.exp(-9.0*rawDelta));
-    sunUniforms.uCamDist.value = camDist;
+    ctx.camDist += (ctx.targetCamDist - ctx.camDist) * (1.0 - Math.exp(-9.0*rawDelta));
+    sunUniforms.uCamDist.value = ctx.camDist;
 
-    if (pointers.size === 0 && performance.now()-lastInteraction > 2200 && !directorActive()){
-      theta += 0.066*rawDelta;
+    if (pointers.size === 0 && performance.now()-ctx.lastInteraction > 2200 && !directorActive()){
+      ctx.theta += 0.066*rawDelta;
       // ?idle=1: câmera idle cinematográfica — deriva orbital + balanço
       // de latitude + respiração de zoom, tudo senoidal (média zero)
       if (ctx.IDLE_CINE){
-        phi += 0.012*Math.sin(ctx.elapsed*0.11)*rawDelta;
-        targetCamDist += Math.sin(ctx.elapsed*0.073)*0.010*rawDelta*targetCamDist;
+        ctx.phi += 0.012*Math.sin(ctx.elapsed*0.11)*rawDelta;
+        ctx.targetCamDist += Math.sin(ctx.elapsed*0.073)*0.010*rawDelta*ctx.targetCamDist;
       }
     }
     updateCamera();
@@ -1788,7 +1449,7 @@ function init(){
     cineProj.set(0,0,0).project(camera);
     compUniforms.uSunC.value.set(cineProj.x*0.5+0.5, cineProj.y*0.5+0.5);
     var cineHalf = camera.fov * Math.PI / 360;
-    var cineAng = Math.asin(Math.min(1, SUN_RADIUS / Math.max(camDist, SUN_RADIUS*1.001)));
+    var cineAng = Math.asin(Math.min(1, SUN_RADIUS / Math.max(ctx.camDist, SUN_RADIUS*1.001)));
     compUniforms.uSunR.value = 0.5 * Math.tan(cineAng) / Math.tan(cineHalf);
     compUniforms.uAspect.value = renderer.domElement.width / Math.max(1, renderer.domElement.height);
     // FASE 5 — abertura do foco raso: cresce ao sair do fit para o
@@ -1797,7 +1458,7 @@ function init(){
     // maquinista, não corte seco. Com knob 0 o ramo escreve 0 e o
     // branch do shader morre.
     if (ctx.DOF_K > 0.001){
-      var dofCloseK = Math.max(0, Math.min(1, (fitDist/camDist - 1.10)/1.10));
+      var dofCloseK = Math.max(0, Math.min(1, (ctx.fitDist/ctx.camDist - 1.10)/1.10));
       var dofTgt = (ctx.dofFocusOverride >= 0) ? ctx.dofFocusOverride : 0.0;
       ctx.dofFocusCur += (dofTgt - ctx.dofFocusCur) * (1.0 - Math.exp(-rawDelta/0.35));
       compUniforms.uDof.value = ctx.DOF_K * dofCloseK*dofCloseK * 0.026;
@@ -1853,9 +1514,9 @@ function init(){
     renderer.render(compScene, quadCamera);
 
     // HUD: atualiza a ~2Hz com as mesmas métricas do __solInfo.perf()
-    hudAccum += rawDelta;
-    if (hudOn && hudAccum >= 0.5 && window.__solInfo && window.__solInfo.perf){
-      hudAccum = 0;
+    ctx.hudAccum += rawDelta;
+    if (ctx.hudOn && ctx.hudAccum >= 0.5 && window.__solInfo && window.__solInfo.perf){
+      ctx.hudAccum = 0;
       var P = window.__solInfo.perf();
       hudEl.textContent = 'tier ' + P.tier + ' x' + P.autoScale + '  ' + P.fps + ' fps\n' +
         'ms ' + P.ms.avg + ' avg  ' + P.ms.p95 + ' p95\n' +
@@ -1864,14 +1525,14 @@ function init(){
 
     // fecha a medição do frame: intervalo rAF->rAF + custo CPU do corpo
     var frameT1 = performance.now();
-    var fMs = (perfLastT > 0) ? (frameT0 - perfLastT) : (frameT1 - frameT0);
-    perfBusyMs[perfIdx] = frameT1 - frameT0;
-    perfFrameMs[perfIdx] = fMs;
-    perfLastT = frameT0;
+    var fMs = (ctx.perfLastT > 0) ? (frameT0 - ctx.perfLastT) : (frameT1 - frameT0);
+    perfBusyMs[ctx.perfIdx] = frameT1 - frameT0;
+    perfFrameMs[ctx.perfIdx] = fMs;
+    ctx.perfLastT = frameT0;
     if (autoTuneOn) autoTune(rawDelta, fMs);
-    perfIdx = (perfIdx + 1) % 240;
-    if (perfN < 240) perfN++;
-    perfCalls = renderer.info.render.calls;
+    ctx.perfIdx = (ctx.perfIdx + 1) % 240;
+    if (ctx.perfN < 240) ctx.perfN++;
+    ctx.perfCalls = renderer.info.render.calls;
     renderer.info.reset();
   }
 

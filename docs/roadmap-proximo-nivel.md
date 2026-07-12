@@ -168,7 +168,9 @@ autossuficiente na raiz do repo:
    de ~700), padrão factory+ctx, 14 estágios com gate de paridade
    BIT-EXATA por commit (A/B worktree `--max-frac 0`), ordem de consumo
    do srand preservada por construção. O "loop de infra" prometido na
-   Fase 0.
+   Fase 0. **✅ ENTREGUE** — 22 módulos + `main.js` residual de 661
+   linhas, 0px em 5/5 em todos os estágios, suítes de fase idênticas ao
+   pré-refactor; registro em `docs/infra-modularizacao.md`.
 2. **`PROMPT-FASE-6.md`** — acabamento físico: manchas de verdade
    (multiplicidade no máximo + proporção GONG, knob `spots` via manchas
    VIRTUAIS num uniform array só do shader do disco — zero custo no

@@ -57,3 +57,14 @@ O modo determinístico (`?det=1&seed=N&hold=F`) fixa RNG e dt e congela o
 tempo no frame F — duas execuções produzem imagens pixel-idênticas no
 SwiftShader, o que permite regressão visual exata em CI
 (`.github/workflows/qa.yml`).
+
+## Arquitetura (pós Bloco A)
+
+O app é modular: `src/main.js` é só o orquestrador (bootstrap, `init()`
+com o manifesto RNG e as chamadas de factory na ordem original, e o
+`animate()`). Cada domínio vive em `src/{glsl,core,sim,surface,
+atmosphere,scene,post,camera,ui,debug}/` como `createX(ctx)` — estado
+mutável compartilhado em `ctx.*`, imutáveis destructurados, zero
+side-effects em import time. Paridade bit-exata com o monolito
+verificada por estágio; detalhes e regras em
+`docs/infra-modularizacao.md`.

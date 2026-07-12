@@ -33,7 +33,12 @@ Fase 5: `?cme=1` liga as CMEs (casca de flux-rope + partículas em
 flares grandes; tier mid+), `?dof=1` o foco raso hexagonal em
 close-ups e `?director=1` a sequência-atração (recomendado com
 `?look=sunshine`; qualquer input devolve o controle).
-Painel de ajustes no ⚙ (salvo em localStorage).
+**Tudo isso também existe SEM URL**: o painel de ajustes no ⚙ tem
+sliders para todos os knobs, o botão "aplicar look Sunshine" e o botão
+"▶ modo diretor" (que empresta cme/dof no valor do preset e os devolve
+quando você retoma a câmera). As URLs são atalhos/deep-links e o
+caminho das ferramentas de QA; o painel é o caminho principal (salvo
+em localStorage).
 
 ## QA
 

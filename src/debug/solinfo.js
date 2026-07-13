@@ -83,6 +83,7 @@ export function createSolInfo(ctx){
                  cvol: ctx.CVOL_K,
                  cme: ctx.CME_K,
                  dof: ctx.DOF_K,
+                 spots: ctx.SPOTS_K,
                  director: ctx.DIRECTOR_ON,
                  adaptMul: compUniforms.uAdapt.value,
                  look: LOOK ? 'sunshine' : '' };
@@ -166,8 +167,28 @@ export function createSolInfo(ctx){
             pairStates[i].reborn = false;
             placePair(pairStates[i]);
           }
+          // FASE 6: as manchas virtuais re-emergem junto (grupos na
+          // banda da fase nova); com spots=0 é invisível — só desloca
+          // o stream próprio spotRand, nunca o srand
+          if (ctx.spotsReseed) ctx.spotsReseed();
         }
         return window.__solInfo.cycleInfo();
+      };
+      // FASE 6 — QA das manchas: knob ao vivo (padrão setCvol), re-
+      // emergência dos 5 pares virtuais e leitura de contagem/raios
+      // (histograma vs range GONG 0.005-0.086R). Os slots refletem o
+      // ÚLTIMO frame renderizado — avance >=1 frame após um hook antes
+      // de ler.
+      window.__solInfo.setSpots = function(v){
+        ctx.SPOTS_K = Math.min(1.5, Math.max(0, +v || 0));
+        return ctx.SPOTS_K;
+      };
+      window.__solInfo.reseedSpots = function(){
+        if (ctx.spotsReseed) ctx.spotsReseed();
+        return ctx.spotsInfoData ? ctx.spotsInfoData() : null;
+      };
+      window.__solInfo.spotsInfo = function(){
+        return ctx.spotsInfoData ? ctx.spotsInfoData() : null;
       };
       window.__solInfo.prominences = function(){
         return prominenceMeshes.map(function(m){

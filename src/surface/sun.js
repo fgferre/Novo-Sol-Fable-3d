@@ -17,7 +17,207 @@ export function createSunBase(ctx){
 
 export function createSunUniforms(ctx){
   var SUN_RADIUS = ctx.SUN_RADIUS, charges = ctx.charges, knob = ctx.knob,
-      TP = ctx.TP, simRTs = ctx.simRTs, simUniforms = ctx.simUniforms;
+      TP = ctx.TP, simRTs = ctx.simRTs, simUniforms = ctx.simUniforms,
+      pairStates = ctx.pairStates, spotRand = ctx.spotRand,
+      lifeEnvelope = ctx.act.lifeEnvelope;
+
+  // ---------------------------------------------------------------
+  // FASE 6 (B1) — MANCHAS VIRTUAIS: até 10 slots (5 pares líder/
+  // seguidor) desenhados SÓ no fragment do disco via uniform array
+  // uSpots — zero custo no bake e nenhuma carga no campo (fibrilas/
+  // coroa/PIL/plage não veem estas manchas; limitação aceita: virtuais
+  // sem colar de plage, o colar vem do canal B do bake). Lifecycle
+  // leve no padrão das regiões ativas (período/fase/renasce longe),
+  // sorteios 100% no stream PRÓPRIO spotRand. Nascem PERTO de regiões
+  // vivas (grupos como a ref-07): âncora sorteada entre os 4 pares
+  // reais com peso |w|, dispersão na LARGURA da banda de Spörer da
+  // fase corrente (o equivalente do cycleEmergenceLat de activity.js —
+  // a latitude central já vem da âncora, que emerge na banda). A
+  // simulação roda SEMPRE, independente do knob (o knob só gateia
+  // uniforms/desenho) — setSpots() ao vivo é reprodutível.
+  // Encoding do uSpots[i]: xyz = direção unitária × fade de vida
+  // (length(xyz) recupera o fade — evita pop de nascimento/morte, como
+  // o lifeK das manchas reais), w = raio angular em rad (~R); w<=0 =
+  // slot vazio (skip no shader).
+  // ---------------------------------------------------------------
+  var SPOTS_MAX = 10;
+  var spotVecs = [];
+  for (var sv = 0; sv < SPOTS_MAX; sv++) spotVecs.push(new THREE.Vector4(0, 0, 0, 0));
+  // gate de multiplicidade por par: o par p só é elegível quando
+  // cycleAmpK×knobMul cruza o limiar (rampa suave de 0.08 — sem pop).
+  // No mínimo do ciclo (ampK~0.14) só o par 0 vive (~0-2 manchas);
+  // no máximo (ampK~1.16) os 5 pares (grupos múltiplos, ref-07).
+  var SPOT_THR = [0.05, 0.42, 0.68, 0.90, 1.08];
+  var spotPairs = [];
+  function sstep(a, b, x){
+    var t = Math.min(1, Math.max(0, (x - a)/(b - a)));
+    return t*t*(3 - 2*t);
+  }
+  // nascimento de um par de manchas: 7 draws FIXOS de spotRand por
+  // chamada (contagem constante = lifecycle determinístico sob det)
+  function placeSpotPair(sp){
+    // âncora: região ativa sorteada com peso |w| (nasce onde há vida)
+    var wSum = 0, i;
+    for (i = 0; i < pairStates.length; i++) wSum += Math.abs(pairStates[i].lead.w) + 0.05;
+    var pick = spotRand() * wSum, k = 0;
+    for (i = 0; i < pairStates.length; i++){
+      pick -= Math.abs(pairStates[i].lead.w) + 0.05;
+      if (pick <= 0){ k = i; break; }
+    }
+    var ps = pairStates[k];
+    // ponto médio do par real (o grupo se forma EM VOLTA da região);
+    // as cargas vivem em raio 0.88 — normalizar antes de ler lat/lon
+    var ax = (ps.lead.x + ps.foll.x)*0.5, ay = (ps.lead.y + ps.foll.y)*0.5,
+        az = (ps.lead.z + ps.foll.z)*0.5;
+    var al = Math.sqrt(ax*ax + ay*ay + az*az) || 1;
+    var lat0 = Math.asin(Math.max(-1, Math.min(1, ay/al)));
+    var lon0 = Math.atan2(az, ax);
+    // dispersão do grupo: ±~19° em longitude; em latitude a meia-
+    // largura da banda de Spörer da fase corrente (8°→4°, lei da
+    // activity.js) — no fim do ciclo os grupos apertam na banda
+    var latW = (8.0 - 4.0*ctx.cyclePhase01) * (Math.PI/180.0);
+    var lon = lon0 + (spotRand()*2.0 - 1.0)*0.34;
+    var lat = lat0 + (spotRand()*2.0 - 1.0)*latW*0.9;
+    // tamanhos (range GONG 0.005-0.086R em raio angular): distribuição
+    // pesada nos pequenos (mediana ~0.014), líder raro grande (~0.05+)
+    var uL = spotRand();
+    sp.lr0 = 0.0065 + 0.0505*Math.pow(uL, 2.8);
+    sp.fr0 = sp.lr0 * (0.42 + 0.20*spotRand());   // seguidor 42-62% (Hale)
+    // separação do par MENOR que a das regiões (é o mesmo grupo) +
+    // tilt de Joy (seguidor levemente rumo ao polo)
+    var sep = 0.07 + spotRand()*0.09;
+    var joy = sep*(0.10 + 0.07*spotRand());
+    var hemi = (lat >= 0) ? 1 : -1;
+    var cl = Math.cos(lat);
+    sp.lx = cl*Math.cos(lon); sp.ly = Math.sin(lat); sp.lz = cl*Math.sin(lon);
+    var latF = lat + hemi*joy, lonF = lon + sep, cf = Math.cos(latF);
+    sp.fx = cf*Math.cos(lonF); sp.fy = Math.sin(latF); sp.fz = cf*Math.sin(lonF);
+  }
+  (function buildSpotPairs(){
+    for (var p = 0; p < 5; p++){
+      var sp = { period: 90 + spotRand()*70, phase: 0, reborn: false,
+                 lx: 0, ly: 0, lz: 0, lr0: 0.01,
+                 fx: 0, fy: 0, fz: 0, fr0: 0.006 };
+      // fases espalhadas (mesmo padrão do buildCharges): sempre há
+      // pares em estágios diferentes do envelope. Teto 0.78 do x
+      // inicial: o 1º renascimento natural (draws de spotRand) fica a
+      // >=0.12·period (~11s sim) de distância — nunca DENTRO de uma
+      // janela de captura de QA (o frame do hook tem jitter de wall-
+      // clock; um renascimento na janela dessincronizaria o stream)
+      sp.phase = (p/5*0.85 + spotRand()*0.10) * sp.period;
+      placeSpotPair(sp);
+      spotPairs.push(sp);
+    }
+  })();
+  // re-emergência total (hook de QA/sweep, chamada pelo reseed do
+  // setCyclePhase): 8 draws fixos por par — determinístico; o mesmo
+  // teto de x pós-reseed. A fase NÃO lê o relógio corrente: o x na
+  // captura depende só do frame congelado (frame-exato sob det), nunca
+  // do instante de wall-clock em que o hook rodou (anti-flaky S6).
+  function spotsReseed(){
+    for (var p = 0; p < 5; p++){
+      var sp = spotPairs[p];
+      sp.phase = (p/5*0.85 + spotRand()*0.10) * sp.period;
+      sp.reborn = false;
+      placeSpotPair(sp);
+    }
+  }
+  // cisalhamento diferencial (mesma lei Snodgrass de driftCharge):
+  // devolve o dlon para a latitude — as manchas derivam em sincronia
+  // com as cargas/plage e não descolam do entorno
+  function spotDriftLon(y, dt){
+    var lat = Math.asin(Math.max(-1, Math.min(1, y)));
+    var s2 = Math.sin(lat)*Math.sin(lat);
+    var omega = 14.71 - 2.39*s2 - 1.78*s2*s2;
+    return (omega - 14.18) * 0.00028 * 6.28318 * dt;
+  }
+  var spotLastT = 0;
+  // atualização por frame (chamada pelo onBeforeRender do disco — main
+  // render apenas, 1×/frame): ZERO alocações; roda independente do
+  // knob (uSpotsK é quem gateia o desenho no shader)
+  function spotsUpdate(){
+    var tNow = ctx.elapsed + ctx.cycleWarp;   // mesmo relógio das regiões (lapse acelera)
+    var dt = tNow - spotLastT;
+    if (dt < 0) dt = 0; if (dt > 0.35) dt = 0.35;
+    spotLastT = tNow;
+    var drift = dt * ctx.MACRO_SLOW;
+    var k = ctx.SPOTS_K;
+    // multiplicidade: contagem instantânea = ciclo (cycleAmpK) × knob;
+    // amplitude (tamanho) também escala com o knob — contínuo nos dois.
+    // kOn zera os SLOTS com knob 0 (o estado continua simulando — o
+    // desenho/uniform é a única coisa gateada): spotsInfo().n lê 0 e o
+    // shader nem entra no loop (uSpotsK=0).
+    var kOn = k > 0.001 ? 1 : 0;
+    var knobMul = 0.35 + 0.65*Math.min(1, k) + 0.10*Math.max(0, k - 1);
+    var gate = ctx.cycleAmpK * knobMul;
+    var sizeK = 0.45 + 0.55*Math.min(1.5, k);
+    for (var p = 0; p < 5; p++){
+      var sp = spotPairs[p];
+      var x = ((tNow + sp.phase) % sp.period) / sp.period;
+      var env = lifeEnvelope(x);
+      if (x >= 0.90){
+        if (!sp.reborn){ placeSpotPair(sp); sp.reborn = true; }   // renasce noutro grupo
+      } else sp.reborn = false;
+      if (drift > 0){
+        var dl = spotDriftLon(sp.ly, drift), cd = Math.cos(dl), sd = Math.sin(dl);
+        var x0 = sp.lx, z0 = sp.lz;
+        sp.lx = x0*cd - z0*sd; sp.lz = x0*sd + z0*cd;
+        dl = spotDriftLon(sp.fy, drift); cd = Math.cos(dl); sd = Math.sin(dl);
+        x0 = sp.fx; z0 = sp.fz;
+        sp.fx = x0*cd - z0*sd; sp.fz = x0*sd + z0*cd;
+      }
+      // fade = vida (anti-pop, como o lifeK das reais) × rampa do gate
+      var fade = sstep(0.02, 0.25, env) * sstep(0.0, 0.08, gate - SPOT_THR[p]) * kOn;
+      // raio efetivo cresce com a vida (como aw nas reais) e com o
+      // knob; clamp no range GONG [0.005, 0.086]
+      var grow = (0.40 + 0.60*env) * sizeK;
+      var rl = Math.min(0.086, Math.max(0.005, sp.lr0 * grow));
+      var rf = Math.min(0.086, Math.max(0.005, sp.fr0 * grow));
+      var vl = spotVecs[2*p], vf = spotVecs[2*p + 1];
+      if (fade <= 0.004){
+        vl.set(0, 0, 0, 0); vf.set(0, 0, 0, 0);
+      } else {
+        vl.set(sp.lx*fade, sp.ly*fade, sp.lz*fade, rl);
+        vf.set(sp.fx*fade, sp.fy*fade, sp.fz*fade, rf);
+      }
+    }
+    sunUniforms.uSpotsK.value = k;
+  }
+  // introspecção p/ QA (spotsInfo): slots como o shader os vê (o vec4
+  // reflete o último frame renderizado) + raios EFETIVOS das manchas
+  // reais com a mesma recalibração do shader (espelho JS, padrão
+  // bFieldJS↔BFIELD_GLSL). Aloca — só chamar fora do caminho quente.
+  function spotsInfoData(){
+    var k = ctx.SPOTS_K;
+    var out = { knob: k, ampK: +ctx.cycleAmpK.toFixed(3),
+                phase: +ctx.cyclePhase01.toFixed(3), n: 0, slots: [], real: [] };
+    for (var i = 0; i < SPOTS_MAX; i++){
+      var v = spotVecs[i], on = v.w > 0;
+      if (on) out.n++;
+      var l = Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z) || 1;
+      out.slots.push({ on: on, lead: (i % 2) === 0,
+        lat: on ? +(Math.asin(Math.max(-1, Math.min(1, v.y/l)))*180/Math.PI).toFixed(2) : 0,
+        lon: on ? +(Math.atan2(v.z, v.x)*180/Math.PI).toFixed(2) : 0,
+        r: on ? +v.w.toFixed(4) : 0,
+        fade: on ? +Math.min(1, l).toFixed(3) : 0 });
+    }
+    for (var j = 0; j < 8; j++){
+      var c = charges[j], aw = Math.abs(c.w), isFoll = j % 2;
+      var r0 = (0.016 + 0.014*aw) * (1.0 - 0.45*isFoll);
+      var re = Math.min(r0 * (1.0 + k*(0.10 + 0.20*aw*aw)), 0.086);
+      var cl2 = Math.sqrt(c.x*c.x + c.y*c.y + c.z*c.z) || 1;
+      out.real.push({ lead: isFoll === 0,
+        lat: +(Math.asin(Math.max(-1, Math.min(1, c.y/cl2)))*180/Math.PI).toFixed(2),
+        lon: +(Math.atan2(c.z, c.x)*180/Math.PI).toFixed(2),
+        aw: +aw.toFixed(3), r0: +r0.toFixed(4), r: +re.toFixed(4),
+        lifeK: +sstep(0.04, 0.30, aw).toFixed(3) });
+    }
+    return out;
+  }
+  ctx.spotsUpdate = spotsUpdate;
+  ctx.spotsReseed = spotsReseed;
+  ctx.spotsInfoData = spotsInfoData;
+
   var sunUniforms = {
     uTime: { value: 0 },
     uDispScale: { value: SUN_RADIUS * 0.004 },
@@ -47,7 +247,13 @@ export function createSunUniforms(ctx){
     // VFX da convecção. Default 0 = desligado, frame idêntico ao baseline.
     uPmode: { value: knob('pmode', 0.0, 0.0, 1.0) },
     uSimTex: { value: simRTs[0].texture },
-    uSimTexel: { value: simUniforms.uTexel.value }
+    uSimTexel: { value: simUniforms.uTexel.value },
+    // FASE 6 (B1) — manchas virtuais: array VIVO de 10 Vector4
+    // (mutado por spotsUpdate a cada frame; three re-flatten uniform
+    // arrays por frame) + gate/escala do knob (0 = loop pulado no
+    // shader e recalibração ×1.0 — frame bit-exato ao baseline)
+    uSpots: { value: spotVecs },
+    uSpotsK: { value: ctx.SPOTS_K }
   };
   ctx.sunUniforms = sunUniforms;
 }
@@ -129,7 +335,13 @@ export function createSunMesh(ctx){
     'varying float vDisp;',
     'varying float vPm;',
     'varying vec2 vUvV;',
-    'uniform vec4 uCharges[10];'].join('\n') + '\n' + SFTDIR_GLSL + '\n' + BFIELD_GLSL + '\n' + LIC_GLSL + '\n' + [
+    'uniform vec4 uCharges[10];',
+    // FASE 6 (B1) — manchas virtuais: xyz = direção × fade de vida
+    // (length recupera o fade), w = raio angular em rad (w<=0 = slot
+    // vazio). uSpotsK gateia o loop E a recalibração dos raios reais.
+    '#define SPOTS_MAX 10',
+    'uniform vec4 uSpots[SPOTS_MAX];',
+    'uniform float uSpotsK;'].join('\n') + '\n' + SFTDIR_GLSL + '\n' + BFIELD_GLSL + '\n' + LIC_GLSL + '\n' + [
     'void main(){',
     '  vec3 viewDir = normalize(cameraPosition - vPositionW);',
     '  vec3 N = normalize(vNormalW);',
@@ -230,6 +442,14 @@ export function createSunMesh(ctx){
     // 3.5-60 Mm de diâmetro (0.005-0.086 R). Antes chegava a 0.18 R —
     // uma ordem de grandeza acima de qualquer mancha já registrada
     '    float r = (0.016 + 0.014*aw) * (1.0 - 0.45*isFoll);',
+    // FASE 6 (B1) — recalibração de proporção GONG gateada pelo knob:
+    // com spots>0 os raios reais esticam rumo ao alto do range
+    // observado (termo quadrático em aw ⇒ só o líder FORTE fica
+    // grande, ~0.05-0.08R; teto 0.086R). Medido (seed 7, máximo): aw
+    // 1.39 ⇒ r 0.035→0.052 em spots=1, 0.061 em 1.5. Com uSpotsK=0 o
+    // multiplicador é EXATAMENTE 1.0 e o min() é no-op (r baseline <=
+    // ~0.045R) — paridade bit-exata por construção.
+    '    r = min(r * (1.0 + uSpotsK*(0.10 + 0.20*aw*aw)), 0.086);',
     '    float ui0 = 1.0 - smoothstep(r*0.55, r, d);',
     '    float ui = ui0 * lifeK;',
     '    float pi = clamp((1.0 - smoothstep(r, r*2.3, d)) - ui0, 0.0, 1.0) * lifeK;',
@@ -239,6 +459,43 @@ export function createSunMesh(ctx){
     '      vec3 tc = f - sp*dot(f, sp);',
     '      float tl = length(tc);',
     '      if (tl > 1e-4) dirRad = tc/tl;',
+    '    }',
+    '  }',
+    // FASE 6 (B1) — manchas VIRTUAIS (uSpots): multiplicidade e
+    // proporção GONG só no shader do disco. Mesmo padrão do loop real:
+    // distância angular no domínio warpado (spW — a mancha ferve com o
+    // colar), contorno irregular, assimetria líder/seguidor pela
+    // paridade do índice, penumbra 1:2.3 e contribuição pelos MESMOS
+    // max()/argmax de umbra/pen (com contribuição 0 o max é bit-
+    // exato). Gate uSpotsK: knob 0 pula o loop inteiro (branch
+    // uniforme). Early-out pela CORDA (2(1-cos) = corda², corda<=arco
+    // sempre): descarta só quando dv>6r GARANTIDO — lá a contribuição
+    // já é 0 (pen morre em 2.3r e o ruído de contorno encolhe dv no
+    // máximo ×0.46 ⇒ zero acima de 5r). Poupa o acos e os 2 snoise na
+    // quase totalidade dos pixels (A/B: o acos por spot dominava o
+    // custo do loop no pior caso).
+    '  if (uSpotsK > 0.001){',
+    '    for(int i=0;i<SPOTS_MAX;i++){',
+    '      float rv = uSpots[i].w;',
+    '      if (rv <= 0.0) continue;',
+    '      float lifeKv = length(uSpots[i].xyz);',
+    '      vec3 fv = uSpots[i].xyz / max(lifeKv, 1e-4);',
+    '      float cv = dot(spW, fv);',
+    '      if (2.0*(1.0 - cv) > rv*rv*36.0) continue;',
+    '      float dv = acos(clamp(cv, -1.0, 1.0));',
+    '      float isFollV = mod(float(i), 2.0);',
+    '      dv *= 1.0 + mix(0.18, 0.38, isFollV)*snoise(spW*24.0 + fv*9.0)',
+    '            + mix(0.07, 0.16, isFollV)*snoise(spW*60.0 - fv*4.0);',
+    '      float uiV0 = 1.0 - smoothstep(rv*0.55, rv, dv);',
+    '      float uiV = uiV0 * lifeKv;',
+    '      float piV = clamp((1.0 - smoothstep(rv, rv*2.3, dv)) - uiV0, 0.0, 1.0) * lifeKv;',
+    '      umbra = max(umbra, uiV);',
+    '      if (piV > pen){',
+    '        pen = piV;',
+    '        vec3 tcv = fv - sp*dot(fv, sp);',
+    '        float tlv = length(tcv);',
+    '        if (tlv > 1e-4) dirRad = tcv/tlv;',
+    '      }',
     '    }',
     '  }',
     '  if (pen > 0.002){',
@@ -351,6 +608,12 @@ export function createSunMesh(ctx){
     fragmentShader: sunFragmentShader
   });
   var sunMesh = new THREE.Mesh(sunGeometry, sunMaterial);
+  // FASE 6 (B1): o lifecycle das manchas virtuais atualiza AQUI — o
+  // onBeforeRender do disco dispara 1×/frame, só no render principal
+  // (os bakes usam cenas próprias de quad ⇒ zero custo no bake). Roda
+  // sempre (knob só gateia o desenho): ~10 slots de aritmética escalar,
+  // zero alocações — e setSpots() ao vivo é reprodutível por construção.
+  sunMesh.onBeforeRender = function(){ ctx.spotsUpdate(); };
   scene.add(sunMesh);
   ctx.sunMesh = sunMesh;
 }

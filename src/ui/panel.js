@@ -102,6 +102,10 @@ export function createPanel(ctx){
         get:function(){ return ctx.CYCLE_K; }, set:function(v){ ctx.CYCLE_K = v; } },
       { k:'lapse', label:'Time-lapse do ciclo', lo:0, hi:1.5, step:0.05, dflt:0,
         get:function(){ return ctx.LAPSE_K; }, set:function(v){ ctx.LAPSE_K = v; } },
+      // FASE 6: multiplicidade/proporção das manchas (grupos como nas
+      // refs GONG; a contagem acompanha a fase do ciclo)
+      { k:'spots', label:'Manchas solares (grupos)', lo:0, hi:1.5, step:0.05, dflt:0,
+        get:function(){ return ctx.SPOTS_K; }, set:function(v){ ctx.SPOTS_K = v; } },
       { sec: 'luz & cor' },
       { k:'bloom', label:'Bloom', lo:0, hi:2.5, step:0.05, dflt:1,
         get:function(){ return ctx.BLOOM_STRENGTH_BASE/BLOOM_BASE0; },

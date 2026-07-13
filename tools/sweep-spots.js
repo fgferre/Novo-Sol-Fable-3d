@@ -5,7 +5,10 @@
 // close-up da banda ativa) na fase de MÁXIMO do ciclo (estado saltado:
 // hold=90, setCyclePhase(0.5,true) ANTES do congelamento para o bake
 // absorver as regiões novas) + par de referência espelhando ref-06/07
-// (fit no máximo, num nível médio e no mínimo, spots=1.0).
+// (fit no máximo, num nível médio e no mínimo, spots=1.0) + 1 close
+// EXTREMO em spots=1.5 mirando o líder VIRTUAL mais forte (B1-fix:
+// grupos agora nascem LONGE das regiões reais — a vista do grupo real
+// não mostra a morfologia virtual de perto).
 // Gera manifest.json (arquivo -> {spots, vista, fase}).
 // Uso: node tools/sweep-spots.js [outDir] [--file dist-single/index.html]
 const path = require('path');
@@ -72,6 +75,35 @@ const VALUES = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5];
     await frames(page, 3);
   }
 
+  // mira o líder VIRTUAL mais forte (mesma conversão objeto->mundo do
+  // aimActiveBand; slots dão lat/lon em graus no espaço do objeto).
+  // Fallback: banda real, se nenhum slot virtual estiver vivo.
+  async function aimStrongVirtual(page, distK){
+    const ok = await page.evaluate((dk) => {
+      const st = window.__solInfo.state();
+      const si = window.__solInfo.spotsInfo();
+      let best = null;
+      si.slots.forEach((s) => {
+        if (s.on && s.lead && (!best || s.r > best.r)) best = s;
+      });
+      if (!best) return false;
+      const la = best.lat*Math.PI/180, lo = best.lon*Math.PI/180;
+      const p = [Math.cos(la)*Math.cos(lo), Math.sin(la), Math.cos(la)*Math.sin(lo)];
+      const tz = 0.1265, ry = st.rotY;
+      const tx = p[0]*Math.cos(tz) - p[1]*Math.sin(tz);
+      const ty = p[0]*Math.sin(tz) + p[1]*Math.cos(tz);
+      const w = [tx*Math.cos(ry) + p[2]*Math.sin(ry), ty,
+                 -tx*Math.sin(ry) + p[2]*Math.cos(ry)];
+      const th = Math.atan2(w[2], w[0]);
+      const ph = Math.acos(Math.max(-1, Math.min(1, w[1])));
+      window.__solInfo.setView(th, ph, st.minDist + (st.fitDist - st.minDist)*dk);
+      return true;
+    }, distK);
+    if (!ok) await aimActiveBand(page, distK);
+    await frames(page, 3);
+    return ok;
+  }
+
   // --- grade 6 valores × 2 vistas, fase no MÁXIMO -----------------------
   for (const vista of ['fit', 'close']){
     const page = await openAtPhase(0.5);
@@ -88,6 +120,14 @@ const VALUES = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5];
       await frames(page, 2);
       await shot(page, 'ref07-espelho-fit-max.png',
         { spots: 1.0, vista: 'fit', fase: 'máximo (0.5)', ref: 'ref-07 (grupos múltiplos, umbras minúsculas)' });
+    }
+    if (vista === 'close'){
+      // close EXTREMO no grupo virtual (spots já em 1.5 do último passo
+      // da grade): morfologia líder/seguidor + penumbra 1:2.1 de perto
+      const aimed = await aimStrongVirtual(page, 0.30);
+      await shot(page, 'spots-1.50-close2-max.png',
+        { spots: 1.5, vista: 'close2 (líder virtual, zoom 0.30)',
+          fase: 'máximo (0.5, ampK~1.16)', aimedVirtual: aimed });
     }
     await page.close();
   }

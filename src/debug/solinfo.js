@@ -394,11 +394,25 @@ export function createSolInfo(ctx){
         ctx.cmeCoreGain = Math.min(2.5, Math.max(0, +x || 0));
         return ctx.cmeCoreGain;
       };
+      // FASE 6 B3 — pesos de FORMA da casca do CME (padrão setCvolShape;
+      // eixos do sweep de calibração sem rebuild). Ambos são UNIFORMS do
+      // shader: efeito IMEDIATO no próximo frame, sem rebake.
+      //   stria 0-1.2: estrias helicoidais do rim (0 = fbm isotrópico da
+      //                F5, ramo do shader byte-idêntico = bit-exato);
+      //   cav   0-1.0: rarefação da cavidade por raio (0 = casca da F5
+      //                bit-exata; o núcleo NUNCA é atenuado).
+      window.__solInfo.setCmeShape = function(o){
+        o = o || {};
+        if (o.stria !== undefined) ctx.cmeStriaK = Math.min(1.2, Math.max(0, +o.stria || 0));
+        if (o.cav !== undefined) ctx.cmeCavK = Math.min(1.0, Math.max(0, +o.cav || 0));
+        return { stria: ctx.cmeStriaK, cav: ctx.cmeCavK };
+      };
       window.__solInfo.cmeInfo = function(){
         var g = cmeGeomAt(ctx.cmeT < 900 ? ctx.cmeT : 0);
         return { on: ctx.cmeT < 900, t: ctx.cmeT < 900 ? ctx.cmeT : -1, amp: ctx.cmeAmp,
                  count: ctx.cmeCount, steps: CME_STEPS, killed: ctx.cmeKilled,
-                 knob: ctx.CME_K, cooldown: +ctx.cmeCooldown.toFixed(2),
+                 knob: ctx.CME_K, stria: ctx.cmeStriaK, cav: ctx.cmeCavK,
+                 cooldown: +ctx.cmeCooldown.toFixed(2),
                  front: +g.front.toFixed(3), rho: +g.rho.toFixed(3),
                  cx: +g.cx.toFixed(3), env: +g.env.toFixed(3),
                  hdr: +ctx.lastCmeHDR.toFixed(3),

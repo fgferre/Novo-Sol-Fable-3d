@@ -5,8 +5,12 @@
 //   P (B2) plumas polares + cúspide da coroa volumétrica — ADICIONAR
 //          os checks no bloco marcado (mesmo padrão: página própria,
 //          hooks setCvolShape/rebakeCorona, asserções numéricas+diff).
-//   C (B3) estrias helicoidais + cavidade do CME — idem (hooks
-//          forceCME/setCmeClock, perfil radial pós-composite).
+//   C (B3) estrias helicoidais + cavidade do CME: anisotropia do rim,
+//          razão frente:cavidade no perfil radial pós-composite,
+//          pesos 0 = look atual, determinismo do evento AO VIVO e
+//          réplica do grupo K do qa:phase5 sob os pesos candidatos
+//          (hooks setCmeShape/forceCME; captura ao vivo SEM saltar o
+//          relógio — as partículas integram).
 // Capturas determinísticas (?det=1&seed=7&hold=N) + asserções via
 // __solInfo (spotsInfo/setSpots/setCyclePhase). Sai com 1 em FAIL.
 // Uso: node tools/qa-phase6.js [outDir] [--file dist-single/index.html] [--group S,P,C]
@@ -19,7 +23,7 @@ const pixelmatch = require('pixelmatch');
 function argOf(flag, dflt){ const i = process.argv.indexOf(flag); return i > -1 ? process.argv[i+1] : dflt; }
 const outDir = (process.argv[2] && !process.argv[2].startsWith('--')) ? process.argv[2] : 'out/phase6';
 const htmlFile = argOf('--file', 'dist-single/index.html');
-const GROUPS = argOf('--group', 'S,P').split(',');   // B3 liga C
+const GROUPS = argOf('--group', 'S,P,C').split(',');
 const base = 'file://' + path.resolve(htmlFile);
 
 let fails = 0;
@@ -497,10 +501,369 @@ function ringStats(file, r0, r1){
 
   // ================== GRUPO C (B3: estrias + cavidade) ================
   if (GROUPS.includes('C')){
-    // B3 adiciona aqui: forceCME + setCmeClock, perfil radial pós-
-    // composite (contraste frente:cavidade >=2x) e assinatura das
-    // estrias helicoidais vs fbm isotrópico.
-    check('C0 grupo C ainda não implementado (B3)', false, 'placeholder');
+    // Limiares CALIBRADOS na rodada B3 (regra da rodada: limiar ≈
+    // metade do efeito medido). Baseline MEDIDO (build pré-B3 3b29425,
+    // evento AO VIVO congelado em t=4.967 no limbo — forceCME(0) no
+    // frame ~10, SEM saltar o relógio —, det=1&seed=7, estrelas off,
+    // fitDist×1.6): razão frente:cavidade 1.189× (a régua "~1.3×" da
+    // F5, re-medida nesta receita — este é o número desta régua);
+    // "contas" do rim beadRMS 1.569. Com os pesos no build B3 (mesma
+    // página/receita): stria=0.8 → beadRMS 0.63× o isotrópico
+    // (de-beading → laços); cav=0.7 → razão 1.859× (ABAIXO do alvo —
+    // por isso a calibração moveu o candidato); candidato
+    // stria=0.8+cav=0.85 (casca+partículas) → razão 2.109× (≥2.0 do
+    // PROMPT; a resposta do cav satura de propósito perto de 0.87 —
+    // min(cav·1.15,1) — teto 0.8/1.0 mede 2.15×).
+    const CCAL = {
+      candStria: 0.8, candCav: 0.85,  // candidatos do sweep (painel decide)
+      c1MaxBeadRatio: 0.80,           // beadRMS(stria .8)/beadRMS(0) <= (medido 0.58-0.63x)
+      c2MinRatio: 2.0,                // frente:cavidade no candidato (PROMPT-F6)
+      holdMain: 308,                  // t≈(308-10)/60 ≈ 4.97 — bolha formada
+      holdDet: 128                    // t≈1.97 p/ o check de determinismo
+    };
+    // ---- helpers C (mesmas réguas do tools/sweep-cme2.js) ------------
+    function lumBil(p, x, y){
+      if (x < 0 || y < 0 || x > p.width - 2 || y > p.height - 2) return -1;
+      const x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0;
+      function L(xx, yy){
+        const i = (yy*p.width + xx)*4;
+        return 0.2126*p.data[i] + 0.7152*p.data[i+1] + 0.0722*p.data[i+2];
+      }
+      return L(x0,y0)*(1-fx)*(1-fy) + L(x0+1,y0)*fx*(1-fy) + L(x0,y0+1)*(1-fx)*fy + L(x0+1,y0+1)*fx*fy;
+    }
+    // centroide do diff bruto A/B do toggle cme = direção do evento em
+    // TELA (auto-calibrado, sem depender da convenção da câmera)
+    function diffCentroid(fA, fB, minD){
+      const a = readPng(fA), b = readPng(fB);
+      let sx = 0, sy = 0, n = 0;
+      for (let y = 0; y < a.height; y++){
+        for (let x = 0; x < a.width; x++){
+          const i = (y*a.width + x)*4;
+          const d = Math.abs(a.data[i]-b.data[i]) + Math.abs(a.data[i+1]-b.data[i+1]) + Math.abs(a.data[i+2]-b.data[i+2]);
+          if (d > minD){ sx += x; sy += y; n++; }
+        }
+      }
+      return n ? { x: sx/n, y: sy/n, n } : null;
+    }
+    // perfil radial pós-composite ao longo de û (janela ±6px) e razão
+    // frente:cavidade nas bandas da bolha (cx, rho, front em R — lidos
+    // do cmeInfo no instante congelado)
+    function cavityMetrics(file, u, Rs, cxR, rho, front){
+      const p = readPng(file);
+      const cx = p.width/2, cy = p.height/2, vx = -u.y, vy = u.x;
+      const r1 = Math.min(3.1, front + 0.55);
+      function band(a, b, f){
+        let v = f === 'max' ? -1 : (f === 'min' ? 1e9 : 0), n = 0;
+        for (let r = Math.max(1.02, a); r <= Math.min(b, r1); r += 0.01){
+          const px = cx + u.x*r*Rs, py = cy + u.y*r*Rs;
+          let s = 0, m = 0;
+          for (let k = -6; k <= 6; k++){
+            const L = lumBil(p, px + vx*k, py + vy*k);
+            if (L >= 0){ s += L; m++; }
+          }
+          if (!m) continue;
+          const L = s/m;
+          if (f === 'max') v = Math.max(v, L);
+          else if (f === 'min') v = Math.min(v, L);
+          else { v += L; n++; }
+        }
+        return f === 'mean' ? (n ? v/n : -1) : v;
+      }
+      const frontPeak = band(cxR + 0.55*rho, cxR + 1.15*rho, 'max');
+      const cavMean = band(cxR - 0.30*rho, cxR + 0.45*rho, 'mean');
+      return { frontPeak: +frontPeak.toFixed(3), cavMean: +cavMean.toFixed(3),
+               ratio: +(frontPeak/Math.max(1e-3, cavMean)).toFixed(3) };
+    }
+    // "contas" do rim (flag F5): perfil ANGULAR do rim (média radial na
+    // banda [0.78,1.04]ρ em volta do centro da bolha, amostra suavizada
+    // 3×3 contra o chuvisco das partículas), detrend por média móvel
+    // ±10°; o resíduo RMS mede os grumos angulares. fbm isotrópico =
+    // contas (RMS alto); estrias helicoidais = laços alongados ao longo
+    // do arco (RMS cai — medido 0.63× com stria=0.8, calibração B3).
+    function rimBeadRMS(file, u, Rs, cxR, rho, RlimbPx){
+      const p = readPng(file);
+      const ccx = p.width/2 + u.x*cxR*Rs, ccy = p.height/2 + u.y*cxR*Rs;
+      const NA = 360, NRR = 10, r0 = 0.78, r1 = 1.04;
+      const A = new Float64Array(NA), C = new Float64Array(NA);
+      for (let k = 0; k < NA; k++){
+        const ang = k/NA*Math.PI*2;
+        for (let j = 0; j < NRR; j++){
+          const r = (r0 + (r1 - r0)*j/(NRR - 1))*rho*Rs;
+          const x = ccx + Math.cos(ang)*r, y = ccy + Math.sin(ang)*r;
+          if (Math.hypot(x - p.width/2, y - p.height/2) < RlimbPx*1.05) continue;
+          if (x < 1 || y < 1 || x >= p.width - 1 || y >= p.height - 1) continue;
+          let s = 0, n = 0;
+          for (let dy = -1; dy <= 1; dy++){
+            for (let dx = -1; dx <= 1; dx++){
+              const i = ((Math.round(y) + dy)*p.width + (Math.round(x) + dx))*4;
+              s += 0.2126*p.data[i] + 0.7152*p.data[i+1] + 0.0722*p.data[i+2]; n++;
+            }
+          }
+          A[k] += s/n; C[k]++;
+        }
+      }
+      const P = new Float64Array(NA).fill(NaN);
+      for (let k = 0; k < NA; k++) if (C[k] >= NRR*0.7) P[k] = A[k]/C[k];
+      let rms = 0, n = 0;
+      for (let k = 0; k < NA; k++){
+        if (!isFinite(P[k])) continue;
+        let s = 0, c = 0;
+        for (let d = -10; d <= 10; d++){
+          const q = (k + d + NA) % NA;
+          if (isFinite(P[q])){ s += P[q]; c++; }
+        }
+        if (c < 15) continue;
+        const res = P[k] - s/c; rms += res*res; n++;
+      }
+      return n ? Math.sqrt(rms/n) : 0;
+    }
+    // evento AO VIVO congelado no hold: forceCME ~frame 9-10 e o
+    // relógio corre até o freeze — SEM setCmeClock (as partículas do
+    // ejecta INTEGRAM por transform feedback; saltar o relógio deixa a
+    // nuvem na base enquanto a casca cruza a coroa — receita da F5/C)
+    async function openCmeLive(hold, q){
+      const page = await browser.newPage({ viewport: { width: 960, height: 600 }, deviceScaleFactor: 1 });
+      page.setDefaultTimeout(900000);
+      page.on('pageerror', (e) => errs.push('pageerror: ' + e.message));
+      page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
+      await page.goto(base + '?det=1&seed=7&hold=' + hold + '&tier=high&scale=1&cme=1.1' + (q ? '&' + q : ''));
+      await page.waitForFunction(() => window.__solInfo && window.__solInfo.frame > 8, null, { timeout: 900000 });
+      await page.evaluate(() => window.__solInfo.forceCME(0));
+      await page.waitForFunction((f) => window.__solInfo.frame > f, hold + 3, { timeout: 900000 });
+      return page;
+    }
+    // vista de limbo EXATA (tilt z=0.1265 antes do rotY — congelados
+    // sob hold) + leitura do estado do evento no instante da foto
+    async function limbViewExact(page, distMul){
+      const info = await page.evaluate((dm) => {
+        const st = window.__solInfo.state();
+        const ci = window.__solInfo.cmeInfo();
+        const v = ci.dir, tz = 0.1265, ry = st.rotY;
+        const n = Math.hypot(v[0], v[1], v[2]) || 1;
+        const p = [v[0]/n, v[1]/n, v[2]/n];
+        const tx = p[0]*Math.cos(tz) - p[1]*Math.sin(tz);
+        const ty = p[0]*Math.sin(tz) + p[1]*Math.cos(tz);
+        const w = [tx*Math.cos(ry) + p[2]*Math.sin(ry), ty, -tx*Math.sin(ry) + p[2]*Math.cos(ry)];
+        window.__solInfo.setView(Math.atan2(w[2], w[0]) + Math.PI/2, Math.PI*0.5, st.fitDist*dm);
+        return ci;
+      }, distMul);
+      await frames(page, 2);
+      return info;
+    }
+    // vista de limbo/frontal APROXIMADA (receita herdada do qa-phase5 —
+    // ignora tilt/spin, ~0.16 rad no frame 48; usada só na réplica K)
+    async function viewLimbK(page, dm){
+      await page.evaluate((d2) => {
+        const st = window.__solInfo.state();
+        const d = window.__solInfo.cmeInfo().dir;
+        window.__solInfo.setView(Math.atan2(d[2], d[0]) + Math.PI/2, Math.PI*0.5, st.fitDist*d2);
+      }, dm);
+      await frames(page, 3);
+    }
+    async function viewFrontK(page, dm){
+      await page.evaluate((d2) => {
+        const st = window.__solInfo.state();
+        const d = window.__solInfo.cmeInfo().dir;
+        window.__solInfo.setView(Math.atan2(d[2], d[0]),
+          Math.acos(Math.max(-1, Math.min(1, d[1]))), st.fitDist*d2);
+      }, dm);
+      await frames(page, 3);
+    }
+    {
+      // ---- página principal (t≈5.0, limbo): C1 estrias, C2 cavidade,
+      // ---- C3 pesos 0 = look atual -------------------------------------
+      const page = await openCmeLive(CCAL.holdMain, '');
+      await page.evaluate(() => window.__solInfo.toggle('stars', false));   // métrica limpa (Via Láctea contamina anel/perfil)
+      const ci = await limbViewExact(page, 1.6);
+      const st = await page.evaluate(() => window.__solInfo.state());
+      const Rs = 300*2.2/(st.camDist*Math.tan(21*Math.PI/180));
+      const RlimbPx = 300*Math.tan(Math.asin(2.2/st.camDist))/Math.tan(21*Math.PI/180);
+      // û auto-calibrado por A/B do toggle na mesma página congelada;
+      // o shot ON (pesos 0) é o BASELINE do C1/C2/C3
+      const shotA = path.join(outDir, 'c-pesos0.png');
+      await page.screenshot({ path: shotA });
+      await page.evaluate(() => window.__solInfo.toggle('cme', false));
+      await frames(page, 2);
+      const shotOff = path.join(outDir, 'c-toggle-off.png');
+      await page.screenshot({ path: shotOff });
+      await page.evaluate(() => window.__solInfo.toggle('cme', true));
+      await frames(page, 2);
+      const cen = diffCentroid(shotA, shotOff, 12);
+      const ul = Math.hypot(cen.x - 480, cen.y - 300);
+      const u = { x: (cen.x - 480)/ul, y: (cen.y - 300)/ul };
+      // C1: estrias helicoidais — o rim perde as "contas" (A/B puro
+      // stria=0.8 vs 0 na mesma página congelada; anisotropia = fios
+      // alongados AO LONGO do arco ⇒ o resíduo angular do rim cai)
+      await page.evaluate(() => window.__solInfo.setCmeShape({ stria: 0.8, cav: 0 }));
+      await frames(page, 2);
+      const shotB = path.join(outDir, 'c-stria08.png');
+      await page.screenshot({ path: shotB });
+      const bead0 = rimBeadRMS(shotA, u, Rs, ci.cx, ci.rho, RlimbPx);
+      const bead8 = rimBeadRMS(shotB, u, Rs, ci.cx, ci.rho, RlimbPx);
+      check('C1 estrias: rim perde as contas com stria=0.8 (beadRMS <=' + CCAL.c1MaxBeadRatio + 'x o isotrópico)',
+        bead0 > 0.2 && bead8 <= bead0 * CCAL.c1MaxBeadRatio,
+        'beadRMS ' + bead0.toFixed(3) + ' -> ' + bead8.toFixed(3) + ' (' +
+        (bead8/Math.max(1e-3, bead0)).toFixed(2) + 'x)');
+      // C2: contraste frente:cavidade com os pesos CANDIDATOS (perfil
+      // radial pós-composite — a régua da F5, medida DEPOIS do bloom)
+      await page.evaluate((c) => window.__solInfo.setCmeShape(c),
+        { stria: CCAL.candStria, cav: CCAL.candCav });
+      await frames(page, 2);
+      const shotC = path.join(outDir, 'c-candidato.png');
+      await page.screenshot({ path: shotC });
+      const met0 = cavityMetrics(shotA, u, Rs, ci.cx, ci.rho, ci.front);
+      const metC = cavityMetrics(shotC, u, Rs, ci.cx, ci.rho, ci.front);
+      check('C2 razão frente:cavidade >=' + CCAL.c2MinRatio + 'x com cav=' + CCAL.candCav + ' (baseline ~1.3x)',
+        metC.ratio >= CCAL.c2MinRatio,
+        'baseline ' + met0.ratio + 'x -> candidato ' + metC.ratio + 'x (frente ' +
+        metC.frontPeak + ', cavidade ' + metC.cavMean + ')');
+      // C3: pesos 0 devolvem o look atual (A/B mesma página; régua
+      // <=200px da histerese de ~1 LSB — esperado ~0: uniforms puros)
+      await page.evaluate(() => window.__solInfo.setCmeShape({ stria: 0, cav: 0 }));
+      await frames(page, 2);
+      const shotE = path.join(outDir, 'c-pesos0-volta.png');
+      await page.screenshot({ path: shotE });
+      const nBack = diffPx(shotA, shotE);
+      const shNow = await page.evaluate(() => window.__solInfo.cmeInfo());
+      check('C3 pesos 0 = look atual (A/B mesma página, <=200px)',
+        nBack >= 0 && nBack <= 200 && shNow.stria === 0 && shNow.cav === 0,
+        nBack + 'px, stria ' + shNow.stria + ' cav ' + shNow.cav);
+      await page.close();
+    }
+    {
+      // ---- C4: determinismo do evento vivo com pesos candidatos -------
+      async function detShot(name){
+        const p = await openCmeLive(CCAL.holdDet, '');
+        await p.evaluate((c) => window.__solInfo.setCmeShape(c),
+          { stria: CCAL.candStria, cav: CCAL.candCav });
+        await limbViewExact(p, 1.35);
+        const f = path.join(outDir, name);
+        await p.screenshot({ path: f });
+        await p.close();
+        return f;
+      }
+      const a = await detShot('c4-det-a.png');
+      const b = await detShot('c4-det-b.png');
+      const n = diffPx(a, b);
+      check('C4 estrias+cavidade determinísticas (2 execuções ao vivo, 0px)', n === 0, n + 'px');
+    }
+    {
+      // ---- C5: réplica do grupo K do qa:phase5 sob os pesos CANDIDATOS
+      // (o look shipped não pode quebrar os gates herdados do CME) +
+      // C6: teto do sweep (stria=1.2/cav=1.0) mantém a assinatura K2
+      const page = await open('cme=1.1', 48);
+      await page.evaluate((c) => window.__solInfo.setCmeShape(c),
+        { stria: CCAL.candStria, cav: CCAL.candCav });
+      const ci0 = await page.evaluate(() => window.__solInfo.cmeInfo());
+      check('C5-K1 knob/tier prontos no high sob pesos (24 passos, 2048 pts, sem evento)',
+        ci0.steps === 24 && ci0.on === false && ci0.pts.n === 2048 &&
+        ci0.killed === false && ci0.stria === CCAL.candStria && ci0.cav === CCAL.candCav,
+        JSON.stringify({ steps: ci0.steps, pts: ci0.pts.n, stria: ci0.stria, cav: ci0.cav }));
+      await page.evaluate(() => window.__solInfo.forceCME(0));
+      await frames(page, 2);
+      await viewLimbK(page, 1.35);
+      await page.evaluate(() => window.__solInfo.setCmeClock(5.0));
+      await frames(page, 3);
+      const ciOn = await page.evaluate(() => window.__solInfo.cmeInfo());
+      const shotOn = path.join(outDir, 'c5-limbo-on.png');
+      await page.screenshot({ path: shotOn });
+      await page.evaluate(() => window.__solInfo.toggle('cme', false));
+      await frames(page, 3);
+      const shotOff = path.join(outDir, 'c5-limbo-off.png');
+      await page.screenshot({ path: shotOff });
+      const nSig = diffPx(shotOn, shotOff);
+      check('C5-K2 casca assina o frame no limbo sob pesos (A/B mesma página, diff>400px)',
+        ciOn.on === true && ciOn.count === 1 && nSig > 400, nSig + 'px, t=' + ciOn.t);
+      check('C5-K3 expansão auto-similar sob pesos (front>1.9, rho>0.35)',
+        ciOn.front > 1.9 && ciOn.rho > 0.35, 'front ' + ciOn.front + ' rho ' + ciOn.rho);
+      await page.evaluate(() => window.__solInfo.toggle('cme', true));
+      await frames(page, 2);
+      const hdrLimb = (await page.evaluate(() => window.__solInfo.cmeInfo())).hdr;
+      await viewFrontK(page, 1.35);
+      const hdrFront = (await page.evaluate(() => window.__solInfo.cmeInfo())).hdr;
+      check('C5-K4 Thomson sob pesos: limbo brilha, halo esmaece (razão>=2)',
+        hdrLimb > 0.05 && hdrLimb >= hdrFront * 2.0,
+        'limbo ' + hdrLimb + ' vs frontal ' + hdrFront);
+      const ptsOn = (await page.evaluate(() => window.__solInfo.cmeInfo())).pts;
+      await page.evaluate(() => window.__solInfo.toggle('cmepts', false));
+      await frames(page, 2);
+      const ptsOff = (await page.evaluate(() => window.__solInfo.cmeInfo())).pts;
+      check('C5-K5 partículas TF vivas sob pesos; toggle cmepts esconde',
+        ptsOn.visible === true && ptsOff.visible === false,
+        JSON.stringify({ on: ptsOn.visible, off: ptsOff.visible }));
+      // C6: TETO do sweep — a régua K2 sobrevive no extremo da grade
+      await page.evaluate(() => {
+        window.__solInfo.toggle('cmepts', true);
+        window.__solInfo.setCmeShape({ stria: 1.2, cav: 1.0 });
+      });
+      await viewLimbK(page, 1.35);
+      const shotCeil = path.join(outDir, 'c6-teto-on.png');
+      await page.screenshot({ path: shotCeil });
+      await page.evaluate(() => window.__solInfo.toggle('cme', false));
+      await frames(page, 3);
+      const shotCeilOff = path.join(outDir, 'c6-teto-off.png');
+      await page.screenshot({ path: shotCeilOff });
+      const nCeil = diffPx(shotCeil, shotCeilOff);
+      check('C6 teto do sweep (stria=1.2/cav=1.0) mantém a assinatura no limbo (>400px)',
+        nCeil > 400, nCeil + 'px');
+      await page.close();
+    }
+    {
+      // C5-K6: tier low segue no-op sob pesos (+ clamps do hook)
+      const page = await browser.newPage({ viewport: { width: 960, height: 600 }, deviceScaleFactor: 1 });
+      page.setDefaultTimeout(420000);
+      page.on('pageerror', (e) => errs.push('pageerror: ' + e.message));
+      await page.goto(base + '?det=1&seed=7&hold=48&tier=low&scale=1&cme=1.1');
+      await page.waitForFunction(() => window.__solInfo && window.__solInfo.frame > 51, null, { timeout: 420000 });
+      const r = await page.evaluate(() => ({
+        sh: window.__solInfo.setCmeShape({ stria: 9, cav: 9 }),
+        f: window.__solInfo.forceCME(0), i: window.__solInfo.cmeInfo() }));
+      check('C5-K6 tier low fica sem CME sob pesos (0 passos, forceCME=false; hook clampa 1.2/1.0)',
+        r.f === false && r.i.steps === 0 && r.i.on === false && r.i.pts.n === 0 &&
+        r.sh.stria === 1.2 && r.sh.cav === 1.0,
+        JSON.stringify({ steps: r.i.steps, sh: r.sh }));
+      await page.close();
+    }
+    {
+      // C5-K7: determinismo da receita K sob pesos (2 execuções, 0px)
+      async function detShotK(name){
+        const p = await open('cme=1.1', 48);
+        await p.evaluate((c) => window.__solInfo.setCmeShape(c),
+          { stria: CCAL.candStria, cav: CCAL.candCav });
+        await p.evaluate(() => window.__solInfo.forceCME(0));
+        await frames(p, 2);
+        await viewLimbK(p, 1.35);
+        await p.evaluate(() => window.__solInfo.setCmeClock(4.0));
+        await frames(p, 3);
+        const f = path.join(outDir, name);
+        await p.screenshot({ path: f });
+        await p.close();
+        return f;
+      }
+      const a = await detShotK('c5-det-a.png');
+      const b = await detShotK('c5-det-b.png');
+      const n = diffPx(a, b);
+      check('C5-K7 casca+partículas determinísticas sob pesos (receita K, 0px)', n === 0, n + 'px');
+    }
+    {
+      // C5-K8: cme->0 ao vivo apaga a casca mesmo com pesos ativos
+      const page = await open('cme=1.1', 48);
+      await page.evaluate((c) => window.__solInfo.setCmeShape(c),
+        { stria: CCAL.candStria, cav: CCAL.candCav });
+      const pre = path.join(outDir, 'c5-k8-pre.png');
+      await page.screenshot({ path: pre });
+      await page.evaluate(() => window.__solInfo.forceCME(0));
+      await frames(page, 3);
+      await page.evaluate(() => window.__solInfo.setCme(0));
+      await frames(page, 3);
+      const post = path.join(outDir, 'c5-k8-knob0.png');
+      await page.screenshot({ path: post });
+      const ciK = await page.evaluate(() => window.__solInfo.cmeInfo());
+      const n = diffPx(pre, post);
+      check('C5-K8 cme->0 ao vivo apaga a casca sob pesos (knob 0; flare segue)',
+        ciK.knob === 0 && n >= 0, 'knob ' + ciK.knob + ', diff-c/flare ' + n + 'px');
+      await page.close();
+    }
   }
 
   await browser.close();

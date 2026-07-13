@@ -164,6 +164,29 @@ export function createActivity(ctx){
     if (x < 0.90) { var b = (x-0.58)/0.32; return 1.0 - b*b*(3.0-2.0*b); }
     return 0.0;
   }
+  // BLOCO C (rodada de movimento): sob LAPSE o relógio das regiões corre
+  // ~×27-40 e o nascimento/morte de plage/faculae vira POP no limbo
+  // (strobo 1.10% no cenário lapse vs 0.46% idle — baseline temporal).
+  // Rampas esticadas ×1.75 (nascimento 0.14→0.245, morte 0.32→0.56;
+  // a morte segue terminando em 0.90 — o renascimento não muda de fase).
+  function lifeEnvelopeLapse(x){
+    if (x < 0.245) { var a = x/0.245; return a*a*(3.0-2.0*a); }
+    if (x < 0.34) return 1.0;
+    if (x < 0.90) { var b = (x-0.34)/0.56; return 1.0 - b*b*(3.0-2.0*b); }
+    return 0.0;
+  }
+  // blend por min(1, LAPSE_K): com lapse=0 devolve lifeEnvelope SEM
+  // aritmética extra (default bit-exato); o director, que anima LAPSE_K
+  // continuamente (0→0.85→0), morfa o envelope sem salto. Usada só
+  // pelos consumidores do relógio WARPADO (regiões reais + grupos de
+  // manchas do sun.js — que assim seguem em sincronia com a plage);
+  // proeminências/loops correm em wall-clock e ficam no envelope de
+  // sempre.
+  function lifeEnvelopeEased(x){
+    var e = lifeEnvelope(x);
+    if (ctx.LAPSE_K > 0.001) e += (lifeEnvelopeLapse(x) - e)*Math.min(1, ctx.LAPSE_K);
+    return e;
+  }
   var lastRegionT = 0;
   function updateActiveRegions(timeNow){
     // rotação diferencial nas CARGAS (mesma lei Snodgrass do sim, relativa
@@ -177,7 +200,7 @@ export function createActivity(ctx){
     for (var i=0;i<pairStates.length;i++){
       var ps = pairStates[i];
       var x = ((timeNow + ps.phase) % ps.period) / ps.period;
-      var env = lifeEnvelope(x);
+      var env = lifeEnvelopeEased(x);   // = lifeEnvelope(x) com lapse=0
       if (x >= 0.90){
         if (!ps.reborn){ placePair(ps); ps.reborn = true; }   // renasce longe
       } else {
@@ -233,7 +256,8 @@ export function createActivity(ctx){
   return { charges: charges, pairStates: pairStates,
            updateCycleState: updateCycleState, placePair: placePair,
            updateActiveRegions: updateActiveRegions, cycleDepth: cycleDepth,
-           lifeEnvelope: lifeEnvelope, bFieldJS: bFieldJS, flicker1f: flicker1f,
+           lifeEnvelope: lifeEnvelope, lifeEnvelopeEased: lifeEnvelopeEased,
+           bFieldJS: bFieldJS, flicker1f: flicker1f,
            cyclePolarN: cyclePolarN, cyclePolarS: cyclePolarS,
            CYCLE_PERIOD: CYCLE_PERIOD, CYCLE_PHASE0: CYCLE_PHASE0,
            CYCLE_LAPSE_MUL: CYCLE_LAPSE_MUL };

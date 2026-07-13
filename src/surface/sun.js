@@ -19,7 +19,11 @@ export function createSunUniforms(ctx){
   var SUN_RADIUS = ctx.SUN_RADIUS, charges = ctx.charges, knob = ctx.knob,
       TP = ctx.TP, simRTs = ctx.simRTs, simUniforms = ctx.simUniforms,
       pairStates = ctx.pairStates, spotRand = ctx.spotRand,
-      lifeEnvelope = ctx.act.lifeEnvelope;
+      // BLOCO C: envelope com rampas esticadas sob lapse (os grupos de
+      // manchas correm no MESMO relógio warpado das regiões — o easing
+      // acompanha p/ manter manchas e plage em sincronia; com lapse=0
+      // devolve lifeEnvelope, bit-exato)
+      lifeEnvelopeEased = ctx.act.lifeEnvelopeEased;
 
   // ---------------------------------------------------------------
   // FASE 6 (B1, lei corrigida pós-painel) — MANCHAS VIRTUAIS: até 10
@@ -229,7 +233,7 @@ export function createSunUniforms(ctx){
     for (var p = 0; p < 5; p++){
       var sp = spotPairs[p];
       var x = ((tNow + sp.phase) % sp.period) / sp.period;
-      var env = lifeEnvelope(x);
+      var env = lifeEnvelopeEased(x);   // = lifeEnvelope(x) com lapse=0
       if (x >= 0.90){
         if (!sp.reborn){ placeSpotPair(sp, p); sp.reborn = true; }   // renasce noutro grupo
       } else sp.reborn = false;

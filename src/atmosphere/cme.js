@@ -339,8 +339,14 @@ export function createCME(ctx){
       'uniform vec3 uDir;',
       'uniform vec3 uAxis;',
       'uniform vec4 uKin;',   // x=cx, y=rho, z=vel de expansão, w=amp do evento
+      // BLOCO C (rodada de movimento, flag F5): aVel.w agora carrega
+      // tipo E idade — w = tipo*8 + idade (s, saturada em 4; tipo =
+      // step(7.5, w), idade = w - tipo*8). A idade alimenta o fade-in
+      // de nascimento no material dos pontos (mata o sparkle de spawn
+      // que lia como chuvisco no strobo da coroa — 0.84% medido).
+      // Knob-gated por construção: sem evento (cme=0) nada disto roda.
       'in vec4 aPos;',        // xyz (R=1) + vida
-      'in vec4 aVel;',        // xyz + tipo (0 casca/ejecta, 1 chuva)
+      'in vec4 aVel;',        // xyz + (tipo*8 + idade)
       'out vec4 tfPos;',
       'out vec4 tfVel;',
       'float h1(float n){ return fract(sin(n)*43758.5453123); }',
@@ -366,9 +372,10 @@ export function createCME(ctx){
       // comum recolapsa o enxame num blob coeso de borda dura
       '      V.xyz = base*(0.02 + 0.10*a2)',
       '             + uAxis*(a1 - 0.5)*0.05 + perp*(a4 - 0.5)*0.05;',
-      '      V.w = step(0.72, a1);',           // ~28% viram chuva coronal
+      '      V.w = step(0.72, a1)*8.0;',       // ~28% viram chuva; idade 0
       '    }',
       '  } else {',
+      '    float kind = step(7.5, V.w);',
       '    vec3 c = uDir*uKin.x;',
       '    vec3 rel = P.xyz - c;',
       '    float rl = length(rel) + 1e-5;',
@@ -376,10 +383,11 @@ export function createCME(ctx){
       // bolha + arrasto do vento na direção do evento
       '    vec3 vT = (rel/rl)*uKin.z*(0.40 + 0.60*clamp(rl/max(uKin.y, 0.05), 0.0, 1.4))',
       '            + uDir*uKin.z*0.55;',
-      '    if (V.w > 0.5 && uT > 4.0){',
+      '    if (kind > 0.5 && uT > 4.0){',
       // chuva coronal: no rescaldo, a fração presa drena de volta
       '      vT = -normalize(P.xyz)*0.20;',
       '    }',
+      '    V.w = kind*8.0 + min(V.w - kind*8.0 + uDt, 4.0);',   // idade integra (satura em 4s)
       '    V.xyz += (vT - V.xyz)*min(1.0, uDt*2.2);',
       // cintilação de trajetória barata (não é curl de verdade, mas
       // quebra o alinhamento perfeito sem textura de campo)
@@ -471,6 +479,8 @@ export function createCME(ctx){
         'attribute vec4 aVel;',
         'varying float vLife;',
         'varying float vKind;',
+        'varying float vAge;',
+        'varying float vComp;',
         'varying vec2 vDir;',
         'varying float vStretch;',
         'varying float vCav;',
@@ -480,8 +490,10 @@ export function createCME(ctx){
         'uniform vec3 uCavAxis;',
         'float hsz(float n){ return fract(sin(n)*43758.5453123); }',
         'void main(){',
+        // BLOCO C (F5): aVel.w = tipo*8 + idade (ver TF) — decodifica
         '  vLife = aPos.w;',
-        '  vKind = aVel.w;',
+        '  vKind = step(7.5, aVel.w);',
+        '  vAge = aVel.w - vKind*8.0;',
         '  vec4 mv = modelViewMatrix * vec4(aPos.xyz*SUN_R, 1.0);',
         '  gl_Position = projectionMatrix * mv;',
         // FASE 6 B3b — gate da cavidade por partícula (aPos já está no
@@ -508,12 +520,21 @@ export function createCME(ctx){
         // mistura de grãos finos e flocos (70% pequenos, cauda ~3x)
         '  float g = hsz(aPos.x*57.3 + aPos.y*23.1 + aPos.z*11.7);',
         '  float sz = uPx*(0.35 + 0.45*vKind + 1.6*g*g*g)/max(0.1, -mv.z);',
-        '  gl_PointSize = clamp(sz*(1.0 + 0.5*vStretch), 0.0, 6.5) * step(0.001, vLife);',
+        // BLOCO C (F5): +1px no sprite com brilho INTEGRADO ~constante
+        // (energia da gaussiana ∝ size²·alpha ⇒ comp = (s0/s1)²) — o
+        // grão sub-2px que saltava 2-6px/frame lia como chuvisco no
+        // strobo; maior e mais tênue, a mesma luz cobre a trajetória
+        '  float sz0 = clamp(sz*(1.0 + 0.5*vStretch), 0.0, 6.5);',
+        '  float sz1 = min(sz0 + 1.0, 7.5);',
+        '  vComp = (sz0*sz0)/(sz1*sz1);',
+        '  gl_PointSize = sz1 * step(0.001, vLife);',
         '}'
       ].join('\n'),
       fragmentShader: [
         'varying float vLife;',
         'varying float vKind;',
+        'varying float vAge;',
+        'varying float vComp;',
         'varying vec2 vDir;',
         'varying float vStretch;',
         'varying float vCav;',
@@ -526,6 +547,10 @@ export function createCME(ctx){
         '  float n = d.x*vDir.y - d.y*vDir.x;',
         '  float a = exp(-(t*t*10.0/(1.0 + 2.2*vStretch) + n*n*(10.0 + 8.0*vStretch)));',
         '  a *= smoothstep(0.0, 0.15, vLife) * min(1.0, vLife);',
+        // BLOCO C (F5): fade-in por IDADE (~0.4s) — o pop de nascimento
+        // era o sparkle dominante do leque; vComp devolve o brilho
+        // integrado do sprite +1px (ver vertex)
+        '  a *= smoothstep(0.0, 0.40, vAge) * vComp;',
         '  vec3 col = mix(vec3(1.0, 0.52, 0.26), vec3(1.0, 0.76, 0.50), 0.25 + 0.5*vKind);',
         // vCav = rarefação da cavidade (FASE 6 B3b; 1.0 bit-exato com cav=0)
         '  gl_FragColor = vec4(col*(a*uAmp*0.30*vCav), 1.0);',

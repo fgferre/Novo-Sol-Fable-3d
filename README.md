@@ -62,6 +62,9 @@ npm run qa:phase3      # Fase 3: ciclo de 11 anos + filamento↔proeminência
 npm run qa:phase4      # Fase 4: coroa volumétrica raymarched + arcada escura
 npm run qa:phase5      # Fase 5: CME/erupção + foco raso + modo diretor
 npm run qa:phase6      # Fase 6: manchas (spots) + plumas/cúspide + estrias/cavidade
+npm run qa:motion2     # rodada de movimento: flicker/strobo/coerência por região em
+                       # sequências determinísticas + tiras de filme (gate de RODADA,
+                       # ~19 min — não roda em CI; ver docs/rodada-movimento.md)
 ```
 
 O modo determinístico (`?det=1&seed=N&hold=F`) fixa RNG e dt e congela o

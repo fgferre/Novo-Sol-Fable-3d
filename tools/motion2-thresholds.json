@@ -1,6 +1,6 @@
 {
   "meta": {
-    "calibratedAt": "2026-07-13T19:21:12.720Z",
+    "calibratedAt": "2026-07-13T21:51:29.337Z",
     "from": "out/motion2/metrics.json",
     "margin": 1.25
   },
@@ -9,7 +9,7 @@
       "flickerP95Max": {
         "disco": 0.13199,
         "limbo": 0.22399,
-        "coroa": 0.46291,
+        "coroa": 0.46286,
         "ceu": 0.42586
       },
       "stroboFracMax": {
@@ -41,43 +41,43 @@
     },
     "flare-cme-limbo": {
       "flickerP95Max": {
-        "disco": 0.17098,
-        "limbo": 0.37944,
-        "coroa": 0.81455,
-        "ceu": 1.40907
+        "disco": 0.16637,
+        "limbo": 0.32224,
+        "coroa": 0.76923,
+        "ceu": 1.38999
       },
       "stroboFracMax": {
-        "disco": 0.080585,
-        "limbo": 0.049055,
-        "coroa": 0.012515,
-        "ceu": 0.006164
+        "disco": 0.082093,
+        "limbo": 0.052281,
+        "coroa": 0.009333,
+        "ceu": 0.006246
       },
-      "coherenceExplMin": 0.2409
+      "coherenceExplMin": 0.2493
     },
     "lapse-ciclo": {
       "flickerP95Max": {
-        "disco": 0.12842,
-        "limbo": 0.28047,
-        "coroa": 0.46536,
-        "ceu": 0.42626
+        "disco": 0.12846,
+        "limbo": 0.27948,
+        "coroa": 0.4756,
+        "ceu": 0.42714
       },
       "stroboFracMax": {
         "disco": 0.003926,
-        "limbo": 0.01571,
-        "coroa": 0.006686,
+        "limbo": 0.015884,
+        "coroa": 0.006685,
         "ceu": 0.00437
       }
     },
     "cvol-wide": {
       "flickerP95Max": {
         "disco": 0.13146,
-        "limbo": 0.27014,
-        "coroa": 0.5829,
-        "ceu": 0.62401
+        "limbo": 0.23672,
+        "coroa": 0.58359,
+        "ceu": 0.62421
       },
       "stroboFracMax": {
         "disco": 0.004877,
-        "limbo": 0.009526,
+        "limbo": 0.009516,
         "coroa": 0.005969,
         "ceu": 0.006724
       }
@@ -87,7 +87,7 @@
         "disco": 0.13146,
         "limbo": 0.23609,
         "coroa": 0.60873,
-        "ceu": 0.63306
+        "ceu": 0.63312
       },
       "stroboFracMax": {
         "disco": 0.004877,

@@ -83,6 +83,7 @@ export function createSolInfo(ctx){
                  cvol: ctx.CVOL_K,
                  cme: ctx.CME_K,
                  dof: ctx.DOF_K,
+                 spots: ctx.SPOTS_K,
                  director: ctx.DIRECTOR_ON,
                  adaptMul: compUniforms.uAdapt.value,
                  look: LOOK ? 'sunshine' : '' };
@@ -91,11 +92,14 @@ export function createSolInfo(ctx){
         ctx.perfN = 0; ctx.perfIdx = 0; ctx.perfLastT = 0; perfBakes.length = 0;
       };
       // FASE 4: estado da coroa volumétrica (QA: tier-gate, bake, kill)
+      // FASE 6 B2: expõe também os pesos novos (plume uniform / cusp bake)
       window.__solInfo.coronaInfo = function(){
         return { steps: CVOL_STEPS, res: CVOL_N, k: ctx.CVOL_K,
                  on: CVOL_STEPS > 0 && ctx.CVOL_K > 0.001 && !ctx.cvolKilled &&
                      subToggle.corona && subToggle.corona3d,
-                 ready: ctx.cvolReady, killed: ctx.cvolKilled, cycles: ctx.cvolCycles };
+                 ready: ctx.cvolReady, killed: ctx.cvolKilled, cycles: ctx.cvolCycles,
+                 plume: cvolUniforms ? cvolUniforms.uPlume.value : 0,
+                 cusp: ctx.cvolWCusp };
       };
       window.__solInfo.setCvol = function(v){
         ctx.CVOL_K = Math.min(1.5, Math.max(0, +v || 0));
@@ -108,14 +112,24 @@ export function createSolInfo(ctx){
         return false;
       };
       // eixos do sweep de calibração (painel de juízes) sem rebuild:
-      // pesos do bake de densidade + contraste das raias procedurais
+      // pesos do bake de densidade + contraste das raias procedurais.
+      // FASE 6 B2 — dois pesos novos, semânticas DIFERENTES:
+      //   cusp  -> peso do BAKE (como base/sheet/loop/hole): só surte
+      //            efeito após rebakeCorona() (ou o ciclo fatiado);
+      //   plume -> UNIFORM do shader: efeito IMEDIATO no próximo frame
+      //            (zero rebake — é o eixo barato do sweep).
       window.__solInfo.setCvolShape = function(o){
         o = o || {};
         if (o.base  !== undefined) ctx.cvolWBase  = +o.base;
         if (o.sheet !== undefined) ctx.cvolWSheet = +o.sheet;
         if (o.loop  !== undefined) ctx.cvolWLoop  = +o.loop;
         if (o.hole  !== undefined) ctx.cvolWHole  = +o.hole;
-        return { base: ctx.cvolWBase, sheet: ctx.cvolWSheet, loop: ctx.cvolWLoop, hole: ctx.cvolWHole };
+        if (o.cusp  !== undefined) ctx.cvolWCusp  = +o.cusp;
+        if (o.plume !== undefined && cvolUniforms)
+          cvolUniforms.uPlume.value = Math.min(2, Math.max(0, +o.plume || 0));
+        return { base: ctx.cvolWBase, sheet: ctx.cvolWSheet, loop: ctx.cvolWLoop,
+                 hole: ctx.cvolWHole, cusp: ctx.cvolWCusp,
+                 plume: cvolUniforms ? cvolUniforms.uPlume.value : 0 };
       };
       window.__solInfo.setCvolFil = function(x){
         if (cvolUniforms) cvolUniforms.uFil.value = Math.min(2, Math.max(0, +x || 0));
@@ -166,8 +180,28 @@ export function createSolInfo(ctx){
             pairStates[i].reborn = false;
             placePair(pairStates[i]);
           }
+          // FASE 6: as manchas virtuais re-emergem junto (grupos na
+          // banda da fase nova); com spots=0 é invisível — só desloca
+          // o stream próprio spotRand, nunca o srand
+          if (ctx.spotsReseed) ctx.spotsReseed();
         }
         return window.__solInfo.cycleInfo();
+      };
+      // FASE 6 — QA das manchas: knob ao vivo (padrão setCvol), re-
+      // emergência dos 5 pares virtuais e leitura de contagem/raios
+      // (histograma vs range GONG 0.005-0.086R). Os slots refletem o
+      // ÚLTIMO frame renderizado — avance >=1 frame após um hook antes
+      // de ler.
+      window.__solInfo.setSpots = function(v){
+        ctx.SPOTS_K = Math.min(1.5, Math.max(0, +v || 0));
+        return ctx.SPOTS_K;
+      };
+      window.__solInfo.reseedSpots = function(){
+        if (ctx.spotsReseed) ctx.spotsReseed();
+        return ctx.spotsInfoData ? ctx.spotsInfoData() : null;
+      };
+      window.__solInfo.spotsInfo = function(){
+        return ctx.spotsInfoData ? ctx.spotsInfoData() : null;
       };
       window.__solInfo.prominences = function(){
         return prominenceMeshes.map(function(m){
@@ -360,11 +394,25 @@ export function createSolInfo(ctx){
         ctx.cmeCoreGain = Math.min(2.5, Math.max(0, +x || 0));
         return ctx.cmeCoreGain;
       };
+      // FASE 6 B3 — pesos de FORMA da casca do CME (padrão setCvolShape;
+      // eixos do sweep de calibração sem rebuild). Ambos são UNIFORMS do
+      // shader: efeito IMEDIATO no próximo frame, sem rebake.
+      //   stria 0-1.2: estrias helicoidais do rim (0 = fbm isotrópico da
+      //                F5, ramo do shader byte-idêntico = bit-exato);
+      //   cav   0-1.0: rarefação da cavidade por raio (0 = casca da F5
+      //                bit-exata; o núcleo NUNCA é atenuado).
+      window.__solInfo.setCmeShape = function(o){
+        o = o || {};
+        if (o.stria !== undefined) ctx.cmeStriaK = Math.min(1.2, Math.max(0, +o.stria || 0));
+        if (o.cav !== undefined) ctx.cmeCavK = Math.min(1.0, Math.max(0, +o.cav || 0));
+        return { stria: ctx.cmeStriaK, cav: ctx.cmeCavK };
+      };
       window.__solInfo.cmeInfo = function(){
         var g = cmeGeomAt(ctx.cmeT < 900 ? ctx.cmeT : 0);
         return { on: ctx.cmeT < 900, t: ctx.cmeT < 900 ? ctx.cmeT : -1, amp: ctx.cmeAmp,
                  count: ctx.cmeCount, steps: CME_STEPS, killed: ctx.cmeKilled,
-                 knob: ctx.CME_K, cooldown: +ctx.cmeCooldown.toFixed(2),
+                 knob: ctx.CME_K, stria: ctx.cmeStriaK, cav: ctx.cmeCavK,
+                 cooldown: +ctx.cmeCooldown.toFixed(2),
                  front: +g.front.toFixed(3), rho: +g.rho.toFixed(3),
                  cx: +g.cx.toFixed(3), env: +g.env.toFixed(3),
                  hdr: +ctx.lastCmeHDR.toFixed(3),

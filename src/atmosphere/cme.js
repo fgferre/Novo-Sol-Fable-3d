@@ -40,6 +40,24 @@ export function createCME(ctx){
   // (1.3/1.4/0.9): com o boost do shader, 1.3 fecha a leitura de
   // "três partes" (frente/cavidade/núcleo) sem virar cometa
   ctx.cmeCoreGain = 1.3;
+  // FASE 6 B3 — pesos de FORMA do look (sem knob de URL/painel; hooks
+  // __solInfo.setCmeShape):
+  //   cmeStriaK 0-1.2: estrias HELICOIDAIS do rim (fbm em coordenada
+  //     helicoidal do rope — laços aninhados, ref-13) — 0 = fbm
+  //     isotrópico da F5 bit-exato (ramo do shader byte-idêntico);
+  //   cmeCavK 0-1.0: rarefação da CAVIDADE (gate por raio no interior
+  //     da bolha) — 0 = casca da F5 bit-exata (multiplicação por 1.0).
+  // B4: defaults 0.8/0.85 = candidato CALIBRADO por medição (razão
+  // frente:cavidade 1.19×→2.11× ≥ alvo 2×; beadRMS 0.58× o isotrópico)
+  // + inspeção direta — SEM painel de juízes (exceção do modo economia
+  // da rodada, registrada em docs/fase-6-acabamento-fisico.md). Só
+  // visíveis durante um evento com cme>0 (knob-gated): frame default
+  // segue bit-exato.
+  ctx.cmeStriaK = 0.8;
+  ctx.cmeCavK = 0.85;
+  // 3º eixo da base ortonormal do rope (axis × dir), congelado por
+  // evento em launchCME — scratch, zero alocação no animate
+  var cmeE2 = new THREE.Vector3(0, 0, 1);
   var cmeWorldTmp = new THREE.Vector3();
   // cinemática fechada: v(t) = 0.045 + 0.19·smoothstep((t-1.2)/2.6);
   // D(t) = ∫v dt tem primitiva analítica (x³ − x⁴/2 no trecho suave) —
@@ -82,6 +100,11 @@ export function createCME(ctx){
     ctx.cmeAmp = amp;
     cmeDir.copy(ctx.surfFlareDir);
     cmeAxis.copy(ctx.flareTanDir);
+    // FASE 6 B3: fecha a base ortonormal do rope 1x por evento (JS,
+    // scratch — nada aloca). axis ⊥ dir por construção (flares.js
+    // fecha o triedro dir/perp/tan); e2 = axis × dir dá a referência
+    // de fase da coordenada helicoidal das estrias no shader.
+    cmeE2.crossVectors(cmeAxis, cmeDir).normalize();
     cmeSeedVal = cmeRand()*100.0;
     ctx.cmeCooldown = 20;
     ctx.cmeCount++;
@@ -110,7 +133,12 @@ export function createCME(ctx){
       // casca, w = amplitude (envelope × knob × Thomson global no JS)
       uCmeKin: { value: new THREE.Vector4(1.1, 0.18, 0.045, 0) },
       // x = ganho do núcleo, y = tempo, z = seed do evento, w = livre
-      uCmeMat: { value: new THREE.Vector4(0.9, 0, 0, 0) }
+      uCmeMat: { value: new THREE.Vector4(0.9, 0, 0, 0) },
+      // FASE 6 B3: x = stria (estrias helicoidais 0-1.2), y = cav
+      // (rarefação da cavidade 0-1.0) — pesos de forma via setCmeShape
+      uCmeShape: { value: new THREE.Vector2(0, 0) },
+      // 3º eixo da base do rope (axis × dir, congelado em launchCME)
+      uCmeE2: { value: cmeE2 }
     };
     var cmeMatShader = new THREE.ShaderMaterial({
       glslVersion: THREE.GLSL3,
@@ -131,6 +159,8 @@ export function createCME(ctx){
         'uniform vec3 uCmeAxis;',
         'uniform vec4 uCmeKin;',
         'uniform vec4 uCmeMat;',
+        'uniform vec2 uCmeShape;',
+        'uniform vec3 uCmeE2;',
         'varying vec3 vWorld;',
         'out vec4 fragColor;',
         'void main(){',
@@ -170,6 +200,30 @@ export function createCME(ctx){
         '  float tA = max(-bB - sqB, max(t0*invR, 0.0));',
         '  float tB = min(-bB + sqB, t1*invR);',
         '  if (tB <= tA + 1e-5){ fragColor = vec4(0.0); return; }',
+        // FASE 6 B3b — rarefação da CAVIDADE, POR RAIO (uCmeShape.y):
+        // beta = parâmetro de impacto do raio ao centro da bolha na
+        // MESMA métrica squash-0.26 do dc. beta≈rho é o raio tangente
+        // ao rim (fica intacto — a frente segue brilhante); beta→0 é o
+        // raio que cruza o miolo: as DUAS travessias da casca (perto e
+        // longe) escurecem juntas — num pipeline aditivo a cavidade
+        // projetada só escurece reduzindo a emissão do PRÓPRIO CME. O
+        // núcleo (proeminência ejetada) NÃO é atenuado — hierarquia da
+        // ref-13: frente ≥ núcleo ≫ cavidade. cav=0: rare=1.0 e o
+        // multiply por 1.0 é bit-exato (casca da F5 intocada).
+        // Profundidade CALIBRADA na rodada (medido: o preenchimento
+        // NÃO-casca da banda da cavidade — núcleo+partículas+bloom ≈
+        // 44% do total — limita o contraste): a casca some quase toda
+        // no miolo (0.92), a meia-rampa satura em cav≈0.87
+        // (min(cav·1.15,1)) e as PARTÍCULAS ganham gate próprio (vCav
+        // no material dos pontos — "shell/veil/pontos" do plano B3).
+        '  float rare = 1.0;',
+        '  if (uCmeShape.y > 0.0){',
+        '    vec3 aM = oc - uCmeAxis*(dot(oc, uCmeAxis)*0.26);',
+        '    vec3 bM = rdO - uCmeAxis*(dot(rdO, uCmeAxis)*0.26);',
+        '    float tI = -dot(aM, bM)/max(dot(bM, bM), 1e-6);',
+        '    float beta = length(aM + bM*tI)/max(rho, 1e-4);',
+        '    rare = 1.0 - min(uCmeShape.y*1.15, 1.0)*0.92*(1.0 - smoothstep(0.42, 0.96, beta));',
+        '  }',
         '  float dtO = (tB - tA) / float(CME_STEPS);',
         '  float jit = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898,78.233)))*43758.5453);',
         '  float tO = tA + dtO*jit;',
@@ -199,15 +253,38 @@ export function createCME(ctx){
         '    float rk = rho*0.30;',
         '    float core = exp(-dot(pk,pk)/(rk*rk)) * (uCmeMat.x*2.2);',
         // fios do rope: fbm no referencial da bolha (a textura ACOMPANHA
-        // a casca em vez de ficar pregada no espaço)
-        '    float n = fbmLight(q*(2.4/max(rho, 0.2)) + vec3(uCmeMat.z, uCmeMat.z*0.31, 0.0));',
+        // a casca em vez de ficar pregada no espaço).
+        // FASE 6 B3a — com stria>0 o fbm é amostrado em coordenada
+        // HELICOIDAL do rope (rr = raio do tubo em unidades de rho;
+        // chi = azimute em volta do eixo, enrolado com pitch 1.1 ao
+        // longo do eixo — embedding cos/sin mantém a periodicidade):
+        // anisotrópico ALONGADO ao longo dos laços (arcos ~70°+, ~4
+        // tubos aninhados através do rim) em vez de "contas" (ref-13).
+        // Blend por COORDENADA (qi→qh) até stria=1; acima, aprofunda a
+        // modulação. Early-out: fora do rim (shell*fade<=1e-4, onde o
+        // fil é invisível) o ramo stria>0 nem avalia o fbm — o custo
+        // por amostra cai onde a casca não contribui. stria=0 executa
+        // o ramo isotrópico BYTE-IDÊNTICO ao da F5 (bit-exato).
+        '    float n = 0.0;',
+        '    if (uCmeShape.x <= 0.0){',
+        '      n = fbmLight(q*(2.4/max(rho, 0.2)) + vec3(uCmeMat.z, uCmeMat.z*0.31, 0.0));',
+        '    } else if (shell*fade > 1e-4){',
+        '      float sN = max(rho, 0.2);',
+        '      vec3 qr = q - uCmeAxis*qa;',
+        '      float rr = length(qr)/sN;',
+        '      float chi = atan(dot(qr, uCmeE2), dot(qr, uCmeDir) + 1e-5) - 1.1*qa/sN + uCmeMat.z*0.7;',
+        '      vec3 qh = vec3(cos(chi)*0.85, sin(chi)*0.85, rr*4.5 + uCmeMat.z*0.53);',
+        '      vec3 qi = q*(2.4/sN) + vec3(uCmeMat.z, uCmeMat.z*0.31, 0.0);',
+        '      n = fbmLight(mix(qi, qh, min(uCmeShape.x, 1.0)));',
+        '      n *= 1.0 + 0.35*max(uCmeShape.x - 1.0, 0.0);',
+        '    }',
         '    float fil = 0.68 + 0.55*n;',
         // peso de Thomson por amostra: sin² do ângulo ao plano do céu.
         // O núcleo (material denso de proeminência) sente MENOS o
         // Thomson — brilha por densidade, não só por geometria.
         '    float mu = dot(p, rdO)/max(r, 1e-4);',
         '    float thom = 1.0 - mu*mu;',
-        '    float d = shell*fil*(0.22 + 0.78*thom)*fade + core*(0.50 + 0.50*thom)*fade;',
+        '    float d = shell*fil*(0.22 + 0.78*thom)*fade*rare + core*(0.50 + 0.50*thom)*fade;',
         '    sum += d;',
         '    hsum += d*clamp((r - 1.0)*0.8, 0.0, 1.0);',
         '    ksum += core*fade;',
@@ -379,7 +456,14 @@ export function createCME(ctx){
     var ptsMat = new THREE.ShaderMaterial({
       uniforms: {
         uPx: { value: 30.0 },
-        uAmp: { value: 0.0 }
+        uAmp: { value: 0.0 },
+        // FASE 6 B3b — rarefação da cavidade nas PARTÍCULAS ("shell/
+        // veil/pontos"): a nuvem que se dispersa pelo MIOLO da bolha
+        // acima do núcleo esmaece com cav; a coluna da base/núcleo fica
+        // (material denso da ref-13/14). x=cx, y=rho, z=cav.
+        uCavKin: { value: new THREE.Vector4(1.1, 0.18, 0, 0) },
+        uCavDir: { value: cmeDir },
+        uCavAxis: { value: cmeAxis }
       },
       vertexShader: [
         '#define SUN_R ' + SUN_RADIUS.toFixed(4),
@@ -389,13 +473,29 @@ export function createCME(ctx){
         'varying float vKind;',
         'varying vec2 vDir;',
         'varying float vStretch;',
+        'varying float vCav;',
         'uniform float uPx;',
+        'uniform vec4 uCavKin;',
+        'uniform vec3 uCavDir;',
+        'uniform vec3 uCavAxis;',
         'float hsz(float n){ return fract(sin(n)*43758.5453123); }',
         'void main(){',
         '  vLife = aPos.w;',
         '  vKind = aVel.w;',
         '  vec4 mv = modelViewMatrix * vec4(aPos.xyz*SUN_R, 1.0);',
         '  gl_Position = projectionMatrix * mv;',
+        // FASE 6 B3b — gate da cavidade por partícula (aPos já está no
+        // espaço do objeto, R=1 — o MESMO referencial da casca): dentro
+        // do rope (dcp<~1, métrica squash-0.26) E acima do centro do
+        // núcleo (hcol além de cx−0.34ρ) a partícula esmaece. cav=0 ⇒
+        // vCav=1.0 e o multiply no fragment é bit-exato.
+        '  vec3 pd = aPos.xyz - uCavDir*uCavKin.x;',
+        '  float qa2 = dot(pd, uCavAxis);',
+        '  float dcp = length(pd - uCavAxis*(qa2*0.26))/max(uCavKin.y, 1e-4);',
+        '  float hcol = dot(aPos.xyz, uCavDir);',
+        '  float inCav = (1.0 - smoothstep(0.60, 0.95, dcp))',
+        '              * smoothstep(uCavKin.x - 0.50*uCavKin.y, uCavKin.x - 0.15*uCavKin.y, hcol);',
+        '  vCav = 1.0 - min(uCavKin.z*1.15, 1.0)*0.85*inCav;',
         // direção da VELOCIDADE em tela: o sprite vira um risco
         // alongado no rumo do movimento (painel 3/3: pontos uniformes
         // liam como confete/glitter — material filamentar não é dot)
@@ -416,6 +516,7 @@ export function createCME(ctx){
         'varying float vKind;',
         'varying vec2 vDir;',
         'varying float vStretch;',
+        'varying float vCav;',
         'uniform float uAmp;',
         'void main(){',
         '  vec2 d = gl_PointCoord - 0.5;',
@@ -426,7 +527,8 @@ export function createCME(ctx){
         '  float a = exp(-(t*t*10.0/(1.0 + 2.2*vStretch) + n*n*(10.0 + 8.0*vStretch)));',
         '  a *= smoothstep(0.0, 0.15, vLife) * min(1.0, vLife);',
         '  vec3 col = mix(vec3(1.0, 0.52, 0.26), vec3(1.0, 0.76, 0.50), 0.25 + 0.5*vKind);',
-        '  gl_FragColor = vec4(col*(a*uAmp*0.30), 1.0);',
+        // vCav = rarefação da cavidade (FASE 6 B3b; 1.0 bit-exato com cav=0)
+        '  gl_FragColor = vec4(col*(a*uAmp*0.30*vCav), 1.0);',
         '}'
       ].join('\n'),
       transparent: true,
@@ -517,6 +619,8 @@ export function createCME(ctx){
       g.env * ctx.cmeAmp * Math.min(1.5, ctx.CME_K));
     // o núcleo esmaece conforme o material vira partículas/se dispersa
     cmeUniforms.uCmeMat.value.set(ctx.cmeCoreGain*Math.exp(-ctx.cmeT*0.10), ctx.cmeT, cmeSeedVal, 0);
+    // FASE 6 B3: pesos de forma (hooks setCmeShape — 2 floats, zero alloc)
+    cmeUniforms.uCmeShape.value.set(ctx.cmeStriaK, ctx.cmeCavK);
     if (ptsOn){
       if (cmePts.armT >= 0) cmePts.armT += delta;
       var respawn = cmePts.armT >= 0 && cmePts.armT < 0.9;
@@ -528,6 +632,9 @@ export function createCME(ctx){
       cmePts.ptsMat.uniforms.uAmp.value = 0.42 * Math.min(1.5, ctx.CME_K) *
         (0.35 + 0.65*thom) * Math.min(1, ctx.cmeAmp) *
         Math.min(1, 2.2*g.env + 0.15);
+      // FASE 6 B3b: geometria do gate da cavidade das partículas
+      // (uCavDir/uCavAxis referenciam os Vector3 vivos — zero alloc)
+      cmePts.ptsMat.uniforms.uCavKin.value.set(g.cx, g.rho, ctx.cmeCavK, 0);
       // pós-tick: a visibilidade segue o VBO recém-escrito
       cmePts.meshes[0].visible = cmePts.cur === 0;
       cmePts.meshes[1].visible = cmePts.cur === 1;

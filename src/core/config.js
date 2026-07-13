@@ -87,7 +87,12 @@ export function createConfig(ctx){
     // UNÂNIME (falloff contido e fílmico; 0.8-1.2 e o focus pull ao
     // limbo ficam para o modo diretor). Em tiers sem CME (low) o cme
     // é no-op, como o cvol.
-    cme:0.9, dof:0.5
+    cme:0.9, dof:0.5,
+    // FASE 6: manchas de verdade (grupos GONG). Mediana do RE-painel de
+    // 3 juízes (1.0/1.0/1.5 → 1.0) sobre o sweep2 pós-correção da lei
+    // de crescimento — o painel 1 (mediana 0.5) tinha 2 flags ALTAS de
+    // fusão líder+seguidor, resolvidas no B1-fix e re-julgadas.
+    spots:1.0
   };
   var LOOK = (urlQ.look === 'sunshine') ? LOOK_SUNSHINE : null;
   function lk(n, base){ return (LOOK && LOOK[n] !== undefined) ? LOOK[n] : base; }
@@ -129,6 +134,13 @@ export function createConfig(ctx){
   // enquadramento fit a abertura é ~0 e nada muda mesmo com knob alto.
   // Default 0 = ramo morto no composite, frame idêntico.
   ctx.DOF_K = knob('dof', lk('dof', 0), 0.0, 1.5);
+  // FASE 6 — manchas de verdade: multiplicidade e proporção GONG via
+  // manchas VIRTUAIS num uniform array SÓ do shader do disco (uSpots,
+  // zero custo no bake) + recalibração dos raios das manchas reais.
+  // Default 0 = loop pulado por gate uniforme e recalibração ×1.0 —
+  // frame e custo idênticos ao baseline. No preset sunshine entra com
+  // 1.0 (mediana do re-painel de juízes do B1-fix).
+  ctx.SPOTS_K = knob('spots', lk('spots', 0), 0.0, 1.5);
   // FASE 5 — modo diretor (?director=1): sequência-atração
   // determinística coreografada POR CIMA dos hooks/knobs existentes
   // (ciclo, flare grande + CME, close-ups com foco raso, retirada
@@ -164,8 +176,24 @@ export function createConfig(ctx){
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }
 
+  // RNG PRÓPRIO (FASE 6, mesmo padrão loopRand/cmeRand): lifecycle das
+  // manchas virtuais — nascimento/tamanho/posição sorteiam AQUI e nunca
+  // deslocam srand/cmeRand/loopRand (o stream do srand é sagrado).
+  // Zero draws na criação: quem consome é surface/sun.js, do init em
+  // diante. XOR próprio 0x59075EED ("spot seed"), distinto dos demais.
+  var spotRandState = DET ? ((((parseInt(urlQ.seed, 10) || 1) >>> 0) ^ 0x59075EED) >>> 0)
+                          : ((Math.random()*4294967296) >>> 0);
+  function spotRand(){
+    spotRandState = (spotRandState + 0x6D2B79F5) >>> 0;
+    var t = spotRandState;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+
   // superfície do domínio (imutáveis pós-init; mutáveis já escritos como ctx.*)
   ctx.urlQ = urlQ; ctx.DET = DET; ctx.DET_HOLD = DET_HOLD; ctx.srand = srand;
   ctx.knob = knob; ctx.lk = lk; ctx.LOOK = LOOK; ctx.LOOK_SUNSHINE = LOOK_SUNSHINE;
   ctx.RENDER_SCALE = RENDER_SCALE; ctx.cmeRand = cmeRand; ctx.loopRand = loopRand;
+  ctx.spotRand = spotRand;
 }

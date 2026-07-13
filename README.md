@@ -33,6 +33,16 @@ Fase 5: `?cme=1` liga as CMEs (casca de flux-rope + partículas em
 flares grandes; tier mid+), `?dof=1` o foco raso hexagonal em
 close-ups e `?director=1` a sequência-atração (recomendado com
 `?look=sunshine`; qualquer input devolve o controle).
+Fase 6 ("acabamento físico"): `?spots=1` liga as manchas de verdade —
+grupos múltiplos líder/seguidor com proporção GONG, lei de Spörer nos
+dois hemisférios e contagem acompanhando a fase do ciclo (no preset
+sunshine em 1.0, mediana do painel de juízes). A mesma fase refinou os
+looks knob-gated existentes: a coroa volumétrica (`cvol`) ganhou plumas
+polares nos buracos coronais e cúspide de helmet streamer (defaults
+plume/cusp 0.6, folha v2 — painel unânime), e o CME (`cme`) ganhou
+estrias helicoidais do rope e cavidade rarefeita (stria 0.8/cav 0.85,
+contraste frente:cavidade ≥2× medido). Registro em
+`docs/fase-6-acabamento-fisico.md`.
 **Tudo isso também existe SEM URL**: o painel de ajustes no ⚙ tem
 sliders para todos os knobs, o botão "aplicar look Sunshine" e o botão
 "▶ modo diretor" (que empresta cme/dof no valor do preset e os devolve
@@ -51,6 +61,7 @@ npm run qa:phase1      # Fase 1: loops, flare two-ribbon, starburst/íris
 npm run qa:phase3      # Fase 3: ciclo de 11 anos + filamento↔proeminência
 npm run qa:phase4      # Fase 4: coroa volumétrica raymarched + arcada escura
 npm run qa:phase5      # Fase 5: CME/erupção + foco raso + modo diretor
+npm run qa:phase6      # Fase 6: manchas (spots) + plumas/cúspide + estrias/cavidade
 ```
 
 O modo determinístico (`?det=1&seed=N&hold=F`) fixa RNG e dt e congela o

@@ -92,11 +92,14 @@ export function createSolInfo(ctx){
         ctx.perfN = 0; ctx.perfIdx = 0; ctx.perfLastT = 0; perfBakes.length = 0;
       };
       // FASE 4: estado da coroa volumétrica (QA: tier-gate, bake, kill)
+      // FASE 6 B2: expõe também os pesos novos (plume uniform / cusp bake)
       window.__solInfo.coronaInfo = function(){
         return { steps: CVOL_STEPS, res: CVOL_N, k: ctx.CVOL_K,
                  on: CVOL_STEPS > 0 && ctx.CVOL_K > 0.001 && !ctx.cvolKilled &&
                      subToggle.corona && subToggle.corona3d,
-                 ready: ctx.cvolReady, killed: ctx.cvolKilled, cycles: ctx.cvolCycles };
+                 ready: ctx.cvolReady, killed: ctx.cvolKilled, cycles: ctx.cvolCycles,
+                 plume: cvolUniforms ? cvolUniforms.uPlume.value : 0,
+                 cusp: ctx.cvolWCusp };
       };
       window.__solInfo.setCvol = function(v){
         ctx.CVOL_K = Math.min(1.5, Math.max(0, +v || 0));
@@ -109,14 +112,24 @@ export function createSolInfo(ctx){
         return false;
       };
       // eixos do sweep de calibração (painel de juízes) sem rebuild:
-      // pesos do bake de densidade + contraste das raias procedurais
+      // pesos do bake de densidade + contraste das raias procedurais.
+      // FASE 6 B2 — dois pesos novos, semânticas DIFERENTES:
+      //   cusp  -> peso do BAKE (como base/sheet/loop/hole): só surte
+      //            efeito após rebakeCorona() (ou o ciclo fatiado);
+      //   plume -> UNIFORM do shader: efeito IMEDIATO no próximo frame
+      //            (zero rebake — é o eixo barato do sweep).
       window.__solInfo.setCvolShape = function(o){
         o = o || {};
         if (o.base  !== undefined) ctx.cvolWBase  = +o.base;
         if (o.sheet !== undefined) ctx.cvolWSheet = +o.sheet;
         if (o.loop  !== undefined) ctx.cvolWLoop  = +o.loop;
         if (o.hole  !== undefined) ctx.cvolWHole  = +o.hole;
-        return { base: ctx.cvolWBase, sheet: ctx.cvolWSheet, loop: ctx.cvolWLoop, hole: ctx.cvolWHole };
+        if (o.cusp  !== undefined) ctx.cvolWCusp  = +o.cusp;
+        if (o.plume !== undefined && cvolUniforms)
+          cvolUniforms.uPlume.value = Math.min(2, Math.max(0, +o.plume || 0));
+        return { base: ctx.cvolWBase, sheet: ctx.cvolWSheet, loop: ctx.cvolWLoop,
+                 hole: ctx.cvolWHole, cusp: ctx.cvolWCusp,
+                 plume: cvolUniforms ? cvolUniforms.uPlume.value : 0 };
       };
       window.__solInfo.setCvolFil = function(x){
         if (cvolUniforms) cvolUniforms.uFil.value = Math.min(2, Math.max(0, +x || 0));

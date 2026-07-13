@@ -125,7 +125,9 @@ e kill-switch no auto-tune (o gate de 24fps como código); débito da
 arcada escura pós-esfriamento pago (gêmeo multiplicativo da fita, mesmo
 mecanismo do fprom); preset sunshine ganha `cvol:0.5` (painel de 3
 juízes, v1-fil-suave 7.8); refs novas de coroa (eclipse/LASCO/buraco
-coronal); `qa:phase4` novo (13 checks). A/B de GPU por tier no
+coronal); `qa:phase4` novo (12 checks; o registro original dizia "13" —
+discrepância corrigida, cf. `docs/infra-modularizacao.md`). A/B de GPU
+por tier no
 SwiftShader: mid ×1.13 no pior caso. Débitos anotados: cúspide real,
 plumas polares, multiplicidade de manchas (herdado F3).
 
@@ -175,7 +177,13 @@ autossuficiente na raiz do repo:
    (multiplicidade no máximo + proporção GONG, knob `spots` via manchas
    VIRTUAIS num uniform array só do shader do disco — zero custo no
    bake), plumas polares + cúspide no raymarch da coroa, estrias
-   helicoidais do rope + contraste de cavidade no CME.
+   helicoidais do rope + contraste de cavidade no CME. **✅ ENTREGUE** —
+   knob `spots` (default 0 bit-exato; preset sunshine 1.0, mediana do
+   re-painel pós-correção da lei de crescimento), defaults do cvol
+   plume 0.6/cusp 0.6/folha v2 (painel unânime) e do CME stria 0.8/
+   cav 0.85 (calibração medida ≥2×; sem painel — exceção registrada);
+   `qa:phase6` novo (27 checks S/P/C); registro em
+   `docs/fase-6-acabamento-fisico.md`.
 3. **`PROMPT-RODADA-MOVIMENTO.md`** — harness de julgamento TEMPORAL
    (`qa:motion2`): sequências determinísticas de frames, índice de
    flicker/estroboscopia por região, tiras de filme julgáveis pelo

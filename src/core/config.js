@@ -87,7 +87,12 @@ export function createConfig(ctx){
     // UNÂNIME (falloff contido e fílmico; 0.8-1.2 e o focus pull ao
     // limbo ficam para o modo diretor). Em tiers sem CME (low) o cme
     // é no-op, como o cvol.
-    cme:0.9, dof:0.5
+    cme:0.9, dof:0.5,
+    // FASE 6: manchas de verdade (grupos GONG). Mediana do RE-painel de
+    // 3 juízes (1.0/1.0/1.5 → 1.0) sobre o sweep2 pós-correção da lei
+    // de crescimento — o painel 1 (mediana 0.5) tinha 2 flags ALTAS de
+    // fusão líder+seguidor, resolvidas no B1-fix e re-julgadas.
+    spots:1.0
   };
   var LOOK = (urlQ.look === 'sunshine') ? LOOK_SUNSHINE : null;
   function lk(n, base){ return (LOOK && LOOK[n] !== undefined) ? LOOK[n] : base; }
@@ -133,8 +138,8 @@ export function createConfig(ctx){
   // manchas VIRTUAIS num uniform array SÓ do shader do disco (uSpots,
   // zero custo no bake) + recalibração dos raios das manchas reais.
   // Default 0 = loop pulado por gate uniforme e recalibração ×1.0 —
-  // frame e custo idênticos ao baseline. NÃO entra no preset sunshine
-  // nesta rodada (decisão do painel de juízes fica para o B4).
+  // frame e custo idênticos ao baseline. No preset sunshine entra com
+  // 1.0 (mediana do re-painel de juízes do B1-fix).
   ctx.SPOTS_K = knob('spots', lk('spots', 0), 0.0, 1.5);
   // FASE 5 — modo diretor (?director=1): sequência-atração
   // determinística coreografada POR CIMA dos hooks/knobs existentes

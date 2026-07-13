@@ -347,6 +347,11 @@ function ringStats(file, r0, r1){
       }, phase);
       await waitFrame(page, 93);
       await page.evaluate(() => {
+        // FASE 6 B4: os defaults shipped agora são plume/cusp 0.6 — os
+        // checks P medem o efeito A/B a partir de pesos ZERADOS (a
+        // mesma régua da calibração B2, que fixou os limiares CAL);
+        // zerar ANTES do rebake pós-freeze para o bake já sair sem cusp
+        window.__solInfo.setCvolShape({ plume: 0, cusp: 0 });
         window.__solInfo.rebakeCorona();
         const st = window.__solInfo.state();
         window.__solInfo.setView(0.8, Math.PI*0.5, st.fitDist*1.5);
@@ -673,7 +678,14 @@ function ringStats(file, r0, r1){
       // ---- página principal (t≈5.0, limbo): C1 estrias, C2 cavidade,
       // ---- C3 pesos 0 = look atual -------------------------------------
       const page = await openCmeLive(CCAL.holdMain, '');
-      await page.evaluate(() => window.__solInfo.toggle('stars', false));   // métrica limpa (Via Láctea contamina anel/perfil)
+      // FASE 6 B4: os defaults shipped agora são stria 0.8/cav 0.85 —
+      // o baseline do C1/C2/C3 é o look de PESOS ZERADOS (a régua da
+      // calibração B3); zerar via hook antes do shot A (uniform puro,
+      // efeito imediato — o limbViewExact espera os frames)
+      await page.evaluate(() => {
+        window.__solInfo.toggle('stars', false);   // métrica limpa (Via Láctea contamina anel/perfil)
+        window.__solInfo.setCmeShape({ stria: 0, cav: 0 });
+      });
       const ci = await limbViewExact(page, 1.6);
       const st = await page.evaluate(() => window.__solInfo.state());
       const Rs = 300*2.2/(st.camDist*Math.tan(21*Math.PI/180));

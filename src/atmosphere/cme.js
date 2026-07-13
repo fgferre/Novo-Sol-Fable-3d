@@ -41,14 +41,20 @@ export function createCME(ctx){
   // "três partes" (frente/cavidade/núcleo) sem virar cometa
   ctx.cmeCoreGain = 1.3;
   // FASE 6 B3 — pesos de FORMA do look (sem knob de URL/painel; hooks
-  // __solInfo.setCmeShape, sweep + painel de juízes decidem valores):
+  // __solInfo.setCmeShape):
   //   cmeStriaK 0-1.2: estrias HELICOIDAIS do rim (fbm em coordenada
   //     helicoidal do rope — laços aninhados, ref-13) — 0 = fbm
   //     isotrópico da F5 bit-exato (ramo do shader byte-idêntico);
   //   cmeCavK 0-1.0: rarefação da CAVIDADE (gate por raio no interior
   //     da bolha) — 0 = casca da F5 bit-exata (multiplicação por 1.0).
-  ctx.cmeStriaK = 0.0;
-  ctx.cmeCavK = 0.0;
+  // B4: defaults 0.8/0.85 = candidato CALIBRADO por medição (razão
+  // frente:cavidade 1.19×→2.11× ≥ alvo 2×; beadRMS 0.58× o isotrópico)
+  // + inspeção direta — SEM painel de juízes (exceção do modo economia
+  // da rodada, registrada em docs/fase-6-acabamento-fisico.md). Só
+  // visíveis durante um evento com cme>0 (knob-gated): frame default
+  // segue bit-exato.
+  ctx.cmeStriaK = 0.8;
+  ctx.cmeCavK = 0.85;
   // 3º eixo da base ortonormal do rope (axis × dir), congelado por
   // evento em launchCME — scratch, zero alocação no animate
   var cmeE2 = new THREE.Vector3(0, 0, 1);

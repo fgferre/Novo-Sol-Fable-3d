@@ -39,15 +39,19 @@ export function createCoronaVolume(ctx){
   }
   // pesos da mistura de densidade — ajustáveis em runtime pelo hook
   // setCvolShape (sweep de calibração sem rebuild); os defaults são o
-  // resultado do painel de juízes da rodada
-  ctx.cvolWBase = 0.30, ctx.cvolWSheet = 0.85, ctx.cvolWLoop = 0.55, ctx.cvolWHole = 0.62;
+  // resultado do painel de juízes da rodada. FASE 6 B4: folha v2
+  // "forte" (sheet 1.15 / base 0.20 — nota técnica do juiz físico da
+  // F4, aprovada UNÂNIME no painel do B2). Só visíveis com cvol>0
+  // (knob-gated): o frame default segue bit-exato.
+  ctx.cvolWBase = 0.20, ctx.cvolWSheet = 1.15, ctx.cvolWLoop = 0.55, ctx.cvolWHole = 0.62;
   // FASE 6 B2 — cúspide do helmet streamer: peso do termo QUADRÁTICO de
   // altura no expoente da folha (a folha AFUNILA em ponta e segue como
   // haste fina — refs 10/12; nota técnica do juiz físico da F4). Peso
   // CPU-side (entra no bake da densidade): setCvolShape({cusp}) precisa
-  // de rebakeCorona() para surtir efeito. Default 0.0 = folha da F4
-  // bit-exata (somar 0.0 ao expoente não muda nenhum double).
-  ctx.cvolWCusp = 0.0;
+  // de rebakeCorona() para surtir efeito. B4: default 0.6 = veredito
+  // unânime do painel de 3 juízes (0.9+ trunca as pétalas); com peso 0
+  // a folha da F4 é bit-exata (somar 0.0 ao expoente não muda double).
+  ctx.cvolWCusp = 0.6;
   // densidade coronal num ponto do espaço do objeto (esfera unitária)
   function cvolDensity(x, y, z){
     var r = Math.sqrt(x*x + y*y + z*z);
@@ -131,10 +135,11 @@ export function createCoronaVolume(ctx){
       uFil: { value: 0.55 },
       // FASE 6 B2 — plumas polares (ref-09/11): peso UNIFORM (efeito
       // imediato no sweep, zero rebake — modulação procedural angular
-      // por PIXEL, o volume 64³ não resolve fios finos). Default 0.0 =
-      // imagem atual bit-idêntica (o bloco todo é pulado no shader).
-      // Ajuste via setCvolShape({plume}); o painel decide o shipped.
-      uPlume: { value: 0.0 },
+      // por PIXEL, o volume 64³ não resolve fios finos). B4: default
+      // 0.6 = veredito unânime do painel (0.9+ vira "godray"); com
+      // peso 0 o bloco é pulado no shader (imagem F4 bit-idêntica) e
+      // com cvol=0 a mesh nem desenha. Ajuste via setCvolShape({plume}).
+      uPlume: { value: 0.6 },
       // cargas VIVAS (o mesmo array de Vector4 do disco/coronaRays; o
       // three re-flatten por frame) — o gate de buraco coronal das
       // plumas reavalia a unipolaridade no pé da linha radial do pixel

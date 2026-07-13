@@ -1,6 +1,6 @@
 {
   "meta": {
-    "calibratedAt": "2026-07-13T19:14:17.648Z",
+    "calibratedAt": "2026-07-13T19:21:12.720Z",
     "from": "out/motion2/metrics.json",
     "margin": 1.25
   },
@@ -80,6 +80,20 @@
         "limbo": 0.009526,
         "coroa": 0.005969,
         "ceu": 0.006724
+      }
+    },
+    "cvol0-wide": {
+      "flickerP95Max": {
+        "disco": 0.13146,
+        "limbo": 0.23609,
+        "coroa": 0.60873,
+        "ceu": 0.63306
+      },
+      "stroboFracMax": {
+        "disco": 0.004877,
+        "limbo": 0.009181,
+        "coroa": 0.00597,
+        "ceu": 0.006725
       }
     }
   }

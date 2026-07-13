@@ -89,6 +89,9 @@ const SCENARIOS = [
   { name: 'flare-cme-limbo', M: 48, k: 4, q: 'cme=0.9',  setup: 'cme',   runs: 1 },
   { name: 'lapse-ciclo',     M: 48, k: 1, q: 'lapse=1',  setup: null,    runs: 1 },
   { name: 'cvol-wide',       M: 48, k: 1, q: 'cvol=0.5', setup: 'wide',  runs: 1 },
+  // CONTROLE do cvol-wide: mesma vista/estrelas/pan sem o volume — a
+  // diferença de flicker isola a contribuição do cvol (fios F4 + plumas F6)
+  { name: 'cvol0-wide',      M: 48, k: 1, q: '',         setup: 'wide',  runs: 1 },
 ];
 
 let fails = 0;

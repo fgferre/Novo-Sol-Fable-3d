@@ -64,7 +64,8 @@ const START_FRAME = 20;          // assentar: > ~10 e 1º ciclo de bake (frames 
 const BOOT_FRAME = 8;            // estaciona o rAF depois deste frame
 const BASE_Q = '?det=1&seed=7&tier=high&scale=1&grain=0';
 const SUN_RADIUS = 2.2, FOV_HALF = 21 * Math.PI / 180;  // fallback analítico do raio
-const DISC_LUM_THR = 150;        // limiar de luminância p/ detectar o limbo
+const DISC_LUM_THR = 65;         // limiar de luminância p/ detectar o limbo
+                                 // (disco tone-mapped laranja: lum ~90-130; céu ~18-40; queda no limbo é abrupta)
 const FLICKER_EPS = 2.0;         // std/(mean+eps), luminância 0..255
 const STROBO_THR = 10;           // |delta| acima disto é "pisca visível"
 const STROBO_COH_K = 0.5;        // vizinhança acompanha se |media 3x3| >= K*|delta|
@@ -199,25 +200,35 @@ function lumPlane(png){
   }
   return out;
 }
-// raio do disco: 4 raios do centro, último pixel com lum>=thr; raios
-// que batem na borda da tela são "clipados"; mediana dos válidos;
-// fallback analítico (fov 42°, R=2.2) com o camDist do manifest
+// raio do disco: 8 raios do centro (4 cardeais + 4 diagonais), último
+// pixel com lum>=thr por raio; raios clipados na borda ou desviados por
+// estrela/texto de UI são descartados pela MEDIANA; sanidade final
+// contra o raio analítico (fov 42°, R=2.2, camDist do manifest) — se a
+// mediana fugir >12% do analítico (proeminência/streamer no raio), fica
+// o analítico. A câmera SEMPRE mira o centro, então centro = w/2,h/2.
 function detectRadius(lum, w, h, camDist){
   const cx = w >> 1, cy = h >> 1;
+  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1],
+    [Math.SQRT1_2, Math.SQRT1_2], [-Math.SQRT1_2, Math.SQRT1_2],
+    [Math.SQRT1_2, -Math.SQRT1_2], [-Math.SQRT1_2, -Math.SQRT1_2]];
   const rays = [];
-  const scan = (dx, dy, max) => {
-    let last = -1;
-    for (let s = 0; s < max; s++){
-      const x = cx + dx * s, y = cy + dy * s;
+  for (const [dx, dy] of dirs){
+    let last = -1, s = 0;
+    for (;; s++){
+      const x = Math.round(cx + dx * s), y = Math.round(cy + dy * s);
+      if (x < 0 || y < 0 || x >= w || y >= h) break;
       if (lum[y * w + x] >= DISC_LUM_THR) last = s;
     }
-    return { r: last, clipped: last >= max - 3 };
-  };
-  rays.push(scan(1, 0, w - cx), scan(-1, 0, cx), scan(0, 1, h - cy), scan(0, -1, cy));
-  const ok = rays.filter((r) => !r.clipped && r.r > 10).map((r) => r.r).sort((a, b) => a - b);
-  if (ok.length >= 2) return { R: ok[Math.floor(ok.length / 2)], mode: 'lum' };
+    rays.push({ r: last, clipped: last >= s - 3 });
+  }
   const ang = Math.asin(Math.min(1, SUN_RADIUS / Math.max(camDist, SUN_RADIUS * 1.001)));
-  return { R: 0.5 * Math.tan(ang) / Math.tan(FOV_HALF) * h, mode: 'analitico' };
+  const Ran = 0.5 * Math.tan(ang) / Math.tan(FOV_HALF) * h;
+  const ok = rays.filter((r) => !r.clipped && r.r > 10).map((r) => r.r).sort((a, b) => a - b);
+  if (ok.length >= 3){
+    const Rlum = ok[Math.floor(ok.length / 2)];
+    if (Math.abs(Rlum - Ran) / Ran <= 0.12) return { R: Rlum, mode: 'lum' };
+  }
+  return { R: Ran, mode: 'analitico' };
 }
 function regionMask(w, h, R){
   const cx = w / 2, cy = h / 2, mask = new Uint8Array(w * h), count = [0, 0, 0, 0, 0];

@@ -1,0 +1,86 @@
+{
+  "meta": {
+    "calibratedAt": "2026-07-13T19:14:17.648Z",
+    "from": "out/motion2/metrics.json",
+    "margin": 1.25
+  },
+  "scenarios": {
+    "fit-idle": {
+      "flickerP95Max": {
+        "disco": 0.13199,
+        "limbo": 0.22399,
+        "coroa": 0.46291,
+        "ceu": 0.42586
+      },
+      "stroboFracMax": {
+        "disco": 0.00397,
+        "limbo": 0.007709,
+        "coroa": 0.006686,
+        "ceu": 0.00437
+      }
+    },
+    "close-dof0": {
+      "flickerP95Max": {
+        "disco": 0.2659,
+        "limbo": 0.17816
+      },
+      "stroboFracMax": {
+        "disco": 0.258124,
+        "limbo": 0.065284
+      }
+    },
+    "close-dof": {
+      "flickerP95Max": {
+        "disco": 0.26585,
+        "limbo": 0.13441
+      },
+      "stroboFracMax": {
+        "disco": 0.251861,
+        "limbo": 0.010854
+      }
+    },
+    "flare-cme-limbo": {
+      "flickerP95Max": {
+        "disco": 0.17098,
+        "limbo": 0.37944,
+        "coroa": 0.81455,
+        "ceu": 1.40907
+      },
+      "stroboFracMax": {
+        "disco": 0.080585,
+        "limbo": 0.049055,
+        "coroa": 0.012515,
+        "ceu": 0.006164
+      },
+      "coherenceExplMin": 0.2409
+    },
+    "lapse-ciclo": {
+      "flickerP95Max": {
+        "disco": 0.12842,
+        "limbo": 0.28047,
+        "coroa": 0.46536,
+        "ceu": 0.42626
+      },
+      "stroboFracMax": {
+        "disco": 0.003926,
+        "limbo": 0.01571,
+        "coroa": 0.006686,
+        "ceu": 0.00437
+      }
+    },
+    "cvol-wide": {
+      "flickerP95Max": {
+        "disco": 0.13146,
+        "limbo": 0.27014,
+        "coroa": 0.5829,
+        "ceu": 0.62401
+      },
+      "stroboFracMax": {
+        "disco": 0.004877,
+        "limbo": 0.009526,
+        "coroa": 0.005969,
+        "ceu": 0.006724
+      }
+    }
+  }
+}

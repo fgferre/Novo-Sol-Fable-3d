@@ -131,7 +131,11 @@ export function createCoronaRays(ctx){
       // atravessa o limbo escurecido, T2.1)
       '  float fall = exp(-(r-diskR)*22.0) + uHalo*exp(-(r-diskR)*7.0);',
       '  fall *= smoothstep(diskR*0.92, diskR*1.06, r);',
-      '  fall *= smoothstep(0.85, 0.55, r);',        // some bem antes da borda do plano
+      // PR1 — rampa externa em forma DEFINIDA: smoothstep com bordas
+      // invertidas é comportamento indefinido pela spec GLSL (o driver
+      // atual calculava a rampa reversa por acaso). 1-smoothstep é a
+      // mesma curva pela simetria S(1-t)=1-S(t).
+      '  fall *= 1.0 - smoothstep(0.55, 0.85, r);',  // some bem antes da borda do plano
       '  vec3 col = mix(vec3(1.0,0.45,0.16), vec3(1.0,0.72,0.38), clamp((r-diskR)*2.2,0.0,1.0));',
       // amplitude respira com a atividade global do ciclo
       '  gl_FragColor = vec4(col * fall * rays * 0.16 * (1.0 + uActGain*uActivity) * (1.0 - 0.62*uCvolMix), 1.0);',

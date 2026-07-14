@@ -7,6 +7,7 @@ out/
 qa-ab-branch/
 qa-ab-main/
 qa-out/
+qa-out-pr0*/
 shots-*/
 shots/
 sweep-out/

@@ -109,6 +109,7 @@ export function createCoronaVolume(ctx){
     cvolData.set(cvolStage);
     cvolTex.needsUpdate = true;
     ctx.cvolReady = true; ctx.cvolCycles++; ctx.cvolStep = -1;
+    ctx.diagEvent('cvol-bake-full', ctx.cvolCycles);
   }
   if (CVOL_STEPS > 0){
     cvolData = new Uint8Array(CVOL_N*CVOL_N*CVOL_N);

@@ -24,6 +24,8 @@ import { createFlares } from './surface/flares.js';
 import { createDirector } from './camera/director.js';
 import { createPanel } from './ui/panel.js';
 import { createSolInfo } from './debug/solinfo.js';
+import { createGpuProfile } from './debug/gpuprofile.js';
+import { createDiag } from './debug/diag.js';
 import { createRenderer, createRenderInfra, createRTType } from './core/renderer.js';
 
 THREE.ColorManagement.enabled = false;
@@ -187,7 +189,19 @@ function init(){
       SCALE_STEPS = ctx.SCALE_STEPS, TIER_ORDER = ctx.TIER_ORDER,
       perfFrameMs = ctx.perfFrameMs, perfBusyMs = ctx.perfBusyMs, perfBakes = ctx.perfBakes;
 
+  // PR0 — ?profile=1: timer de GPU do frame. Sem a query a factory
+  // retorna sem definir ctx.gpuFrame* e os hooks abaixo ficam undefined
+  // (o animate paga só um if falsy por frame — custo ~zero, convenção
+  // dos gates de knob).
+  createGpuProfile(ctx);
+  var gpuFrameBegin = ctx.gpuFrameBegin, gpuFrameEnd = ctx.gpuFrameEnd;
+
   createSolInfo(ctx);
+
+  // PR0 — ?diag=1: manifesto + ring de eventos. Depois do createSolInfo
+  // (o manifesto fotografa __solInfo.knobs()); sem a query, retorna sem
+  // tocar em nada e ctx.diagEvent segue o no-op do createConfig.
+  createDiag(ctx);
 
   createPanel(ctx);
 
@@ -201,6 +215,7 @@ function init(){
     ctx.fitDist = newFit;
     ctx.camDist = Math.max(minDist, Math.min(maxDist, ctx.camDist));
     ctx.targetCamDist = Math.max(minDist, Math.min(maxDist, ctx.targetCamDist));
+    ctx.diagEvent('resize', window.innerWidth, window.innerHeight);
   }
   window.addEventListener('resize', onResize);
 
@@ -255,6 +270,9 @@ function init(){
   function animate(){
     requestAnimationFrame(animate);
     var frameT0 = performance.now();
+    // PR0 — ?profile=1: a query de GPU envolve o frame INTEIRO (sim,
+    // bakes, cena e composite); sem a query o hook é undefined
+    if (gpuFrameBegin) gpuFrameBegin();
     if (DET && window.__solInfo) window.__solInfo.frame = ++ctx.detFrames;
     var rawDelta = DET
       ? ((DET_HOLD > 0 && ctx.detFrames > DET_HOLD) ? 0 : (1/60))
@@ -516,6 +534,7 @@ function init(){
             ctx.cvolStep = -1; ctx.cvolCycles++;
             cvolData.set(cvolStage);        // upload atômico: sem tearing
             cvolTex.needsUpdate = true;
+            ctx.diagEvent('cvol-upload', ctx.cvolCycles);
           }
         }
       }
@@ -630,6 +649,7 @@ function init(){
     compUniforms.tBloom.value = bloomMips[0].rt.texture;
     renderer.setRenderTarget(null);
     renderer.render(compScene, quadCamera);
+    if (gpuFrameEnd) gpuFrameEnd();
 
     // HUD: atualiza a ~2Hz com as mesmas métricas do __solInfo.perf()
     ctx.hudAccum += rawDelta;

@@ -98,6 +98,12 @@ export function createSolInfo(ctx){
         return ctx.gpuPerf ? ctx.gpuPerf()
           : { supported: false, samples: 0, avgMs: 0, p95Ms: 0, worstMs: 0 };
       };
+      // PR0 — ?diag=1: manifesto do ambiente + ring de eventos (debug/
+      // diag.js). Sem a query o módulo nem inicializa: manifest null e
+      // ring vazio, sem custo algum no frame.
+      window.__solInfo.diagnostics = function(){
+        return ctx.diagData ? ctx.diagData() : { manifest: null, events: [] };
+      };
       // FASE 4: estado da coroa volumétrica (QA: tier-gate, bake, kill)
       // FASE 6 B2: expõe também os pesos novos (plume uniform / cusp bake)
       window.__solInfo.coronaInfo = function(){

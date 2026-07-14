@@ -25,6 +25,7 @@ import { createDirector } from './camera/director.js';
 import { createPanel } from './ui/panel.js';
 import { createSolInfo } from './debug/solinfo.js';
 import { createGpuProfile } from './debug/gpuprofile.js';
+import { createDiag } from './debug/diag.js';
 import { createRenderer, createRenderInfra, createRTType } from './core/renderer.js';
 
 THREE.ColorManagement.enabled = false;
@@ -197,6 +198,11 @@ function init(){
 
   createSolInfo(ctx);
 
+  // PR0 — ?diag=1: manifesto + ring de eventos. Depois do createSolInfo
+  // (o manifesto fotografa __solInfo.knobs()); sem a query, retorna sem
+  // tocar em nada e ctx.diagEvent segue o no-op do createConfig.
+  createDiag(ctx);
+
   createPanel(ctx);
 
   function onResize(){
@@ -209,6 +215,7 @@ function init(){
     ctx.fitDist = newFit;
     ctx.camDist = Math.max(minDist, Math.min(maxDist, ctx.camDist));
     ctx.targetCamDist = Math.max(minDist, Math.min(maxDist, ctx.targetCamDist));
+    ctx.diagEvent('resize', window.innerWidth, window.innerHeight);
   }
   window.addEventListener('resize', onResize);
 
@@ -527,6 +534,7 @@ function init(){
             ctx.cvolStep = -1; ctx.cvolCycles++;
             cvolData.set(cvolStage);        // upload atômico: sem tearing
             cvolTex.needsUpdate = true;
+            ctx.diagEvent('cvol-upload', ctx.cvolCycles);
           }
         }
       }

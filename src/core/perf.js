@@ -64,6 +64,7 @@ export function createPerf(ctx){
     renderer.setSize(window.innerWidth, window.innerHeight);
     resizeTargets();
     ctx.tuneEvents++;
+    ctx.diagEvent('autotune-scale', SCALE_STEPS[ctx.scaleIdx]);
   }
   function persistTier(t){ try { localStorage.setItem('solTier', t); } catch(e){} }
   var TIER_ORDER = ['low', 'mid', 'high', 'ultra'];

@@ -278,6 +278,7 @@ export function createChromo(ctx){
   chromoUniforms.uCharges.value = bakeCharges;
   smearUniforms.uCharges.value = bakeCharges;
   function snapshotBakeInputs(){
+    ctx.diagEvent('chromo-bake');   // início de um ciclo fatiado (~8Hz)
     bakeCopyUniforms.tSrc.value = simRTs[ctx.simIndex].texture;
     renderer.setRenderTarget(bakeSimRT);
     renderer.render(bakeCopyScene, quadCamera);

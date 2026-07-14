@@ -191,6 +191,12 @@ export function createConfig(ctx){
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }
 
+  // PR0 — ?diag=1: ctx.diagEvent nasce como função vazia pré-resolvida;
+  // o debug/diag.js a substitui pela real SÓ com a query ligada. Os
+  // pontos de evento chamam ctx.diagEvent('nome', primitivos) direto —
+  // sem if, sem concat, sem alocação no modo normal.
+  ctx.diagEvent = function(){};
+
   // superfície do domínio (imutáveis pós-init; mutáveis já escritos como ctx.*)
   ctx.urlQ = urlQ; ctx.DET = DET; ctx.DET_HOLD = DET_HOLD; ctx.srand = srand;
   ctx.knob = knob; ctx.lk = lk; ctx.LOOK = LOOK; ctx.LOOK_SUNSHINE = LOOK_SUNSHINE;

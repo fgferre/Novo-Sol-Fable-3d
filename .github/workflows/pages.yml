@@ -4,13 +4,21 @@ name: GitHub Pages
 # público). A API de "create Pages site" usada pelo actions/deploy-pages
 # é admin-only para o GITHUB_TOKEN — por isso o push na branch, não o
 # deploy direto por Actions.
+# PR0: o gatilho agora é o workflow QA CONCLUÍDO COM SUCESSO em main —
+# o site publicado é exatamente o build (artifact "builds") do SHA que
+# passou no QA; o rebuild paralelo próprio foi removido. O
+# workflow_dispatch continua funcionando: sem payload de workflow_run,
+# ele publica o artifact do ÚLTIMO run verde de QA em main.
 on:
-  push:
+  workflow_run:
+    workflows: [QA]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
+  actions: read   # download de artifact de OUTRO run exige actions:read
 
 concurrency:
   group: pages
@@ -19,21 +27,33 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # gate: só publica QA verde (dispatch manual passa direto — ele
+    # resolve por conta o último run verde no passo abaixo)
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Resolver o run de QA de origem
+        id: qarun
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -n "${{ github.event.workflow_run.id }}" ]; then
+            echo "id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
+          else
+            id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow QA --branch main \
+              --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+            if [ -z "$id" ]; then echo "nenhum run verde de QA em main"; exit 1; fi
+            echo "id=$id" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Baixar builds testados do run de QA
+        uses: actions/download-artifact@v4
         with:
-          node-version: 22
-          cache: npm
+          name: builds
+          run-id: ${{ steps.qarun.outputs.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       # O site é o build Vite (dist/); o build de arquivo único continua
       # publicado como sol-3d.html — baixável e funcional offline/file://,
       # como o original. Os dois aceitam query params (?look=sunshine,
       # ?speed=3, ?tier=low).
-      - name: Build
-        run: |
-          npm ci
-          npm run build
-          npm run build:single
       - name: Publicar na branch gh-pages
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -47,5 +67,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "Pages: build Vite @ ${GITHUB_SHA}"
+          git commit -m "Pages: build QA @ ${{ github.event.workflow_run.head_sha || github.sha }}"
           git push --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages

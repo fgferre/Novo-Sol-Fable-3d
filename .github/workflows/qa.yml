@@ -44,3 +44,15 @@ jobs:
             qa-out/
             qa-diff/
           if-no-files-found: ignore
+      # PR0: builds TESTADOS viram artifact (só chega aqui com o QA verde;
+      # steps posteriores a uma falha são pulados). O workflow Pages
+      # (workflow_run) baixa este artifact e publica exatamente o SHA
+      # que passou — nada de rebuild paralelo não testado.
+      - name: Upload dos builds testados (consumidos pelo Pages)
+        uses: actions/upload-artifact@v4
+        with:
+          name: builds
+          retention-days: 7
+          path: |
+            dist/
+            dist-single/index.html

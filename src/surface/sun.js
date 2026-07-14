@@ -599,18 +599,20 @@ export function createSunMesh(ctx){
     // as proeminências já fazem com env; o piso 0.03 vira só guarda
     // numérica do campo.
     '    float lifeK = smoothstep(0.04, 0.30, aw);',
-    '    float d = acos(clamp(dot(spW, f), -1.0, 1.0));',
+    // PR1 (auditoria, achado 1) — early-out do loop REAL, replicando o
+    // padrão do loop virtual abaixo. (a) carga sem vida (lifeK=0): ui e
+    // pi já saíam ×lifeK=0 — descarta ANTES de acos/snoise. (b) corda
+    // 6r: 2(1-cos)=corda², corda<=arco; o ruído de contorno encolhe d
+    // no máximo ×(1-0.38-0.16)=×0.46 e a contribuição morre em
+    // pOut·r<=2.4r ⇒ zero garantido acima de ~5.22r — 36·r² (=6r)
+    // mantém margem. O raio efetivo r (com a recalibração GONG) é
+    // calculado antes do teste; com contribuição 0, os max()/argmax de
+    // umbra/pen são bit-exatos, então pular a iteração não muda pixel.
+    '    if (lifeK <= 0.0) continue;',
     // assimetria física do par (lei de Hale na prática): o LÍDER (índice
     // par) é grande e coeso; o SEGUIDOR (ímpar) é menor e fragmentado —
     // pares reais nunca são dois olhos gêmeos
     '    float isFoll = mod(float(i), 2.0);',
-    // contorno irregular: umbra real não é um círculo perfeito. Com
-    // spots>0 o recorte do SEGUIDOR é temperado (0.38→0.28, 0.16→0.12
-    // via pShape): as lascas-agulha do ruído eram o caminho da fusão
-    // líder↔seguidor recalibrados (flag alta) e das "orelhas" (flag
-    // artefatos-cg). Com uSpotsK=0 os pesos são exatamente 0.38/0.16.
-    '    d *= 1.0 + mix(0.18, 0.38 - 0.10*pShape, isFoll)*snoise(spW*24.0 + f*9.0)',
-    '           + mix(0.07, 0.16 - 0.04*pShape, isFoll)*snoise(spW*60.0 - f*4.0);',
     // ESCALA OBSERVADA (ref-07 GONG full-disk): umbras reais têm
     // 3.5-60 Mm de diâmetro (0.005-0.086 R). Antes chegava a 0.18 R —
     // uma ordem de grandeza acima de qualquer mancha já registrada
@@ -628,6 +630,16 @@ export function createSunMesh(ctx){
     // o min() é no-op (r baseline <= ~0.045R) — paridade bit-exata
     // por construção.
     '    r = min(r * (1.0 + uSpotsK*(0.06 + 0.21*aw*aw)*uSpotsRealK[i]), 0.072);',
+    '    float cv = dot(spW, f);',
+    '    if (2.0*(1.0 - cv) > r*r*36.0) continue;',
+    '    float d = acos(clamp(cv, -1.0, 1.0));',
+    // contorno irregular: umbra real não é um círculo perfeito. Com
+    // spots>0 o recorte do SEGUIDOR é temperado (0.38→0.28, 0.16→0.12
+    // via pShape): as lascas-agulha do ruído eram o caminho da fusão
+    // líder↔seguidor recalibrados (flag alta) e das "orelhas" (flag
+    // artefatos-cg). Com uSpotsK=0 os pesos são exatamente 0.38/0.16.
+    '    d *= 1.0 + mix(0.18, 0.38 - 0.10*pShape, isFoll)*snoise(spW*24.0 + f*9.0)',
+    '           + mix(0.07, 0.16 - 0.04*pShape, isFoll)*snoise(spW*60.0 - f*4.0);',
     '    float ui0 = 1.0 - smoothstep(r*0.55, r, d);',
     '    float ui = ui0 * lifeK;',
     '    float pi = clamp((1.0 - smoothstep(r*pIn, r*pOut, d)) - ui0, 0.0, 1.0) * lifeK;',

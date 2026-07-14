@@ -129,10 +129,8 @@ function init(){
 
   createCoronaVolume(ctx);
   var coronaVol = ctx.coronaVol, cvolUniforms = ctx.cvolUniforms,
-      CVOL_STEPS = ctx.CVOL_STEPS, CVOL_N = ctx.CVOL_N,
-      cvolBakeFull = ctx.cvolBakeFull, bakeCvolSlice = ctx.bakeCvolSlice,
-      snapshotCvolCharges = ctx.snapshotCvolCharges, cvolData = ctx.cvolData,
-      cvolStage = ctx.cvolStage, cvolTex = ctx.cvolTex, cvolInvRot = ctx.cvolInvRot;
+      CVOL_STEPS = ctx.CVOL_STEPS, cvolFrame = ctx.cvolFrame,
+      cvolInvRot = ctx.cvolInvRot;
 
   createCME(ctx);
   var cmeMesh = ctx.cmeMesh, cmeUniforms = ctx.cmeUniforms, cmePts = ctx.cmePts,
@@ -274,8 +272,12 @@ function init(){
     // bakes, cena e composite); sem a query o hook é undefined
     if (gpuFrameBegin) gpuFrameBegin();
     if (DET && window.__solInfo) window.__solInfo.frame = ++ctx.detFrames;
+    // PR2: `held` (tempo congelado sob ?hold) também alimenta o
+    // scheduler da coroa volumétrica — bake em voo anda com passo
+    // sintético, cooldown congela
+    var held = DET && DET_HOLD > 0 && ctx.detFrames > DET_HOLD;
     var rawDelta = DET
-      ? ((DET_HOLD > 0 && ctx.detFrames > DET_HOLD) ? 0 : (1/60))
+      ? (held ? 0 : (1/60))
       : Math.min(clock.getDelta(), 0.1);
     var delta = rawDelta * ctx.TIME_SCALE;
     ctx.elapsed += delta;
@@ -499,16 +501,20 @@ function init(){
     for (var ai = 0; ai < pairStates.length; ai++) actSum += Math.abs(pairStates[ai].lead.w);
     coronaRaysUniforms.uActivity.value = Math.min(1.0, actSum/4.0);
 
-    // FASE 4 — coroa volumétrica: uniforms + bake fatiado do sampler3D
-    // (2 fatias z/frame, ciclo ~0.5s + folga; cadência de sobra para a
-    // deriva lenta das cargas e para o time-lapse do ciclo). Com knob 0
-    // nada aqui roda além do teste — custo e frame idênticos.
+    // FASE 4 / PR2 — coroa volumétrica: uniforms + scheduler assíncrono
+    // do bake do sampler3D (máquina idle|baking|cooldown em
+    // coronaVolume.js: 30 fatias/s, ≤1 fatia/frame, publicação atômica
+    // após a 64ª, cooldown de 0.9s SÓ após publicar). Com knob 0 nada
+    // aqui roda além do teste — custo e frame idênticos.
     if (CVOL_STEPS > 0){
       var cvolOn = ctx.CVOL_K > 0.001 && !ctx.cvolKilled && subToggle.corona && subToggle.corona3d;
-      if (cvolOn && !ctx.cvolReady) cvolBakeFull();   // ligada ao vivo pelo painel
-      coronaVol.visible = cvolOn;
-      coronaRaysUniforms.uCvolMix.value = cvolOn ? Math.min(1.0, ctx.CVOL_K) : 0.0;
-      if (cvolOn){
+      // até a 1ª publicação o plano de raias segue INTEGRAL (mix 0 e
+      // mesh oculta — sem hitch de bake síncrono ao ligar pelo painel);
+      // depois, o último volume publicado fica de pé até a troca
+      var cvolShow = cvolOn && ctx.cvolReady;
+      coronaVol.visible = cvolShow;
+      coronaRaysUniforms.uCvolMix.value = cvolShow ? Math.min(1.0, ctx.CVOL_K) : 0.0;
+      if (cvolShow){
         coronaVol.quaternion.copy(camera.quaternion);
         cvolUniforms.uCvol.value = ctx.CVOL_K;
         cvolUniforms.uTime.value = ctx.elapsed;
@@ -519,25 +525,10 @@ function init(){
         // updateMatrixWorld() aqui mudava o timing de update da cena
         // e deixava resíduo de 1 LSB nos ciclos de bake (QA F3)
         cvolInvRot.setFromMatrix4(sunMesh.matrixWorld).transpose();
-        ctx.cvolAccum += delta;
-        if (ctx.cvolStep < 0 && ctx.cvolAccum >= 0.9){
-          ctx.cvolStep = 0; ctx.cvolAccum = 0; snapshotCvolCharges();
-        }
-        if (ctx.cvolStep >= 0){
-          // 1 fatia/frame: 2 fatias custavam ~2.9ms de busy p95 no mid
-          // (A/B da rodada; orçamento CPU ≤1ms/frame). O ciclo vira
-          // ~64 frames + folga de 0.9s — cadência de sobra para a
-          // deriva das cargas (~150s) e para o lapse (ciclo em ~45s)
-          bakeCvolSlice(ctx.cvolStep);
-          ctx.cvolStep += 1;
-          if (ctx.cvolStep >= CVOL_N){
-            ctx.cvolStep = -1; ctx.cvolCycles++;
-            cvolData.set(cvolStage);        // upload atômico: sem tearing
-            cvolTex.needsUpdate = true;
-            ctx.diagEvent('cvol-upload', ctx.cvolCycles);
-          }
-        }
       }
+      // scheduler em rawDelta: a cadência do bake independe do
+      // TIME_SCALE (?speed) — 64/30 + 0.9 ≈ 3.03s início-a-início
+      cvolFrame(cvolOn, rawDelta, held);
     }
 
     // inércia: continua girando ao soltar, com amortecimento exponencial

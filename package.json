@@ -9,7 +9,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "vite",
     "build": "vite build",
-    "build:single": "SINGLEFILE=1 vite build",
+    "build:single": "vite build --mode single",
     "preview": "vite preview",
     "qa:controls": "node tools/qa-controls.js dist-single/index.html",
     "qa:parity": "node tools/parity.js qa-out --file dist-single/index.html && node tools/imgdiff.js qa/baselines qa-out --max-frac 0.001",

@@ -191,6 +191,12 @@ function ringStats(file, r0, r1){
   async function waitFrame(page, f){
     await page.waitForFunction((n) => window.__solInfo.frame > n, f, { timeout: 420000 });
   }
+  // PR2: rebakeCorona é ASSÍNCRONO (agenda ciclo forçado que anda sob
+  // ?hold com passo sintético) — o evaluate retorna targetCycle e o QA
+  // espera coronaInfo().cycles alcançá-lo antes de capturar
+  async function waitCycle(page, target){
+    await page.waitForFunction((t) => window.__solInfo.coronaInfo().cycles >= t, target, { timeout: 420000 });
+  }
 
   // ======================= GRUPO S (B1: manchas) =======================
   if (GROUPS.includes('S')){
@@ -346,16 +352,17 @@ function ringStats(file, r0, r1){
         window.__solInfo.setCyclePhase(p, true);
       }, phase);
       await waitFrame(page, 93);
-      await page.evaluate(() => {
+      const tc = await page.evaluate(() => {
         // FASE 6 B4: os defaults shipped agora são plume/cusp 0.6 — os
         // checks P medem o efeito A/B a partir de pesos ZERADOS (a
         // mesma régua da calibração B2, que fixou os limiares CAL);
         // zerar ANTES do rebake pós-freeze para o bake já sair sem cusp
         window.__solInfo.setCvolShape({ plume: 0, cusp: 0 });
-        window.__solInfo.rebakeCorona();
         const st = window.__solInfo.state();
         window.__solInfo.setView(0.8, Math.PI*0.5, st.fitDist*1.5);
+        return window.__solInfo.rebakeCorona().targetCycle;
       });
+      await waitCycle(page, tc);
       await frames(page, 2);
       return page;
     }
@@ -385,15 +392,17 @@ function ringStats(file, r0, r1){
       // P4: pesos novos a 0 devolvem o look atual (A/B na MESMA página;
       // cusp mexe no BAKE => rebake nos dois sentidos; régua <=200px =
       // histerese de ~1 LSB do SwiftShader das fases 3-5)
-      await page.evaluate(() => {
+      const tcHi = await page.evaluate(() => {
         window.__solInfo.setCvolShape({ plume: 0.9, cusp: 0.6 });
-        window.__solInfo.rebakeCorona();
+        return window.__solInfo.rebakeCorona().targetCycle;
       });
+      await waitCycle(page, tcHi);
       await frames(page, 2);
-      await page.evaluate(() => {
+      const tcBack = await page.evaluate(() => {
         window.__solInfo.setCvolShape({ plume: 0, cusp: 0 });
-        window.__solInfo.rebakeCorona();
+        return window.__solInfo.rebakeCorona().targetCycle;
       });
+      await waitCycle(page, tcBack);
       await frames(page, 2);
       const shotBack = path.join(outDir, 'p-pesos0-volta.png');
       await page.screenshot({ path: shotBack });
@@ -421,10 +430,11 @@ function ringStats(file, r0, r1){
         return { lo: (eLo.w + wLo.w)/2, hi: (eHi.w + wHi.w)/2 };
       }
       const w0 = await sheetWidths('cusp0');
-      await page.evaluate(() => {
+      const tc9 = await page.evaluate(() => {
         window.__solInfo.setCvolShape({ cusp: 0.9 });
-        window.__solInfo.rebakeCorona();
+        return window.__solInfo.rebakeCorona().targetCycle;
       });
+      await waitCycle(page, tc9);
       await frames(page, 2);
       const w9 = await sheetWidths('cusp09');
       const taper0 = w0.hi/Math.max(1e-3, w0.lo);
@@ -445,12 +455,13 @@ function ringStats(file, r0, r1){
         await p.evaluate(() => window.__solInfo.setCyclePhase(0.02, true));
         await waitFrame(p, 93);
         // shape+rebake PÓS-freeze (mata o ciclo fatiado em voo — ver openMin)
-        await p.evaluate(() => {
+        const tc = await p.evaluate(() => {
           window.__solInfo.setCvolShape({ plume: 0.9, cusp: 0.6 });
-          window.__solInfo.rebakeCorona();
           const st = window.__solInfo.state();
           window.__solInfo.setView(0.8, Math.PI*0.5, st.fitDist*1.5);
+          return window.__solInfo.rebakeCorona().targetCycle;
         });
+        await waitCycle(p, tc);
         await frames(p, 2);
         const f = path.join(outDir, name);
         await p.screenshot({ path: f });
@@ -474,19 +485,21 @@ function ringStats(file, r0, r1){
       // (mata o ciclo fatiado em voo — ver openMin)
       await page.evaluate(() => window.__solInfo.setCyclePhase(0.5, true));
       await waitFrame(page, 153);
-      await page.evaluate(() => {
+      const tcMax = await page.evaluate(() => {
         const st = window.__solInfo.state();
         window.__solInfo.setView(0.8, Math.PI*0.5, st.fitDist*1.6);
         window.__solInfo.setCvolShape({ plume: 1.2, cusp: 0.9, sheet: 1.15, base: 0.20 });
-        window.__solInfo.rebakeCorona();
+        return window.__solInfo.rebakeCorona().targetCycle;
       });
+      await waitCycle(page, tcMax);
       await frames(page, 4);
       const shotMax = path.join(outDir, 'p6-cycle-max.png');
       await page.screenshot({ path: shotMax });
-      await page.evaluate(() => {
+      const tcMin = await page.evaluate(() => {
         window.__solInfo.setCyclePhase(0.02, true);
-        window.__solInfo.rebakeCorona();
+        return window.__solInfo.rebakeCorona().targetCycle;
       });
+      await waitCycle(page, tcMin);
       await frames(page, 4);
       const shotMin = path.join(outDir, 'p6-cycle-min.png');
       await page.screenshot({ path: shotMin });

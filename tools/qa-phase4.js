@@ -74,11 +74,22 @@ function ringStats(file, r0, r1){
     page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
     await page.goto(base + '?det=1&seed=7&hold=48&tier=high&scale=1' + (q ? '&' + q : ''));
     await page.waitForFunction(() => window.__solInfo && window.__solInfo.frame > 51, null, { timeout: 420000 });
+    // PR2: o bake da coroa volumétrica é ASSÍNCRONO (30 fatias/s; sob
+    // ?hold um bake em voo anda com passo sintético 1/60) — com cvol na
+    // URL, espera a 1ª publicação antes de capturar/asserir (antes o
+    // bake de carga era síncrono e ready já nascia true)
+    if (q && q.indexOf('cvol') > -1)
+      await page.waitForFunction(() => window.__solInfo.coronaInfo().cycles >= 1, null, { timeout: 420000 });
     return page;
   }
   async function frames(page, n){
     const f0 = await page.evaluate(() => window.__solInfo.frame);
     await page.waitForFunction((f) => window.__solInfo.frame > f, f0 + n, { timeout: 420000 });
+  }
+  // PR2: agenda o rebake assíncrono e espera a publicação do ciclo-alvo
+  // (contrato novo: rebakeCorona() -> {scheduled, targetCycle})
+  async function waitCycle(page, target){
+    await page.waitForFunction((t) => window.__solInfo.coronaInfo().cycles >= t, target, { timeout: 420000 });
   }
 
   // --- F: núcleo (knob, tier-gate, bake) --------------------------------
@@ -192,6 +203,9 @@ function ringStats(file, r0, r1){
       cim.steps === 22 && cim.on === true, JSON.stringify(cim));
     // A/B de custo (informativo no SwiftShader — a régua real é o
     // auto-tune no aparelho: p95>42ms na menor escala derruba o volume)
+    // PR2: espera a 1ª publicação — a medição "on" precisa do volume
+    // DESENHANDO (antes o bake síncrono de carga garantia isso)
+    await pm.waitForFunction(() => window.__solInfo.coronaInfo().cycles >= 1, null, { timeout: 420000 });
     await pm.evaluate(() => window.__solInfo.perfReset());
     await new Promise((r) => setTimeout(r, 2500));
     const perfOn = await pm.evaluate(() => window.__solInfo.perf());
@@ -233,14 +247,23 @@ function ringStats(file, r0, r1){
       const st = window.__solInfo.state();
       window.__solInfo.setView(0.8, Math.PI*0.5, st.fitDist*1.6);
     });
-    // salta ANTES do frame de congelamento e re-baka o volume (sob hold
-    // o bake fatiado congela — padrão da doc F3 + hook rebakeCorona)
-    await page.evaluate(() => { window.__solInfo.setCyclePhase(0.5, true); window.__solInfo.rebakeCorona(); });
+    // salta a fase e re-baka o volume (PR2: rebake assíncrono e FORÇADO
+    // — anda mesmo sob hold, com passo sintético; espera o ciclo-alvo
+    // publicar antes de capturar)
+    const tcMax = await page.evaluate(() => {
+      window.__solInfo.setCyclePhase(0.5, true);
+      return window.__solInfo.rebakeCorona().targetCycle;
+    });
+    await waitCycle(page, tcMax);
     await frames(page, 4);
     const shotMax = path.join(outDir, 'cycle-max.png');
     await page.screenshot({ path: shotMax });
     const infoMax = await page.evaluate(() => ({ c: window.__solInfo.cycleInfo(), k: window.__solInfo.coronaInfo() }));
-    await page.evaluate(() => { window.__solInfo.setCyclePhase(0.02, true); window.__solInfo.rebakeCorona(); });
+    const tcMin = await page.evaluate(() => {
+      window.__solInfo.setCyclePhase(0.02, true);
+      return window.__solInfo.rebakeCorona().targetCycle;
+    });
+    await waitCycle(page, tcMin);
     await frames(page, 4);
     const shotMin = path.join(outDir, 'cycle-min.png');
     await page.screenshot({ path: shotMin });

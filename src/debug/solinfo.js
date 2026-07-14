@@ -91,6 +91,13 @@ export function createSolInfo(ctx){
       window.__solInfo.perfReset = function(){
         ctx.perfN = 0; ctx.perfIdx = 0; ctx.perfLastT = 0; perfBakes.length = 0;
       };
+      // PR0 — ?profile=1: janela deslizante do timer de GPU (debug/
+      // gpuprofile.js). Sem a query o módulo nem inicializa: o hook
+      // responde supported:false sem criar query alguma.
+      window.__solInfo.gpuPerf = function(){
+        return ctx.gpuPerf ? ctx.gpuPerf()
+          : { supported: false, samples: 0, avgMs: 0, p95Ms: 0, worstMs: 0 };
+      };
       // FASE 4: estado da coroa volumétrica (QA: tier-gate, bake, kill)
       // FASE 6 B2: expõe também os pesos novos (plume uniform / cusp bake)
       window.__solInfo.coronaInfo = function(){

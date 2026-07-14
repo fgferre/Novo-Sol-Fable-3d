@@ -126,7 +126,7 @@ X17 de 2003-10-28 em H-alfa (`File:28102003 halpha.jpg`, Wikimedia
 Commons — A foto canônica de two-ribbon no disco), loops SDO/AIA 171
 no limbo (`File:Bright Arcing Loops`, Commons) e a ref-08 do repo
 (AIA 131, flares no limbo). Capturas de comparação reproduzíveis via
-`tools/shot-flare-views.js` (flare no limbo + close das fitas em det).
+`qa:phase1` (asserts + capturas em det; limbo/close via `__solInfo`).
 
 - **Bate**: duas fitas alongadas saturando a ~branco com canal escuro
   entre elas, junto às manchas do par; bordas em strands; arcada em

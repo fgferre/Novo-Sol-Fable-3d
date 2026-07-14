@@ -123,4 +123,5 @@ monolito oscila (1.050→1.048) com faixas sobrepostas às do modular
 - `tuneLic` segue no main (2 consumidores, chromo+sun) exposto via
   `ctx.tuneLic`; candidato a `glsl/common.js` com assinatura pura.
 - Nomes/idioma dos identificadores intactos (verbatim): rename é outro PR.
-- `sol-3d.html` da raiz permanece LEGADO congelado (não tocado).
+- Monólito legado `sol-3d.html` removido da árvore (histórico no git);
+  fonte canônica = `src/` + `dist-single/`.

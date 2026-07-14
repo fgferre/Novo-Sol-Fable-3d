@@ -2,7 +2,7 @@
 // Usa o modo ?det=1 (RNG semeado + dt fixo) com ?hold=F (tempo congela no
 // frame F), então duas execuções — ou duas versões do código que preservem
 // o comportamento — produzem imagens pixel-idênticas no SwiftShader.
-// Uso: node tools/parity.js <outDir> [--file sol-3d.html|--url http://...] [--seed 7] [--hold 300] [--query extra=1]
+// Uso: node tools/parity.js <outDir> [--file dist-single/index.html|--url http://...] [--seed 7] [--hold 300] [--query extra=1]
 // Compare os diretórios com: node tools/imgdiff.js <dirA> <dirB>
 const path = require('path');
 const fs = require('fs');
@@ -14,7 +14,7 @@ function argOf(flag, dflt) {
 }
 const outDir = process.argv[2] || 'shots-parity';
 const urlArg = argOf('--url', null);
-const htmlFile = argOf('--file', 'sol-3d.html');
+const htmlFile = argOf('--file', 'dist-single/index.html');
 const seed = argOf('--seed', '7');
 // SwiftShader roda a ~1 fps neste conteúdo: 48 frames de assentamento
 // (0.8s simulados) já superam o procedimento antigo (5s reais ≈ 8 frames)

@@ -2,8 +2,7 @@
 // - base './' => o build funciona no GitHub Pages (subcaminho) e abre direto
 //   do disco quando empacotado em arquivo único.
 // - `npm run build:single` (SINGLEFILE=1) embute JS/CSS num único index.html
-//   auto-contido — preserva o modo offline/file:// (uso no iPhone) que o
-//   sol-3d.html original oferecia.
+//   auto-contido — modo offline/file:// (uso no iPhone).
 import { defineConfig } from 'vite';
 import { viteSingleFile } from 'vite-plugin-singlefile';
 

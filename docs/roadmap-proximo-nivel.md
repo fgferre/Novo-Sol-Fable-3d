@@ -160,39 +160,19 @@ ref-13 (LASCO C2 flux-rope) e ref-14 (proeminência eruptiva STEREO).
 
 ## Pós-roadmap (2026-07, decidido com o dono após a Fase 5)
 
-Com as 5 fases entregues, o plano seguinte ataca os débitos acumulados
-em **3 blocos sequenciais, 1 PR cada** (ordem decidida pelo dono:
-infra → física → movimento). Cada bloco tem prompt de kick-off
-autossuficiente na raiz do repo:
+Com as 5 fases entregues, o plano seguinte atacou débitos em **3 blocos
+sequenciais, 1 PR cada** (infra → física → movimento). Prompts de
+kick-off históricos saíram da árvore (git); o registo vivo está em
+`docs/`:
 
-1. **`PROMPT-INFRA-MODULAR.md`** — modularização completa do
-   `src/main.js` (~5.880 linhas → ~20 módulos por domínio + orquestrador
-   de ~700), padrão factory+ctx, 14 estágios com gate de paridade
-   BIT-EXATA por commit (A/B worktree `--max-frac 0`), ordem de consumo
-   do srand preservada por construção. O "loop de infra" prometido na
-   Fase 0. **✅ ENTREGUE** — 22 módulos + `main.js` residual de 661
-   linhas, 0px em 5/5 em todos os estágios, suítes de fase idênticas ao
-   pré-refactor; registro em `docs/infra-modularizacao.md`.
-2. **`PROMPT-FASE-6.md`** — acabamento físico: manchas de verdade
-   (multiplicidade no máximo + proporção GONG, knob `spots` via manchas
-   VIRTUAIS num uniform array só do shader do disco — zero custo no
-   bake), plumas polares + cúspide no raymarch da coroa, estrias
-   helicoidais do rope + contraste de cavidade no CME. **✅ ENTREGUE** —
-   knob `spots` (default 0 bit-exato; preset sunshine 1.0, mediana do
-   re-painel pós-correção da lei de crescimento), defaults do cvol
-   plume 0.6/cusp 0.6/folha v2 (painel unânime) e do CME stria 0.8/
-   cav 0.85 (calibração medida ≥2×; sem painel — exceção registrada);
-   `qa:phase6` novo (27 checks S/P/C); registro em
-   `docs/fase-6-acabamento-fisico.md`.
-3. **`PROMPT-RODADA-MOVIMENTO.md`** — harness de julgamento TEMPORAL
-   (`qa:motion2`): sequências determinísticas de frames, índice de
-   flicker/estroboscopia por região, tiras de filme julgáveis pelo
-   painel — fecha o ponto cego de "julgamos tudo em stills" (flags F4
-   e F5). **✅ ENTREGUE** — harness + baseline temporal (determinismo
-   48/48 pares 0px); F4 julgada baixa, F5/F6 + pop do lapse corrigidos
-   (knob-gated, A/B default 0px 5/5), limiares recalibrados
-   pós-correções; débito documentado (estrelas sob pan); registro em
-   `docs/rodada-movimento.md`.
+1. **Infra modular** — modularização completa do monólito → ~20 módulos
+   por domínio + orquestrador. **✅ ENTREGUE** — registro em
+   `docs/infra-modularizacao.md`.
+2. **Fase 6 (acabamento físico)** — manchas (`spots`), plumas/cúspide
+   no cvol, estrias/cavidade no CME. **✅ ENTREGUE** — registro em
+   `docs/fase-6-acabamento-fisico.md`; gate `qa:phase6`.
+3. **Rodada de movimento** — harness temporal `qa:motion2`.
+   **✅ ENTREGUE** — registro em `docs/rodada-movimento.md`.
 
 ## Não-objetivos (decididos)
 MHD de primeiros princípios; interação com magnetosfera terrestre (não há
@@ -204,7 +184,8 @@ antes do iOS 26+ ser piso; dependências de física/pós-processamento.
   frame F → screenshots reprodutíveis pixel a pixel no SwiftShader.
 - `tools/parity.js` captura o conjunto padrão (desktop fit + 3
   ângulos/zooms + portrait); `tools/imgdiff.js` compara diretórios.
-- Baselines commitados em `qa/baselines/` (gerados do sol-3d.html
-  PRÉ-migração — o critério de paridade da Fase 0).
+- Baselines commitados em `qa/baselines/` (critério de paridade da Fase 0;
+  origem histórica = monólito pré-migração).
 - CI (`.github/workflows/qa.yml`): build + qa-controls + paridade em todo
-  push/PR; Pages publica o build Vite + `sol-3d.html` single-file.
+  push/PR; Pages publica o build Vite e o single-file (também como
+  `sol-3d.html` no site — nome de download, não fonte).

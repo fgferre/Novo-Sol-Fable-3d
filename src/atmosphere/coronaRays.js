@@ -48,9 +48,8 @@ export function createCoronaRays(ctx){
   var CORONA_SIZE = SUN_RADIUS*7.0;
   // T1.3: halo 0.55 = variante c2 do sweep, a melhor leitura de DP
   // (transição disco->céu suave, decaimento monotônico, sem anel); os
-  // gates A/D agora capturam com a coroa isolada (qa-elements), então o
-  // halo pleno não os contamina. cray 0.90 é o mínimo que torna os
-  // streamers legíveis; cact 0.50 faz a coroa respirar com o ciclo.
+  // halo pleno calibrado (histórico: gates A/D com coroa isolada).
+  // cray 0.90 = streamers legíveis; cact 0.50 = coroa respira com o ciclo.
   var coronaRaysUniforms = {
     uTime: { value: 0 },
     uRight: { value: new THREE.Vector3(1,0,0) },

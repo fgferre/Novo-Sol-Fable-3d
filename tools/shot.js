@@ -1,4 +1,4 @@
-// Harness de screenshots para sol-3d.html (Chromium headless via Playwright).
+// Harness de screenshots (Chromium headless via Playwright).
 // Uso: node tools/shot.js [outDir] [--file caminho.html]
 // Gera: desktop.png (1280x800), portrait.png (390x844), zoom.png (close-up).
 const path = require('path');
@@ -8,7 +8,7 @@ const { chromium } = require('playwright');
 
 const outDir = process.argv[2] || 'shots';
 const fileArgIdx = process.argv.indexOf('--file');
-const htmlFile = fileArgIdx > -1 ? process.argv[fileArgIdx + 1] : 'sol-3d.html';
+const htmlFile = fileArgIdx > -1 ? process.argv[fileArgIdx + 1] : 'dist-single/index.html';
 const url = 'file://' + path.resolve(htmlFile);
 
 (async () => {

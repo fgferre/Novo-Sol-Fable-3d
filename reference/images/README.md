@@ -1,6 +1,6 @@
 # Referências de imagem
 
-Imagens de referência visual para a evolução da simulação 3D do Sol (`reference/sol3d.html`). As imagens `ref-01` a `ref-05` são astrofotografias solares na linha H-alpha (cromosfera), que mostram o nível de detalhe e as estruturas que queremos aproximar no render.
+Imagens de referência visual para a evolução da simulação 3D do Sol. As imagens `ref-01` a `ref-05` são astrofotografias solares na linha H-alpha (cromosfera), que mostram o nível de detalhe e as estruturas que queremos aproximar no render.
 
 | Arquivo | Descrição |
 | --- | --- |

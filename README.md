@@ -16,9 +16,8 @@ npm run build:single   # arquivo único offline em dist-single/index.html
 ```
 
 O build de arquivo único abre direto do disco (`file://`) — é o modo de
-uso no iPhone sem servidor. `sol-3d.html` na raiz é a versão legada
-congelada (pré-migração), mantida como referência e geradora dos
-baselines de paridade.
+uso no iPhone sem servidor. O Pages publica esse artefato também como
+`sol-3d.html` (só o nome do download; a fonte é `dist-single/`).
 
 ## Parâmetros de URL
 
@@ -55,7 +54,6 @@ em localStorage).
 ```bash
 npm run qa:controls    # controles (teclado/drag/zoom) via __solInfo
 npm run qa:parity      # paridade visual determinística vs qa/baselines
-npm run qa:motion      # evolução temporal (com tools/motion-check.py)
 npm run qa:shot        # screenshots desktop/portrait/zoom
 npm run qa:phase1      # Fase 1: loops, flare two-ribbon, starburst/íris
 npm run qa:phase3      # Fase 3: ciclo de 11 anos + filamento↔proeminência

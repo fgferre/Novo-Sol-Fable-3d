@@ -84,6 +84,16 @@ export function createCoronaRays(ctx){
       '  vec2 c = vUv - 0.5;',
       '  float r = length(c)*2.0;',                 // 0 centro -> 1 borda do plano
       '  float diskR = 2.0/7.0;',                   // raio do disco solar neste plano
+      // PR1 (auditoria, achado 2) — early-out radial: fora do domínio
+      // (interior do disco r<=diskR*0.92, exterior r>=0.85) as máscaras
+      // de fall zeram e a saída atual é EXATAMENTE vec4(0,0,0,1) — o
+      // retorno antecipado a reproduz bit a bit, poupando atan, os três
+      // fbmLight e o loop de 10 cargas em ~metade do quadrado projetado.
+      // Sem discard: alpha/blending aditivo preservados como estão.
+      '  if (r <= diskR*0.92 || r >= 0.85){',
+      '    gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);',
+      '    return;',
+      '  }',
       '  float ang = atan(c.y, c.x);',
       // T1.3: a raia vive no REFERENCIAL DO SOL. Direção 3D do ponto do
       // plano do céu (base da câmera) girada para o espaço do objeto: as

@@ -1,0 +1,100 @@
+{
+  "meta": {
+    "calibratedAt": "2026-07-13T21:51:29.337Z",
+    "from": "out/motion2/metrics.json",
+    "margin": 1.25
+  },
+  "scenarios": {
+    "fit-idle": {
+      "flickerP95Max": {
+        "disco": 0.13199,
+        "limbo": 0.22399,
+        "coroa": 0.46286,
+        "ceu": 0.42586
+      },
+      "stroboFracMax": {
+        "disco": 0.00397,
+        "limbo": 0.007709,
+        "coroa": 0.006686,
+        "ceu": 0.00437
+      }
+    },
+    "close-dof0": {
+      "flickerP95Max": {
+        "disco": 0.2659,
+        "limbo": 0.17816
+      },
+      "stroboFracMax": {
+        "disco": 0.258124,
+        "limbo": 0.065284
+      }
+    },
+    "close-dof": {
+      "flickerP95Max": {
+        "disco": 0.26585,
+        "limbo": 0.13441
+      },
+      "stroboFracMax": {
+        "disco": 0.251861,
+        "limbo": 0.010854
+      }
+    },
+    "flare-cme-limbo": {
+      "flickerP95Max": {
+        "disco": 0.16637,
+        "limbo": 0.32224,
+        "coroa": 0.76923,
+        "ceu": 1.38999
+      },
+      "stroboFracMax": {
+        "disco": 0.082093,
+        "limbo": 0.052281,
+        "coroa": 0.009333,
+        "ceu": 0.006246
+      },
+      "coherenceExplMin": 0.2493
+    },
+    "lapse-ciclo": {
+      "flickerP95Max": {
+        "disco": 0.12846,
+        "limbo": 0.27948,
+        "coroa": 0.4756,
+        "ceu": 0.42714
+      },
+      "stroboFracMax": {
+        "disco": 0.003926,
+        "limbo": 0.015884,
+        "coroa": 0.006685,
+        "ceu": 0.00437
+      }
+    },
+    "cvol-wide": {
+      "flickerP95Max": {
+        "disco": 0.13146,
+        "limbo": 0.23672,
+        "coroa": 0.58359,
+        "ceu": 0.62421
+      },
+      "stroboFracMax": {
+        "disco": 0.004877,
+        "limbo": 0.009516,
+        "coroa": 0.005969,
+        "ceu": 0.006724
+      }
+    },
+    "cvol0-wide": {
+      "flickerP95Max": {
+        "disco": 0.13146,
+        "limbo": 0.23609,
+        "coroa": 0.60873,
+        "ceu": 0.63312
+      },
+      "stroboFracMax": {
+        "disco": 0.004877,
+        "limbo": 0.009181,
+        "coroa": 0.00597,
+        "ceu": 0.006725
+      }
+    }
+  }
+}

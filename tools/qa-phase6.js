@@ -622,18 +622,32 @@ function ringStats(file, r0, r1){
       }
       return n ? Math.sqrt(rms/n) : 0;
     }
-    // evento AO VIVO congelado no hold: forceCME ~frame 9-10 e o
+    // evento AO VIVO congelado no hold: forceCME no frame 10 EXATO e o
     // relógio corre até o freeze — SEM setCmeClock (as partículas do
     // ejecta INTEGRAM por transform feedback; saltar o relógio deixa a
-    // nuvem na base enquanto a casca cruza a coroa — receita da F5/C)
+    // nuvem na base enquanto a casca cruza a coroa — receita da F5/C).
+    // O disparo é rAF-SINCRONIZADO dentro da página: o evaluate antigo
+    // ("waitForFunction frame>8; forceCME") corria contra o rAF e caía
+    // ora depois do frame 9, ora do 10 (medido: 1ª página do browser
+    // sempre 10, 2ª sempre 9) — a duração do evento no freeze diferia
+    // 1/60 s e o C4 media essa corrida, não a sim (cx 1.189 vs 1.191;
+    // ficava SUB-limiar no pixelmatch até o fade-in/size do Bloco C
+    // engordar os sprites). Frame 10 = o valor histórico das
+    // calibrações (t=(hold-10)/60: holdDet→1.967, holdMain→4.967).
     async function openCmeLive(hold, q){
       const page = await browser.newPage({ viewport: { width: 960, height: 600 }, deviceScaleFactor: 1 });
       page.setDefaultTimeout(900000);
       page.on('pageerror', (e) => errs.push('pageerror: ' + e.message));
       page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
       await page.goto(base + '?det=1&seed=7&hold=' + hold + '&tier=high&scale=1&cme=1.1' + (q ? '&' + q : ''));
-      await page.waitForFunction(() => window.__solInfo && window.__solInfo.frame > 8, null, { timeout: 900000 });
-      await page.evaluate(() => window.__solInfo.forceCME(0));
+      await page.waitForFunction(() => window.__solInfo && window.__solInfo.frame > 0, null, { timeout: 900000 });
+      const fAt = await page.evaluate(() => new Promise((res) => {
+        (function tick(){
+          if (window.__solInfo.frame >= 10){ window.__solInfo.forceCME(0); res(window.__solInfo.frame); }
+          else requestAnimationFrame(tick);
+        })();
+      }));
+      if (fAt !== 10) errs.push('openCmeLive: forceCME caiu no frame ' + fAt + ' (esperado 10)');
       await page.waitForFunction((f) => window.__solInfo.frame > f, hold + 3, { timeout: 900000 });
       return page;
     }

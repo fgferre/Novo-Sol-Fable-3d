@@ -188,7 +188,11 @@ autossuficiente na raiz do repo:
    (`qa:motion2`): sequências determinísticas de frames, índice de
    flicker/estroboscopia por região, tiras de filme julgáveis pelo
    painel — fecha o ponto cego de "julgamos tudo em stills" (flags F4
-   e F5).
+   e F5). **✅ ENTREGUE** — harness + baseline temporal (determinismo
+   48/48 pares 0px); F4 julgada baixa, F5/F6 + pop do lapse corrigidos
+   (knob-gated, A/B default 0px 5/5), limiares recalibrados
+   pós-correções; débito documentado (estrelas sob pan); registro em
+   `docs/rodada-movimento.md`.
 
 ## Não-objetivos (decididos)
 MHD de primeiros princípios; interação com magnetosfera terrestre (não há

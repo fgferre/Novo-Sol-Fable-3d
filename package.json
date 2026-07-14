@@ -20,7 +20,8 @@
     "qa:phase3": "node tools/qa-phase3.js out/phase3 --file dist-single/index.html",
     "qa:phase4": "node tools/qa-phase4.js out/phase4 --file dist-single/index.html",
     "qa:phase5": "node tools/qa-phase5.js out/phase5 --file dist-single/index.html",
-    "qa:phase6": "node tools/qa-phase6.js out/phase6 --file dist-single/index.html"
+    "qa:phase6": "node tools/qa-phase6.js out/phase6 --file dist-single/index.html",
+    "qa:motion2": "node tools/qa-motion2.js out/motion2 --file dist-single/index.html"
   },
   "repository": {
     "type": "git",

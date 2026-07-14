@@ -258,12 +258,20 @@ export function createCoronaVolume(ctx){
         '      if (hg > 0.001){',
         // fios: 2 oitavas angulares ESTÁTICAS no referencial do objeto
         // (giram com o Sol; sem uTime — nada de cintilação nova, flags
-        // temporais são do Bloco C). Freq máx 18 ~ 2.5x o f2 das raias
-        // (7.3): sem estroboscópio novo em rotação. O limiar sobe com a
-        // altura => os fios AFINAM ao longo do comprimento
+        // temporais são do Bloco C). O limiar sobe com a altura => os
+        // fios AFINAM ao longo do comprimento.
+        // BLOCO C (rodada de movimento, flag F6 confirmada): fios com
+        // FWHM 1.6-2.6px estroboscopavam sob rotação+pan (delta-p99
+        // polar +0.194 vs controle). Piso engrossado por A/B de flicker
+        // no qa-motion2: oitava alta 18->14 (fio ~1.3x mais largo) +
+        // topo do smoothstep 0.46->0.54 (a PONTA sub-pixel amolece;
+        // alargar por baixo só ADICIONAVA fios fracos e piorava o
+        // flicker). Medido: FWHM mediana 2.45->3.82px em 960x600,
+        // delta-p99 polar 0.194->0.084. Confinamento aos buracos (hg)
+        // e P-checks do qa:phase6 intactos (P1 +0.364/866px verdes).
         '        float p1 = fbmLight(dirO*9.0 + vec3(7.7, 1.3, 0.0));',
-        '        float p2 = fbmLight(dirO*18.0 + vec3(3.1, 12.9, 0.0));',
-        '        float strand = smoothstep(0.12 + 0.20*(rp - 1.0), 0.46, p1*0.55 + p2*0.65);',
+        '        float p2 = fbmLight(dirO*14.0 + vec3(3.1, 12.9, 0.0));',
+        '        float strand = smoothstep(0.12 + 0.20*(rp - 1.0), 0.54, p1*0.55 + p2*0.65);',
         // ganho calibrado na rodada: plume=0.9 soma ~+8-14% no setor do
         // cap polar do mínimo (medido) — visível e ainda "bem mais
         // fraco que os streamers equatoriais" (ref-09)

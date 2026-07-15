@@ -5,8 +5,7 @@
 export function createPerf(ctx){
   var renderer = ctx.renderer, urlQ = ctx.urlQ, coarsePointer = ctx.coarsePointer,
       isSoftwareGL = ctx.isSoftwareGL, TIER = ctx.TIER,
-      resizeTargets = ctx.resizeTargets, CME_STEPS = ctx.CME_STEPS,
-      CVOL_STEPS = ctx.CVOL_STEPS;
+      CME_STEPS = ctx.CME_STEPS, CVOL_STEPS = ctx.CVOL_STEPS;
   // ---------------------------------------------------------------
   // Instrumentação de performance: ring de ~4s de intervalos frame-a-
   // frame e de custo CPU do corpo do animate; draw calls acumulados
@@ -53,16 +52,17 @@ export function createPerf(ctx){
   // fôlego por 30s no teto abre num maior.
   // ---------------------------------------------------------------
   var SCALE_STEPS = [1.0, 0.85, 0.7];
-  var baseDpr = ctx.pixelRatio;
   ctx.scaleIdx = 0; var tuneWin = [], tuneGoodT = 0, tuneCooldown = 0; ctx.tuneEvents = 0;
   var autoTuneOn = (urlQ.tune === '1') ||
                    (!urlQ.tier && !(parseFloat(urlQ.scale) > 0) && !isSoftwareGL);
   function applyRenderScale(i){
     ctx.scaleIdx = Math.max(0, Math.min(SCALE_STEPS.length-1, i));
-    ctx.pixelRatio = baseDpr * SCALE_STEPS[ctx.scaleIdx];
-    renderer.setPixelRatio(ctx.pixelRatio);
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    resizeTargets();
+    // Achado 9: reaplica sobre a BASE ATUAL (não a do boot) pelo caminho
+    // transacional — recomputa baseDpr da DPR viva e o DPR efetivo com o novo
+    // scaleIdx. Muda só as dims FÍSICAS: não reposiciona a câmera (só resize de
+    // CSS/aspecto o faz) e não realoca se as dims resultarem idênticas.
+    ctx.requestDisplayResize();
+    ctx.applyPendingDisplayMetrics();
     ctx.tuneEvents++;
     ctx.diagEvent('autotune-scale', SCALE_STEPS[ctx.scaleIdx]);
   }

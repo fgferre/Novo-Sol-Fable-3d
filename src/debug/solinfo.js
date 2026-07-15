@@ -91,6 +91,19 @@ export function createSolInfo(ctx){
       window.__solInfo.perfReset = function(){
         ctx.perfN = 0; ctx.perfIdx = 0; ctx.perfLastT = 0; perfBakes.length = 0;
       };
+      // Achado 9 — QA do resize/DPR/auto-tune transacional. cssW/cssH = últimas
+      // dims LÓGICAS aplicadas; physW/physH = dims FÍSICAS do drawing buffer/
+      // attachments; dpr = DPR EFETIVO (baseDpr·SCALE_STEPS[scaleIdx]); baseDpr =
+      // base viva (min(DPR,dprCap)·RENDER_SCALE); dirty = há pedido pendente;
+      // applies = passes de aplicação (gate: ≤1/frame); reallocs = realocações de
+      // attachments (gate: 0 quando as dims físicas não mudam).
+      window.__solInfo.resizeInfo = function(){
+        return { cssW: ctx.dispCssW, cssH: ctx.dispCssH,
+                 dpr: ctx.pixelRatio, baseDpr: ctx.baseDpr, dprCap: ctx.dprCap,
+                 scaleIdx: ctx.scaleIdx, physW: ctx.dispPhysW, physH: ctx.dispPhysH,
+                 dirty: !!ctx.displayDirty, applies: ctx.displayApplies,
+                 reallocs: ctx.displayReallocs };
+      };
       // PR0 — ?profile=1: janela deslizante do timer de GPU (debug/
       // gpuprofile.js). Sem a query o módulo nem inicializa: o hook
       // responde supported:false sem criar query alguma.

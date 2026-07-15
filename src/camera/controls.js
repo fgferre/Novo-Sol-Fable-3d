@@ -1,6 +1,6 @@
 // camera/controls.js — órbita/zoom/teclado/toque. Corpo verbatim; o estado
 // da câmera (theta/phi/vels/camDist/targetCamDist/fitDist/lastInteraction)
-// vira ctx.* — solinfo/director/animate/onResize escrevem. Listeners DOM
+// vira ctx.* — solinfo/director/animate/applyPendingDisplayMetrics escrevem. Listeners DOM
 // são ligados NA chamada da factory (posição original do init).
 
 export function createControls(ctx){

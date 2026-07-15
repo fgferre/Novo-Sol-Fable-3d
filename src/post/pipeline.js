@@ -496,9 +496,15 @@ export function createPipeline(ctx){
   var compMaterial = new THREE.ShaderMaterial({ uniforms: compUniforms, vertexShader: quadVertex, fragmentShader: compFragment, depthTest:false, depthWrite:false });
   var compScene = makeFullscreenScene(compMaterial);
 
-  function resizeTargets(){
-    var w = Math.max(2, Math.floor(window.innerWidth*ctx.pixelRatio));
-    var h = Math.max(2, Math.floor(window.innerHeight*ctx.pixelRatio));
+  // Achado 9: recebe as dimensões FÍSICAS (drawing buffer) explícitas do
+  // caminho transacional. Fallback (sem args) deriva da janela × DPR efetivo,
+  // preservando o contrato legado.
+  function resizeTargets(w, h){
+    if (w === undefined || h === undefined){
+      w = Math.floor(window.innerWidth*ctx.pixelRatio);
+      h = Math.floor(window.innerHeight*ctx.pixelRatio);
+    }
+    w = Math.max(2, w); h = Math.max(2, h);
     sceneRT.setSize(w, h);
     var bw = Math.max(2, Math.floor(w/2));
     var bh = Math.max(2, Math.floor(h/2));

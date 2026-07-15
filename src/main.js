@@ -203,22 +203,106 @@ function init(){
 
   createPanel(ctx);
 
-  function onResize(){
-    camera.aspect = window.innerWidth/window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    resizeTargets();
-    var newFit = computeFitDist();
-    if (ctx.fitDist > 0){ ctx.camDist *= newFit / ctx.fitDist; ctx.targetCamDist *= newFit / ctx.fitDist; }
-    ctx.fitDist = newFit;
-    ctx.camDist = Math.max(minDist, Math.min(maxDist, ctx.camDist));
-    ctx.targetCamDist = Math.max(minDist, Math.min(maxDist, ctx.targetCamDist));
-    ctx.diagEvent('resize', window.innerWidth, window.innerHeight);
-  }
-  window.addEventListener('resize', onResize);
+  // ---------------------------------------------------------------
+  // Achado 9 — resize / DPR / auto-tune TRANSACIONAIS. Todo gatilho só marca
+  // estado (requestDisplayResize, guardando o último {cssW,cssH,dpr}); a
+  // aplicação acontece UMA vez por frame no início do animate
+  // (applyPendingDisplayMetrics). Regras:
+  //  - não realoca a cadeia de attachments quando as dims FÍSICAS não mudam;
+  //  - mudança só de DPR não reposiciona a câmera (só resize de CSS/aspecto);
+  //  - baseDpr é VIVO: recomputado da DPR corrente, não capturado no boot —
+  //    o auto-tune passa a escalar sobre a base atual.
+  // ---------------------------------------------------------------
+  var pendingCssW = window.innerWidth, pendingCssH = window.innerHeight;
+  var pendingDpr = window.devicePixelRatio || 1;
+  var lastCssW = -1, lastCssH = -1, lastPhysW = -1, lastPhysH = -1;
+  ctx.displayDirty = false;
+  ctx.displayApplies = 0;    // passes de aplicação consumidos (QA: ≤1/frame)
+  ctx.displayReallocs = 0;   // realocações de attachments (QA: 0 idempotente)
+  ctx.dispCssW = pendingCssW; ctx.dispCssH = pendingCssH;
+  ctx.dispPhysW = 0; ctx.dispPhysH = 0;
 
-  resizeTargets();
-  updateCamera();
+  function requestDisplayResize(){
+    pendingCssW = window.innerWidth;
+    pendingCssH = window.innerHeight;
+    pendingDpr = window.devicePixelRatio || 1;
+    ctx.displayDirty = true;
+  }
+  function applyPendingDisplayMetrics(){
+    if (!ctx.displayDirty) return;
+    ctx.displayDirty = false;
+    ctx.displayApplies++;
+
+    var cssW = pendingCssW, cssH = pendingCssH;
+    // baseDpr VIVO = min(DPR, cap do tier)·RENDER_SCALE; DPR efetivo aplica o
+    // degrau do auto-tune por cima
+    ctx.baseDpr = Math.min(pendingDpr, ctx.dprCap) * RENDER_SCALE;
+    var dprEff = ctx.baseDpr * SCALE_STEPS[ctx.scaleIdx];
+    ctx.pixelRatio = dprEff;
+
+    var physW = Math.max(2, Math.floor(cssW * dprEff));
+    var physH = Math.max(2, Math.floor(cssH * dprEff));
+    var cssChanged  = (cssW !== lastCssW || cssH !== lastCssH);
+    var physChanged = (physW !== lastPhysW || physH !== lastPhysH);
+
+    if (cssChanged || physChanged){
+      // dimensiona o drawing buffer (w/h lógicos + DPR de uma vez); NÃO toca no
+      // canvas.style, então fixamos o CSS do canvas explicitamente
+      renderer.setDrawingBufferSize(cssW, cssH, dprEff);
+      var cv = renderer.domElement;
+      cv.style.width = cssW + 'px';
+      cv.style.height = cssH + 'px';
+    }
+    // idempotência: só realoca sceneRT/mips/streak quando as dims FÍSICAS mudam
+    if (physChanged){
+      resizeTargets(physW, physH);
+      ctx.displayReallocs++;
+      lastPhysW = physW; lastPhysH = physH;
+    }
+    // câmera/fit só quando o CSS (aspecto/tamanho lógico) muda — mudança só de
+    // DPR mantém theta/phi/dist intactos
+    if (cssChanged){
+      camera.aspect = cssW / cssH;
+      camera.updateProjectionMatrix();
+      var newFit = computeFitDist();
+      if (ctx.fitDist > 0){ ctx.camDist *= newFit / ctx.fitDist; ctx.targetCamDist *= newFit / ctx.fitDist; }
+      ctx.fitDist = newFit;
+      ctx.camDist = Math.max(minDist, Math.min(maxDist, ctx.camDist));
+      ctx.targetCamDist = Math.max(minDist, Math.min(maxDist, ctx.targetCamDist));
+      lastCssW = cssW; lastCssH = cssH;
+      updateCamera();
+    }
+    ctx.dispCssW = cssW; ctx.dispCssH = cssH;
+    ctx.dispPhysW = physW; ctx.dispPhysH = physH;
+    ctx.diagEvent('display-apply', physW, physH);
+  }
+  ctx.requestDisplayResize = requestDisplayResize;
+  ctx.applyPendingDisplayMetrics = applyPendingDisplayMetrics;
+
+  // gatilhos: TODOS só marcam estado; nenhum aplica direto
+  window.addEventListener('resize', requestDisplayResize);
+  window.addEventListener('pageshow', requestDisplayResize);
+  document.addEventListener('visibilitychange', function(){
+    if (!document.hidden) requestDisplayResize();
+  });
+  // mudança de resolução/DPR sem evento de resize (troca de monitor 1×↔2×,
+  // zoom do navegador): matchMedia re-registrado a cada disparo, sempre com a
+  // DPR corrente
+  if (window.matchMedia){
+    (function watchDpr(){
+      var mq;
+      try { mq = window.matchMedia('(resolution: ' + (window.devicePixelRatio || 1) + 'dppx)'); }
+      catch(e){ return; }
+      var onChange = function(){ requestDisplayResize(); watchDpr(); };
+      if (mq.addEventListener) mq.addEventListener('change', onChange, { once: true });
+      else if (mq.addListener) mq.addListener(onChange);   // Safari legado
+    })();
+  }
+
+  // aplicação inicial: estabelece canvas/attachments/câmera (no-op numérico
+  // sobre o que o renderer já dimensionou no boot)
+  requestDisplayResize();
+  applyPendingDisplayMetrics();
 
   // ---------------------------------------------------------------
   // Loop de animação
@@ -268,6 +352,10 @@ function init(){
   function animate(){
     requestAnimationFrame(animate);
     var frameT0 = performance.now();
+    // Achado 9: aplica as métricas de display pendentes UMA vez, no início do
+    // frame. Resize/DPR/pageshow/retomada e o auto-tune só marcam estado; aqui
+    // consolida no máx. 1 aplicação/frame (early-return sem custo se limpo).
+    applyPendingDisplayMetrics();
     // PR0 — ?profile=1: a query de GPU envolve o frame INTEIRO (sim,
     // bakes, cena e composite); sem a query o hook é undefined
     if (gpuFrameBegin) gpuFrameBegin();

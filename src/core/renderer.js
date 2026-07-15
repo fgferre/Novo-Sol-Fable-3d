@@ -16,7 +16,14 @@ export function createRenderer(ctx){
   // gamma por conta própria — saída linear reproduz o r128 exatamente.
   renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
   renderer.toneMapping = THREE.NoToneMapping;
-  ctx.pixelRatio = Math.min(window.devicePixelRatio || 1, 2) * RENDER_SCALE;
+  // Achado 9: cap de DPR por tier (2 padrão, 3 no ultra) e BASE VIVA do
+  // auto-tune. baseDpr = min(devicePixelRatio, dprCap)·RENDER_SCALE; o DPR
+  // efetivo (ctx.pixelRatio) = baseDpr·SCALE_STEPS[scaleIdx]. São recomputados
+  // na aplicação transacional (applyPendingDisplayMetrics, main.js) sobre a
+  // DPR corrente — aqui só o boot (scaleIdx=0 ⇒ pixelRatio=baseDpr).
+  ctx.dprCap = 2;
+  ctx.baseDpr = Math.min(window.devicePixelRatio || 1, ctx.dprCap) * RENDER_SCALE;
+  ctx.pixelRatio = ctx.baseDpr;
   renderer.setPixelRatio(ctx.pixelRatio);
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setClearColor(0x000000, 1);
@@ -80,7 +87,9 @@ export function createRenderer(ctx){
   var TP = TIER_PARAMS[TIER];
   // ultra desbloqueia DPR nativo até 3 (o cap 2 protege os tiers móveis)
   if (TIER === 'ultra'){
-    ctx.pixelRatio = Math.min(window.devicePixelRatio || 1, 3) * RENDER_SCALE;
+    ctx.dprCap = 3;
+    ctx.baseDpr = Math.min(window.devicePixelRatio || 1, ctx.dprCap) * RENDER_SCALE;
+    ctx.pixelRatio = ctx.baseDpr;
     renderer.setPixelRatio(ctx.pixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
   }

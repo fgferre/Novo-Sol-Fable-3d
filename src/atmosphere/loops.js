@@ -7,8 +7,8 @@ import * as THREE from 'three';
 export function createLoops(ctx){
   var scene = ctx.scene, renderer = ctx.renderer, TP = ctx.TP,
       knob = ctx.knob, lk = ctx.lk, SUN_RADIUS = ctx.SUN_RADIUS,
-      bFieldJS = ctx.act.bFieldJS, lifeEnvelope = ctx.act.lifeEnvelope,
-      pairStates = ctx.pairStates, loopRand = ctx.loopRand,
+      lifeEnvelope = ctx.act.lifeEnvelope,
+      pairStates = ctx.pairStates, charges = ctx.charges,
       coronaRaysUniforms = ctx.coronaRaysUniforms;
   // ---------------------------------------------------------------
   // FASE 1 — LOOPS CORONAIS: linhas de campo do MESMO modelo de cargas
@@ -285,14 +285,59 @@ export function createLoops(ctx){
   var loopTraceBuf = new Float32Array((LOOP_TRACE_MAX + 1)*3);
   var loopTraceLen = new Float32Array(LOOP_TRACE_MAX + 1);
   var loopPtsBuf = new Float32Array((LOOP_SEG + 1)*3);
-  var loopFieldP = new THREE.Vector3();
   var lk1 = [0,0,0], lk2 = [0,0,0], lk3 = [0,0,0], lk4 = [0,0,0];
-  function loopFieldDir(x, y, z, side, out){
-    var B = bFieldJS(loopFieldP.set(x, y, z));
-    var m = Math.sqrt(B.x*B.x + B.y*B.y + B.z*B.z) + 1e-9;
-    out[0] = B.x/m*side; out[1] = B.y/m*side; out[2] = B.z/m*side;
+  // PR5 (achado 6) — o retraço ambiente e as arcadas viraram JOBS
+  // PERSISTENTES com orçamento por frame (por frame ≤1 sonda Euler OU
+  // ≤1 RK4 fino, nunca ambos, nunca múltiplos RK4). Para o trabalho
+  // fatiado casar BIT-A-BIT com o retraço síncrono da base, cada job
+  // congela na CRIAÇÃO um SNAPSHOT imutável das cargas/pares (Float64,
+  // precisão dupla exata) e o reusa em TODAS as sondas/traços — a moldura
+  // de campo não escorrega entre frames. O sorteio do loopRand ocorre SÓ
+  // na criação do candidato (pickLoopSeed); o RK4 reaproveita o candidato
+  // guardado, sem draw novo.
+  var CHG = charges.length, NPAIR = pairStates.length;
+  var ambSnapChg = new Float64Array(CHG*4);      // cargas do job ambiente
+  var ambSnapPair = new Float64Array(NPAIR*7);   // pares do job ambiente
+  var arcSnapChg = new Float64Array(CHG*4);      // cargas do lote de arcada
+  function snapshotChargesTo(dst){
+    for (var i = 0; i < CHG; i++){
+      var c = charges[i], o = i*4;
+      dst[o] = c.x; dst[o+1] = c.y; dst[o+2] = c.z; dst[o+3] = c.w;
+    }
   }
-  var loopStats = { traces: 0, fails: 0, ms: 0, probes: 0, probeRej: 0 };
+  function snapshotPairsTo(dst){
+    for (var i = 0; i < NPAIR; i++){
+      var ps = pairStates[i], o = i*7;
+      dst[o]   = ps.lead.x; dst[o+1] = ps.lead.y; dst[o+2] = ps.lead.z; dst[o+3] = ps.lead.w;
+      dst[o+4] = ps.foll.x; dst[o+5] = ps.foll.y; dst[o+6] = ps.foll.z;
+    }
+  }
+  // avaliação do MESMO campo de bFieldJS (mesma ordem de soma, mesma
+  // fórmula) sobre um snapshot Float64 do job — bit-idêntica ao
+  // bFieldJS(vivo) enquanto o campo está estático (o regime do golden)
+  var bfS = [0,0,0];
+  function bFieldSnap(x, y, z, chg, out){
+    var bx = 0, by = 0, bz = 0;
+    for (var i = 0; i < chg.length; i += 4){
+      var dx = x-chg[i], dy = y-chg[i+1], dz = z-chg[i+2];
+      var r2 = dx*dx + dy*dy + dz*dz + 1e-3;
+      var k = chg[i+3]/(r2*Math.sqrt(r2));
+      bx += dx*k; by += dy*k; bz += dz*k;
+    }
+    out[0] = bx; out[1] = by; out[2] = bz;
+  }
+  function loopFieldDir(x, y, z, side, out, chg){
+    bFieldSnap(x, y, z, chg, bfS);
+    var m = Math.sqrt(bfS[0]*bfS[0] + bfS[1]*bfS[1] + bfS[2]*bfS[2]) + 1e-9;
+    out[0] = bfS[0]/m*side; out[1] = bfS[1]/m*side; out[2] = bfS[2]/m*side;
+  }
+  var loopStats = { traces: 0, fails: 0, ms: 0, probes: 0, probeRej: 0, draws: 0 };
+  // wrapper puro de contagem do loopRand (QA do padrão de consumo). Não
+  // muda valor nem estado do PRNG. flares.js/setFlareFrame consomem
+  // ctx.loopRand direto (não entram nesta conta; irrelevante ao golden
+  // ambiente, capturado sem flares).
+  var _loopRandRaw = ctx.loopRand;
+  function loopRand(){ loopStats.draws++; return _loopRandRaw(); }
   // FASE 3 (débito F2 "semeador perdulário"): pré-validação da
   // TOPOLOGIA com uma sonda Euler grosseira (~11x mais barata que o
   // RK4 fino: 64 passos × 1 avaliação de campo vs 176 × 4) — a
@@ -301,14 +346,14 @@ export function createLoops(ctx){
   // apex em VALOR (±0.012/±0.15), não fração: a 1ª versão usava
   // minApex*0.88=0.911 < raio inicial 1.004 — nunca rejeitava nada
   // (medido: probes 80, probeRej 0, fails finos inalterados em 80%).
-  function probeFieldLine(sx, sy, sz, minApex, maxApex){
+  function probeFieldLine(sx, sy, sz, minApex, maxApex, chg){
     var t0 = performance.now();
     var px = sx*1.004, py = sy*1.004, pz = sz*1.004;
-    var B0 = bFieldJS(loopFieldP.set(px, py, pz));
-    var side = (B0.x*px + B0.y*py + B0.z*pz) >= 0.0 ? 1.0 : -1.0;
+    bFieldSnap(px, py, pz, chg, bfS);
+    var side = (bfS[0]*px + bfS[1]*py + bfS[2]*pz) >= 0.0 ? 1.0 : -1.0;
     var h = 0.045, apex = 0, landed = false;
     for (var st = 0; st < 88; st++){
-      loopFieldDir(px, py, pz, side, lk1);
+      loopFieldDir(px, py, pz, side, lk1, chg);
       px += lk1[0]*h; py += lk1[1]*h; pz += lk1[2]*h;
       var r = Math.sqrt(px*px + py*py + pz*pz);
       if (r > apex) apex = r;
@@ -328,20 +373,20 @@ export function createLoops(ctx){
   // aberta/rasteira demais). [minApex, maxApex] distingue loops
   // ambientes (altos) de arcadas pós-flare — compactas POR FÍSICA: o
   // laço recém-reconectado nasce baixo, logo acima das fitas.
-  function traceFieldLine(sx, sy, sz, minApex, maxApex, h){
+  function traceFieldLine(sx, sy, sz, minApex, maxApex, h, chg){
     var t0 = performance.now();
     var half = h*0.5, sixth = h/6.0;
     var px = sx*1.004, py = sy*1.004, pz = sz*1.004;
-    var B0 = bFieldJS(loopFieldP.set(px, py, pz));
-    var side = (B0.x*px + B0.y*py + B0.z*pz) >= 0.0 ? 1.0 : -1.0;
+    bFieldSnap(px, py, pz, chg, bfS);
+    var side = (bfS[0]*px + bfS[1]*py + bfS[2]*pz) >= 0.0 ? 1.0 : -1.0;
     var n = 0, apex = 0, landed = false;
     loopTraceBuf[0] = px; loopTraceBuf[1] = py; loopTraceBuf[2] = pz;
     loopTraceLen[0] = 0;
     for (var st = 0; st < LOOP_TRACE_MAX; st++){
-      loopFieldDir(px, py, pz, side, lk1);
-      loopFieldDir(px + lk1[0]*half, py + lk1[1]*half, pz + lk1[2]*half, side, lk2);
-      loopFieldDir(px + lk2[0]*half, py + lk2[1]*half, pz + lk2[2]*half, side, lk3);
-      loopFieldDir(px + lk3[0]*h,    py + lk3[1]*h,    pz + lk3[2]*h,    side, lk4);
+      loopFieldDir(px, py, pz, side, lk1, chg);
+      loopFieldDir(px + lk1[0]*half, py + lk1[1]*half, pz + lk1[2]*half, side, lk2, chg);
+      loopFieldDir(px + lk2[0]*half, py + lk2[1]*half, pz + lk2[2]*half, side, lk3, chg);
+      loopFieldDir(px + lk3[0]*h,    py + lk3[1]*h,    pz + lk3[2]*h,    side, lk4, chg);
       px += (lk1[0] + 2.0*(lk2[0] + lk3[0]) + lk4[0]) * sixth;
       py += (lk1[1] + 2.0*(lk2[1] + lk3[1]) + lk4[1]) * sixth;
       pz += (lk1[2] + 2.0*(lk2[2] + lk3[2]) + lk4[2]) * sixth;
@@ -406,19 +451,24 @@ export function createLoops(ctx){
   var loopSeedTmp = new THREE.Vector3();
   var loopAxisTmp = new THREE.Vector3();
   var loopLatTmp = new THREE.Vector3();
-  function pickLoopSeed(out){
-    var tot = 0, i, ps = null;
-    for (i = 0; i < pairStates.length; i++) tot += Math.abs(pairStates[i].lead.w);
+  // PR5 — lê de `jp` (snapshot Float64 imutável do job: lead.xyzw + foll.xyz
+  // por par, stride 7), não do pairStates VIVO. Enquanto o retraço é
+  // fatiado por frame, todas as sondas do MESMO job enxergam a moldura de
+  // cargas do instante da criação — a ordem/quantidade de draws e o
+  // resultado casam com o retraço síncrono da base.
+  function pickLoopSeed(out, jp){
+    var tot = 0, i, o = -1;
+    for (i = 0; i < NPAIR; i++) tot += Math.abs(jp[i*7+3]);
     if (tot < 0.05) return false;
     var r = loopRand()*tot;
-    for (i = 0; i < pairStates.length; i++){
-      r -= Math.abs(pairStates[i].lead.w);
-      if (r <= 0){ ps = pairStates[i]; break; }
+    for (i = 0; i < NPAIR; i++){
+      r -= Math.abs(jp[i*7+3]);
+      if (r <= 0){ o = i*7; break; }
     }
-    if (!ps) ps = pairStates[pairStates.length-1];
-    if (Math.abs(ps.lead.w) < 0.25) return false;   // região quase morta não enche loop
-    loopSeedTmp.set(ps.lead.x, ps.lead.y, ps.lead.z).normalize();
-    loopAxisTmp.set(ps.foll.x, ps.foll.y, ps.foll.z).normalize();
+    if (o < 0) o = (NPAIR-1)*7;
+    if (Math.abs(jp[o+3]) < 0.25) return false;   // região quase morta não enche loop
+    loopSeedTmp.set(jp[o], jp[o+1], jp[o+2]).normalize();
+    loopAxisTmp.set(jp[o+4], jp[o+5], jp[o+6]).normalize();
     loopAxisTmp.addScaledVector(loopSeedTmp, -loopAxisTmp.dot(loopSeedTmp));
     if (loopAxisTmp.lengthSq() < 1e-6) return false;
     loopAxisTmp.normalize();
@@ -444,24 +494,52 @@ export function createLoops(ctx){
     }
   })();
   var loopSeedOut = new THREE.Vector3();
-  function retraceAmbient(slot){
-    // FASE 3: sonda barata filtra até 12 candidatos; o RK4 fino roda só
-    // nos aprovados (máx 4). Antes: 4 traços finos cegos com ~80% de
-    // rejeição => P(slot vazio) ~0.41; agora o slot quase sempre enche.
-    var fine = 0;
-    for (var tries = 0; tries < 12 && fine < 4; tries++){
-      if (!pickLoopSeed(loopSeedOut)) break;
-      if (!probeFieldLine(loopSeedOut.x, loopSeedOut.y, loopSeedOut.z, 1.035, 1.95)) continue;
-      fine++;
-      var nP = traceFieldLine(loopSeedOut.x, loopSeedOut.y, loopSeedOut.z, 1.035, 1.95, 0.02);
-      if (nP > 0){
-        writeLoopSlot(slot, nP);
-        var st = loopStatesA[slot];
-        st.ok = true; st.age = 0; st.period = 34 + loopRand()*36;
-        return true;
+  // PR5 (achado 6) — JOB AMBIENTE persistente. O retraço síncrono da base
+  // (até 12 sondas + 4 RK4 num SÓ frame) vira uma máquina de estados que
+  // gasta ≤1 sonda OU ≤1 RK4 por frame. A SEQUÊNCIA lógica é idêntica ao
+  // laço `for (tries<12 && fine<4)` da base: pickLoopSeed (sorteio) + sonda
+  // no mesmo passo; se a sonda passa, o RK4 do MESMO candidato roda no
+  // PRÓXIMO passo. Snapshot de cargas/pares congelado na criação.
+  //   loopJob = null | { slot, tries, fine, phase:'probe'|'trace', cx,cy,cz }
+  var loopJob = null;
+  ctx.loopJob = null;
+  ctx.loopLastProbeFrame = 0; ctx.loopLastTraceFrame = 0;
+  ctx.loopMaxProbeFrame = 0; ctx.loopMaxTraceFrame = 0; ctx.loopMaxOpsFrame = 0;
+  function startAmbientJob(slot){
+    snapshotChargesTo(ambSnapChg);
+    snapshotPairsTo(ambSnapPair);
+    loopJob = { slot: slot, tries: 0, fine: 0, phase: 'probe', cx: 0, cy: 0, cz: 0 };
+    ctx.loopJob = loopJob;
+  }
+  function endAmbientJob(){ loopJob = null; ctx.loopJob = null; }
+  // devolve 'probe' (gastou 1 sonda Euler neste passo), 'trace' (1 RK4) ou
+  // '' (nada — pickLoopSeed abortou o job, equivalente ao `break` da base)
+  function stepAmbientJob(){
+    var job = loopJob;
+    if (job.phase === 'probe'){
+      if (!pickLoopSeed(loopSeedOut, ambSnapPair)){ endAmbientJob(); return ''; }
+      job.cx = loopSeedOut.x; job.cy = loopSeedOut.y; job.cz = loopSeedOut.z;
+      if (!probeFieldLine(loopSeedOut.x, loopSeedOut.y, loopSeedOut.z, 1.035, 1.95, ambSnapChg)){
+        job.tries++;
+        if (job.tries >= 12 || job.fine >= 4) endAmbientJob();
+        return 'probe';                    // sonda rejeitou → próxima tentativa
       }
+      job.fine++; job.phase = 'trace';
+      return 'probe';                      // sonda aprovou → RK4 no próximo passo
     }
-    return false;
+    // phase === 'trace': RK4 fino do candidato JÁ guardado (sem draw novo)
+    var nP = traceFieldLine(job.cx, job.cy, job.cz, 1.035, 1.95, 0.02, ambSnapChg);
+    if (nP > 0){
+      writeLoopSlot(job.slot, nP);
+      var st = loopStatesA[job.slot];
+      st.ok = true; st.age = 0; st.period = 34 + loopRand()*36;
+      endAmbientJob();
+      return 'trace';
+    }
+    job.tries++;
+    if (job.tries >= 12 || job.fine >= 4) endAmbientJob();
+    else job.phase = 'probe';
+    return 'trace';
   }
   // ARCADA PÓS-FLARE: slots extras re-semeados a cada flare ao longo da
   // tangente da PIL; acendem em SEQUÊNCIA (o "zíper" da reconexão
@@ -473,6 +551,7 @@ export function createLoops(ctx){
   })();
   ctx.lastArcAbsMax = 0;   // FASE 4: pico corrente da arcada escura (QA)
   ctx.arcQueueN = 0;
+  var arcAtt = 0;          // PR5: tentativa corrente da arcada em voo (0..2)
   var arcSeedBase = new THREE.Vector3();
   var arcSeedTan = new THREE.Vector3();
   var arcSeedPerp = new THREE.Vector3();
@@ -483,6 +562,11 @@ export function createLoops(ctx){
     arcSeedBase.copy(ctx.surfFlareDir);
     arcSeedTan.copy(ctx.flareTanDir);
     arcSeedPerp.copy(ctx.flarePerpDir);
+    // PR5 (achado 6) — snapshot das cargas do EVENTO: as arcadas fatiadas
+    // por frame enxergam a moldura de campo do disparo. Um novo flare
+    // reinicia o lote (arcQueueN/arcAtt), CANCELANDO só as arcadas em voo;
+    // o job AMBIENTE (loopJob) fica intocado — pausa e retoma, não reinicia.
+    snapshotChargesTo(arcSnapChg);
     for (var i = 0; i < LOOP_ARC; i++){
       var st = arcStates[i];
       st.ok = false;
@@ -492,6 +576,7 @@ export function createLoops(ctx){
       loopCoolArr[LOOP_AMB + i] = 0;
     }
     ctx.arcQueueN = LOOP_ARC;
+    arcAtt = 0;
   }
   // uma linha só é ARCADA se pousar PERTO do flare (≤ ~23°): a PIL de
   // sol calmo pode conectar o ponto a outra região/polo — laço gigante
@@ -503,50 +588,72 @@ export function createLoops(ctx){
     var em = Math.sqrt(ex*ex + ey*ey + ez*ez) + 1e-9;
     return (ex*arcSeedBase.x + ey*arcSeedBase.y + ez*arcSeedBase.z)/em > 0.92;
   }
-  function traceArcadeJob(){
+  // PR5 (achado 6) — UMA tentativa (1 RK4) da arcada corrente por chamada;
+  // o updateLoops chama no máx 1×/frame (era até 2 jobs × 3 RK4 = 6 RK4/
+  // frame — parte do pico do achado 6 no rescaldo do flare). i = slot
+  // corrente do lote (LOOP_ARC - arcQueueN); arcAtt = tentativa (0..2). A
+  // moldura de campo vem do snapshot arcSnapChg do disparo.
+  //   parte do lado de UMA polaridade (offset ATRAVÉS da PIL ~ onde a
+  //   fita estaciona na fase gradual): a linha sobe, cruza a linha neutra
+  //   e pousa do outro lado. across 0.06–0.12 dá ápice 1.03–1.17 com pouso
+  //   ≤ ~10° — a arcada baixa clássica. Se o campo local não fechar
+  //   compacto em 3 tentativas, o slot fica apagado (resultado físico).
+  function stepArcadeJob(){
     var i = LOOP_ARC - ctx.arcQueueN;
-    ctx.arcQueueN--;
     var st = arcStates[i];
-    // parte do lado de UMA polaridade (offset ATRAVÉS da PIL ~ onde a
-    // fita estaciona na fase gradual): a linha sobe, cruza a linha
-    // neutra e pousa do outro lado. Sondagem numérica (2026-07): a
-    // linha pelo ponto médio a 1.004 é o próprio ápice (rasteira);
-    // across 0.06–0.12 dá ápice 1.03–1.17 com pouso ≤ ~10° — a arcada
-    // baixa clássica. Passo fino (h=0.01): arcos curtos com pontos
-    // suficientes p/ curvar. Se o campo local não fechar compacto, o
-    // slot fica apagado ("não houve arcada" é resultado físico válido).
-    for (var att = 0; att < 3; att++){
-      var across = -0.06 - 0.03*att;
-      arcSeedOut.copy(arcSeedBase)
-        .addScaledVector(arcSeedTan, st.off + (att > 0 ? (loopRand() - 0.5)*0.02 : 0))
-        .addScaledVector(arcSeedPerp, across)
-        .normalize();
-      var nP = traceFieldLine(arcSeedOut.x, arcSeedOut.y, arcSeedOut.z, 1.025, 1.35, 0.01);
-      if (arcTraceCompact(nP)){
-        writeLoopSlot(LOOP_AMB + i, nP);
-        st.ok = true;
-        return;
-      }
+    var att = arcAtt;
+    var across = -0.06 - 0.03*att;
+    arcSeedOut.copy(arcSeedBase)
+      .addScaledVector(arcSeedTan, st.off + (att > 0 ? (loopRand() - 0.5)*0.02 : 0))
+      .addScaledVector(arcSeedPerp, across)
+      .normalize();
+    var nP = traceFieldLine(arcSeedOut.x, arcSeedOut.y, arcSeedOut.z, 1.025, 1.35, 0.01, arcSnapChg);
+    if (arcTraceCompact(nP)){
+      writeLoopSlot(LOOP_AMB + i, nP);
+      st.ok = true;
+      ctx.arcQueueN--; arcAtt = 0;                     // arcada resolvida → próxima
+    } else {
+      arcAtt++;
+      if (arcAtt >= 3){ ctx.arcQueueN--; arcAtt = 0; } // esgotou 3 tentativas → próxima
     }
   }
   // atualização por frame (chamada no animate): laços de índice, sem
-  // closures — zero alocações. Orçamento de traço: 2 jobs de arcada OU
-  // 1 re-traço ambiente por frame (nunca ambos).
+  // closures — zero alocações. PR5 (achado 6) — ORÇAMENTO por frame:
+  // ≤1 sonda Euler OU ≤1 RK4 fino, NUNCA ambos, nunca múltiplos RK4.
+  // Prioridade: ARCADA de flare (RK4) sobre o retraço ambiente. Enquanto
+  // uma arcada corre, o job ambiente PAUSA (loopJob preservado) e retoma
+  // depois — não reinicia.
   function updateLoops(delta){
     var loopsOn = ctx.subToggle.loops && ctx.LOOP_K > 0.001;
     var act = coronaRaysUniforms.uActivity.value;
     var i, st;
-    if (ctx.arcQueueN > 0){ traceArcadeJob(); if (ctx.arcQueueN > 0) traceArcadeJob(); }
-    else if (loopsOn){
-      // re-traço ambiente amortizado: acha O PRIMEIRO slot vencido
-      for (i = 0; i < LOOP_AMB; i++){
-        st = loopStatesA[i];
-        if (!st.ok || st.age >= st.period*0.90){
-          retraceAmbient(i);
-          break;
+    var didProbe = 0, didTrace = 0;
+    if (ctx.arcQueueN > 0){
+      stepArcadeJob();                    // 1 RK4 (arcada tem prioridade)
+      didTrace = 1;
+    } else if (loopsOn){
+      // job ambiente persistente: cria no PRIMEIRO slot vencido/vazio,
+      // senão avança o job em voo por 1 passo (sonda OU RK4)
+      if (!loopJob){
+        for (i = 0; i < LOOP_AMB; i++){
+          st = loopStatesA[i];
+          if (!st.ok || st.age >= st.period*0.90){ startAmbientJob(i); break; }
         }
       }
+      if (loopJob){
+        var op = stepAmbientJob();
+        if (op === 'probe') didProbe = 1;
+        else if (op === 'trace') didTrace = 1;
+      }
     }
+    // QA (achado 6): contadores de orçamento por frame. lastProbe/lastTrace
+    // = trabalho DESTA chamada; maxProbe/maxTrace/maxOps = pico observado
+    // (gate: cada ≤1; ops = probe+trace ≤1, nunca ambos num mesmo frame).
+    ctx.loopLastProbeFrame = didProbe;
+    ctx.loopLastTraceFrame = didTrace;
+    if (didProbe > ctx.loopMaxProbeFrame) ctx.loopMaxProbeFrame = didProbe;
+    if (didTrace > ctx.loopMaxTraceFrame) ctx.loopMaxTraceFrame = didTrace;
+    if (didProbe + didTrace > ctx.loopMaxOpsFrame) ctx.loopMaxOpsFrame = didProbe + didTrace;
     var arcMax = 0, arcAbsMax = 0;
     for (i = 0; i < LOOP_ARC; i++){
       st = arcStates[i];

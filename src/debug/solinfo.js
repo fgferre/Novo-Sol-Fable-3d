@@ -351,11 +351,48 @@ export function createSolInfo(ctx){
                  absVisible: loopAbsMesh.visible,
                  traces: loopStats.traces, fails: loopStats.fails,
                  probes: loopStats.probes, probeRej: loopStats.probeRej,
-                 ms: +loopStats.ms.toFixed(2) };
+                 ms: +loopStats.ms.toFixed(2),
+                 // PR5 (achado 6) — scheduler incremental: fase pendente do
+                 // job ambiente (null = sem job em voo) + contadores de
+                 // ORÇAMENTO por frame. lastProbe/lastTrace = trabalho da
+                 // ÚLTIMA chamada de updateLoops; maxProbe/maxTrace/maxOps =
+                 // pico desde o boot (gate: cada ≤1; ops ≤1 = nunca ambos).
+                 phase: ctx.loopJob ? ctx.loopJob.phase : null,
+                 job: ctx.loopJob
+                   ? { slot: ctx.loopJob.slot, tries: ctx.loopJob.tries, fine: ctx.loopJob.fine }
+                   : null,
+                 lastProbe: ctx.loopLastProbeFrame || 0,
+                 lastTrace: ctx.loopLastTraceFrame || 0,
+                 maxProbe: ctx.loopMaxProbeFrame || 0,
+                 maxTrace: ctx.loopMaxTraceFrame || 0,
+                 maxOps: ctx.loopMaxOpsFrame || 0,
+                 draws: (loopStats.draws || 0) };
       };
       window.__solInfo.setLoopLife = function(i, x){
         var st = loopStatesA[i];
         if (st && st.ok) st.age = x*st.period;
+      };
+      // PR5 — liga o knob dos loops ao vivo (padrão setCvol/setSpots). Uso
+      // no golden/A/B determinístico: ativar os loops APÓS o freeze do
+      // ?hold, quando pairStates e o stream loopRand estão idênticos entre
+      // builds e o campo é estático — o retraço então converge para a MESMA
+      // geometria seja síncrono (base) ou fatiado por frame (head).
+      window.__solInfo.setLoops = function(v){
+        ctx.LOOP_K = Math.min(1.5, Math.max(0, +v || 0));
+        return ctx.LOOP_K;
+      };
+      // PR5 — dump determinístico da geometria PUBLICADA dos loops (o
+      // "golden"): buffers position/aTan dos slots + estado por slot (RNG-
+      // derivado). Leitura PURA (não sorteia, não muta). Avance ≥1 frame
+      // após um retraço antes de ler. draws = nº de sorteios loopRand
+      // contados no módulo de loops (0 na base sem o contador).
+      window.__solInfo.loopDump = function(){
+        var g = loopMesh.geometry;
+        return { pos: Array.prototype.slice.call(g.attributes.position.array),
+                 tan: Array.prototype.slice.call(g.attributes.aTan.array),
+                 amb: loopStatesA.map(function(s){ return { ok: s.ok, period: s.period, age: s.age }; }),
+                 arc: arcStates.map(function(s){ return { ok: s.ok, off: s.off, delay: s.delay }; }),
+                 draws: (loopStats.draws || 0) };
       };
       // QA T1.1: modo/candidatos da última amostragem de PIL, leitura do
       // Br evoluído numa direção, e re-amostragem forçada de uma slot

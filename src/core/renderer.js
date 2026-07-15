@@ -6,7 +6,12 @@ import * as THREE from 'three';
 
 export function createRenderer(ctx){
   var urlQ = ctx.urlQ, RENDER_SCALE = ctx.RENDER_SCALE, container = ctx.container;
-  var renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+  // Achado 8: a cena 3D é rasterizada no sceneRT monossample (com depth
+  // próprio); o canvas recebe só um quad fullscreen do composite. MSAA e
+  // depth do framebuffer DEFAULT não suavizam nem ocluem nada — só custam
+  // resolve multisample + attachment de depth em resolução física (pior em
+  // DPR 2–3). Desligados aqui; o depth da cena vive no sceneRT (pipeline.js).
+  var renderer = new THREE.WebGLRenderer({ antialias: false, depth: false, powerPreference: 'high-performance' });
   // three moderno liga saída sRGB por padrão; o composite já faz tonemap e
   // gamma por conta própria — saída linear reproduz o r128 exatamente.
   renderer.outputColorSpace = THREE.LinearSRGBColorSpace;

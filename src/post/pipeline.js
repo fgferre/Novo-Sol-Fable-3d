@@ -31,6 +31,9 @@ export function createPipeline(ctx){
   var EXP0 = isHDR ? 1.02 : 1.06;
   var BLOOM_THRESHOLD = knob('bloomth', isHDR ? 0.72 : 0.82, 0.2, 2.0);
 
+  // Achado 8: a cena 3D (esfera do Sol, estrelas) É rasterizada AQUI, então
+  // o depth DESTE alvo é obrigatório para a oclusão 3D — NÃO desligar. Só o
+  // depth do framebuffer default (renderer.js) é inútil e foi removido.
   var sceneRT = new THREE.WebGLRenderTarget(2,2, {
     minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
     format: THREE.RGBAFormat, type: rtType, stencilBuffer:false, depthBuffer:true
@@ -487,7 +490,10 @@ export function createPipeline(ctx){
     '  gl_FragColor = vec4(color, 1.0);',
     '}'
   ].join('\n');
-  var compMaterial = new THREE.ShaderMaterial({ uniforms: compUniforms, vertexShader: quadVertex, fragmentShader: compFragment });
+  // Achado 8: o composite é um quad fullscreen escrito no framebuffer
+  // default (sem depth desde renderer.js). depthTest/depthWrite off — não
+  // há nada com que testar profundidade e o quad cobre a tela inteira.
+  var compMaterial = new THREE.ShaderMaterial({ uniforms: compUniforms, vertexShader: quadVertex, fragmentShader: compFragment, depthTest:false, depthWrite:false });
   var compScene = makeFullscreenScene(compMaterial);
 
   function resizeTargets(){

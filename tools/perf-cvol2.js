@@ -29,14 +29,20 @@ const base = 'file://' + path.resolve(htmlFile);
       const f0 = await page.evaluate(() => window.__solInfo.frame);
       await page.waitForFunction((f) => window.__solInfo.frame > f, f0 + n, { timeout: 600000 });
     }
+    // PR2: rebake assíncrono — espera a publicação do ciclo-alvo antes
+    // de medir (a medição "on" precisa do volume desenhando)
+    async function waitCycle(t){
+      await page.waitForFunction((tc) => window.__solInfo.coronaInfo().cycles >= tc, t, { timeout: 600000 });
+    }
     // mínimo do ciclo (buracos abertos) + vista wide + pesos ON
-    await page.evaluate(() => {
+    const tcOn = await page.evaluate(() => {
       window.__solInfo.setCyclePhase(0.02, true);
       window.__solInfo.setCvolShape({ plume: 0.9, cusp: 0.6 });
-      window.__solInfo.rebakeCorona();
       const st = window.__solInfo.state();
       window.__solInfo.setView(0.8, Math.PI * 0.5, st.fitDist * 1.5);
+      return window.__solInfo.rebakeCorona().targetCycle;
     });
+    await waitCycle(tcOn);
     await frames(12);   // warmup: compile de pipeline + estado assentado
     await page.evaluate(() => window.__solInfo.perfReset());
     await frames(45);
@@ -44,10 +50,11 @@ const base = 'file://' + path.resolve(htmlFile);
     const ci = await page.evaluate(() => window.__solInfo.coronaInfo());
     // OFF: mesmos estado/câmera, pesos a zero (uPlume=0 pula o bloco;
     // cusp=0 + rebake volta a folha da F4)
-    await page.evaluate(() => {
+    const tcOff = await page.evaluate(() => {
       window.__solInfo.setCvolShape({ plume: 0, cusp: 0 });
-      window.__solInfo.rebakeCorona();
+      return window.__solInfo.rebakeCorona().targetCycle;
     });
+    await waitCycle(tcOff);
     await frames(5);
     await page.evaluate(() => window.__solInfo.perfReset());
     await frames(45);

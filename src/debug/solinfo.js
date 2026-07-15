@@ -13,7 +13,7 @@ export function createSolInfo(ctx){
       coronaRaysUniforms = ctx.coronaRaysUniforms, milkyWay = ctx.milkyWay,
       stars = ctx.stars, brightStars = ctx.brightStars, mwNeb = ctx.mwNeb,
       LOOK = ctx.LOOK, CVOL_STEPS = ctx.CVOL_STEPS, CVOL_N = ctx.CVOL_N,
-      cvolBakeFull = ctx.cvolBakeFull, cvolUniforms = ctx.cvolUniforms,
+      cvolUniforms = ctx.cvolUniforms,
       spiculeMesh = ctx.spiculeMesh, coronaRays = ctx.coronaRays,
       coronaOuter = ctx.coronaOuter, prominenceGroup = ctx.prominenceGroup,
       sunMesh = ctx.sunMesh, minDist = ctx.minDist, maxDist = ctx.maxDist,
@@ -106,11 +106,19 @@ export function createSolInfo(ctx){
       };
       // FASE 4: estado da coroa volumétrica (QA: tier-gate, bake, kill)
       // FASE 6 B2: expõe também os pesos novos (plume uniform / cusp bake)
+      // PR2: campos do scheduler assíncrono — requested (pedido de
+      // rebake pendente), phase (idle|baking|cooldown), slice (próxima
+      // fatia do staging, -1 fora de baking), rate (fatias/s) e
+      // cooldown (segundos restantes de descanso pós-publicação)
       window.__solInfo.coronaInfo = function(){
         return { steps: CVOL_STEPS, res: CVOL_N, k: ctx.CVOL_K,
                  on: CVOL_STEPS > 0 && ctx.CVOL_K > 0.001 && !ctx.cvolKilled &&
                      subToggle.corona && subToggle.corona3d,
                  ready: ctx.cvolReady, killed: ctx.cvolKilled, cycles: ctx.cvolCycles,
+                 requested: ctx.cvolPending, phase: ctx.cvolPhase,
+                 slice: ctx.cvolStep, rate: ctx.CVOL_RATE,
+                 cooldown: ctx.cvolPhase === 'cooldown'
+                   ? +Math.max(0, ctx.CVOL_COOLDOWN - ctx.cvolAccum).toFixed(3) : 0,
                  plume: cvolUniforms ? cvolUniforms.uPlume.value : 0,
                  cusp: ctx.cvolWCusp };
       };
@@ -118,11 +126,18 @@ export function createSolInfo(ctx){
         ctx.CVOL_K = Math.min(1.5, Math.max(0, +v || 0));
         return ctx.CVOL_K;
       };
-      // re-bake síncrono do volume (QA: sob ?hold o bake fatiado congela;
-      // depois de setCyclePhase a captura precisa do volume da fase nova)
+      // PR2 — re-bake ASSÍNCRONO do volume: agenda um ciclo FORÇADO
+      // (snapshot novo no próximo frame; reinicia staging em voo; anda
+      // mesmo sob ?hold, com passo sintético 1/60) e devolve o ciclo a
+      // aguardar: o QA espera coronaInfo().cycles >= targetCycle em vez
+      // do antigo bake síncrono (que era o hitch de 26ms do achado 3).
       window.__solInfo.rebakeCorona = function(){
-        if (CVOL_STEPS > 0){ cvolBakeFull(); return true; }
-        return false;
+        if (CVOL_STEPS > 0){
+          ctx.cvolPending = true;
+          ctx.diagEvent('cvol-request', ctx.cvolCycles + 1);
+          return { scheduled: true, targetCycle: ctx.cvolCycles + 1 };
+        }
+        return { scheduled: false, targetCycle: ctx.cvolCycles };
       };
       // eixos do sweep de calibração (painel de juízes) sem rebuild:
       // pesos do bake de densidade + contraste das raias procedurais.

@@ -26,7 +26,21 @@ export function createCoronaVolume(ctx){
   // ---------------------------------------------------------------
   var CVOL_STEPS = TP.cstep | 0;
   var CVOL_N = 64, CVOL_VR = 3.0, CVOL_ROUT = 2.88;
+  // PR2 — scheduler assíncrono do bake: ritmo em fatias/s (independe do
+  // refresh — o budget consome rawDelta) e descanso APÓS a publicação.
+  // 64/30 + 0.9 ≈ 3.03s início-a-início em qualquer Hz de 30 a 120.
+  var CVOL_RATE = 30, CVOL_COOLDOWN = 0.9;
   ctx.cvolStep = -1, ctx.cvolAccum = 0, ctx.cvolReady = false, ctx.cvolKilled = false, ctx.cvolCycles = 0;
+  // PR2 — estado da máquina idle|baking|cooldown (vive no ctx mesmo com
+  // CVOL_STEPS=0: coronaInfo() lê em qualquer tier sem guarda):
+  //   cvolPhase   fase corrente; baking = staging em voo (cvolStep>=0)
+  //   cvolBudget  acumulador de fatias (+= rawDelta*30; 1 fatia por
+  //               unidade inteira, teto de 1 fatia/frame)
+  //   cvolPending pedido do rebakeCorona() ainda não atendido
+  //   cvolForced  o staging em voo veio de rebakeCorona() (sobrevive ao
+  //               desligar do efeito — QA baka com o volume oculto)
+  ctx.cvolPhase = 'idle', ctx.cvolBudget = 0, ctx.cvolPending = false, ctx.cvolForced = false;
+  ctx.CVOL_RATE = CVOL_RATE, ctx.CVOL_COOLDOWN = CVOL_COOLDOWN;
   var coronaVol = null, cvolUniforms = null, cvolTex = null;
   var cvolData = null, cvolStage = null;
   var cvolQ = new Float32Array(40);       // snapshot das 10 cargas (x,y,z,w)
@@ -103,13 +117,71 @@ export function createCoronaVolume(ctx){
       }
     }
   }
-  function cvolBakeFull(){
+  // PR2 — início de um ciclo de staging: snapshot das cargas AGORA e
+  // fatias a partir do frame corrente. Um pedido forçado (rebakeCorona)
+  // REINICIA staging em voo: a publicação seguinte sai sempre do
+  // snapshot mais novo (o QA salta fase do ciclo e re-baka em cima).
+  function cvolStartCycle(forced){
     snapshotCvolCharges();
-    for (var iz = 0; iz < CVOL_N; iz++) bakeCvolSlice(iz);
-    cvolData.set(cvolStage);
-    cvolTex.needsUpdate = true;
-    ctx.cvolReady = true; ctx.cvolCycles++; ctx.cvolStep = -1;
-    ctx.diagEvent('cvol-bake-full', ctx.cvolCycles);
+    ctx.cvolStep = 0; ctx.cvolBudget = 0;
+    ctx.cvolPhase = 'baking';
+    ctx.cvolForced = !!forced; ctx.cvolPending = false;
+    ctx.diagEvent('cvol-start', ctx.cvolCycles + 1);
+  }
+  // PR2 — máquina de estados do bake, 1 chamada por frame do animate.
+  //   on       efeito ligado (knob + kill + toggles) — cadência natural
+  //   rawDelta tempo REAL do frame (independe de TIME_SCALE; 0 sob hold)
+  //   held     DET_HOLD ativo: bake JÁ INICIADO avança com passo
+  //            sintético 1/60; o cooldown fica congelado (rawDelta=0)
+  // O hitch do bake integral morre aqui: nunca mais de 1 fatia/frame,
+  // publicação única e atômica após a 64ª fatia, cooldown só DEPOIS de
+  // publicar (o duty cycle de 100% do achado 3 vira ~70%: 2.13s de bake
+  // + 0.9s de descanso).
+  function cvolFrame(on, rawDelta, held){
+    // desligar o efeito cancela o staging NÃO-forçado e preserva o
+    // último volume publicado (cvolReady/textura intocados); religar
+    // cai no ramo idle e inicia snapshot novo
+    if (!on && ctx.cvolPhase === 'baking' && !ctx.cvolForced){
+      ctx.cvolStep = -1; ctx.cvolBudget = 0; ctx.cvolPhase = 'idle';
+      ctx.diagEvent('cvol-cancel', ctx.cvolCycles);
+    }
+    if (!on && ctx.cvolPhase === 'cooldown') ctx.cvolPhase = 'idle';
+    if (ctx.cvolPending){
+      // rebakeCorona(): forçado — parte mesmo desligado ou sob hold
+      cvolStartCycle(true);
+    } else if (on){
+      if (ctx.cvolPhase === 'idle'){
+        // inicialização/religada: fatiado como qualquer bake — até a
+        // 1ª publicação o plano de raias segue integral como fallback
+        cvolStartCycle(false);
+      } else if (ctx.cvolPhase === 'cooldown'){
+        // cooldown acumula APENAS aqui (nunca durante baking — era o
+        // bug do duty cycle) e congela sob hold (rawDelta chega 0)
+        ctx.cvolAccum += rawDelta;
+        if (ctx.cvolAccum >= CVOL_COOLDOWN) cvolStartCycle(false);
+      }
+    }
+    if (ctx.cvolPhase === 'baking'){
+      // 30 fatias/s com teto de 1 fatia/frame; clamp do budget em 1
+      // impede catch-up em rajada após aba em background. Em det
+      // (rawDelta=1/60) o budget é exato: (1/60)*30 === 0.5 em double
+      // — 1 fatia a cada 2 frames, publicação no frame 128 do ciclo.
+      ctx.cvolBudget += (held ? (1/60) : rawDelta) * CVOL_RATE;
+      if (ctx.cvolBudget > 1) ctx.cvolBudget = 1;
+      if (ctx.cvolBudget >= 1){
+        ctx.cvolBudget -= 1;
+        bakeCvolSlice(ctx.cvolStep);
+        ctx.cvolStep += 1;
+        if (ctx.cvolStep >= CVOL_N){
+          cvolData.set(cvolStage);          // publicação atômica: sem tearing
+          cvolTex.needsUpdate = true;
+          ctx.cvolStep = -1; ctx.cvolForced = false;
+          ctx.cvolReady = true; ctx.cvolCycles++;
+          ctx.cvolPhase = 'cooldown'; ctx.cvolAccum = 0;
+          ctx.diagEvent('cvol-upload', ctx.cvolCycles);
+        }
+      }
+    }
   }
   if (CVOL_STEPS > 0){
     cvolData = new Uint8Array(CVOL_N*CVOL_N*CVOL_N);
@@ -293,13 +365,14 @@ export function createCoronaVolume(ctx){
     coronaVol.renderOrder = -1;
     coronaVol.visible = false;
     scene.add(coronaVol);
-    // knob ligado desde a carga (?cvol=): bake inicial síncrono com as
-    // cargas do frame 0 (determinístico) — a coroa nunca aparece vazia
-    if (ctx.CVOL_K > 0.001) cvolBakeFull();
+    // PR2: fim do bake integral síncrono de carga (26.2ms de hitch —
+    // achado 3). Com o knob ligado desde a carga, o 1º ciclo fatiado
+    // parte no 1º frame do animate (idle -> baking) e o plano de raias
+    // cobre o visual até a 1ª publicação (~2.13s).
   }
   ctx.coronaVol = coronaVol; ctx.cvolUniforms = cvolUniforms;
   ctx.CVOL_STEPS = CVOL_STEPS; ctx.CVOL_N = CVOL_N;
-  ctx.cvolBakeFull = cvolBakeFull; ctx.bakeCvolSlice = bakeCvolSlice;
+  ctx.cvolFrame = cvolFrame; ctx.bakeCvolSlice = bakeCvolSlice;
   ctx.snapshotCvolCharges = snapshotCvolCharges; ctx.cvolData = cvolData;
   ctx.cvolStage = cvolStage; ctx.cvolTex = cvolTex; ctx.cvolInvRot = cvolInvRot;
 }

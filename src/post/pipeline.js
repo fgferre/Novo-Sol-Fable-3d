@@ -8,7 +8,8 @@ import { quadVertex } from '../glsl/common.js';
 export function createPipeline(ctx){
   var renderer = ctx.renderer, isHDR = ctx.isHDR, rtType = ctx.rtType,
       knob = ctx.knob, lk = ctx.lk, BLOOM_LEVELS = ctx.BLOOM_LEVELS,
-      makeFullscreenScene = ctx.makeFullscreenScene, quadCamera = ctx.quadCamera;
+      makeFullscreenScene = ctx.makeFullscreenScene, quadCamera = ctx.quadCamera,
+      urlQ = ctx.urlQ || {};
   // ---------------------------------------------------------------
   // Bloom multi-escala (cadeia de downsample + threshold, depois
   // upsample aditivo — técnica tipo "dual Kawase" usada em engines
@@ -320,7 +321,11 @@ export function createPipeline(ctx){
     // perfil analítico da esfera (0 = centro do disco/superfície mais
     // próxima; 1 = limbo — o "focus pull" do modo diretor)
     uDof:{value: 0.0},
-    uDofFocus:{value: 0.0}
+    uDofFocus:{value: 0.0},
+    // Achado 4 — patch numérico de QA (?colorpatch=1): quadrantes de cinza
+    // LINEAR conhecido escritos POR CIMA do frame já graduado, atravessando
+    // só a OETF final. Constante por sessão (vem da URL), 0 = ramo morto.
+    uPatch:{value: (urlQ.colorpatch === '1') ? 1.0 : 0.0}
   };
   var compFragment = [
     'uniform sampler2D tScene;',
@@ -349,15 +354,19 @@ export function createPipeline(ctx){
     'uniform float uBurstRot;',
     'uniform float uDof;',
     'uniform float uDofFocus;',
+    'uniform float uPatch;',
     'varying vec2 vUv;',
     'vec3 ACESFilm(vec3 x){',
     '  float a=2.51; float b=0.03; float c=2.43; float d=0.59; float e=0.14;',
     '  return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);',
     '}',
     // AgX (fit polinomial de B. Wrensch sobre o AgX de T. Sobotka): curva
-    // de resposta tipo filme com rolloff suave nas altas. Como o pipeline
-    // grava direto no canvas (o ACES acima também embute o "gamma"), o
-    // resultado fica no espaço codificado do AgX base — comparável ao ACES.
+    // de resposta tipo filme com rolloff suave nas altas. Achado 4: o fit
+    // devolve o valor no espaço CODIFICADO (~gamma 2.2) do AgX base sRGB —
+    // a linearização pow(2.2) que a referência aplica quando o alvo não é
+    // o display estava OMITIDA (e o ACES NÃO "embute gamma": o fit de
+    // Narkowicz é linear→linear). Restaurada após o outset: AgXFilm devolve
+    // Linear-sRGB, comparável ao ACES, e a OETF única do fim exibe ambos.
     'vec3 agxContrast(vec3 x){',
     '  vec3 x2 = x*x; vec3 x4 = x2*x2;',
     '  return 15.5*x4*x2 - 40.14*x4*x + 31.96*x4 - 6.868*x2*x + 0.4298*x2 + 0.1191*x - 0.00232;',
@@ -380,6 +389,10 @@ export function createPipeline(ctx){
     // outset (inversa do inset): devolve a saturação que o inset guardou;
     // sem isto o resultado fica leitoso/dessaturado
     '  val = agx_mat_inv * val;',
+    // Achado 4: linearização omitida restaurada — sai do espaço codificado
+    // (~2.2) do AgX base sRGB de volta a Linear-sRGB (max evita pow de
+    // negativo: o outset pode subamostrar levemente abaixo de zero)
+    '  val = pow(max(val, vec3(0.0)), vec3(2.2));',
     '  return clamp(val, 0.0, 1.0);',
     '}',
     'float hash12(vec2 p){',
@@ -501,24 +514,49 @@ export function createPipeline(ctx){
     '    burst += vec3(1.0, 0.85, 0.62) * exp(-rB*30.0);',
     '    color += burst * (uBurst * 0.85) * uExposure * uAdapt;',
     '  }',
+    // Achado 4: o mix ACES–AgX acontece em LINEAR-sRGB (ambos os ramos
+    // devolvem linear; a OETF única fica no fim do shader)
     '  vec3 aces = ACESFilm(color);',
     '  color = (uFilm > 0.001) ? mix(aces, AgXFilm(color), uFilm) : aces;',
     '  color = mix(vec3(dot(color, vec3(0.299,0.587,0.114))), color, uSat);',
     // split-tone Sunshine: sombras frias, altas douradas (contraste
-    // ouro-vs-frio de Boyle/Küchler dentro do mesmo frame)
+    // ouro-vs-frio de Boyle/Küchler dentro do mesmo frame). Achado 4: o
+    // tint era um multiplicador de DISPLAY (pré-OETF não havia conversão);
+    // pow(tint, 2.4) reproduz o mesmo efeito em linear e os limiares do
+    // smoothstep são os antigos (0.10/0.65 display) convertidos a linear.
     '  if (uTone > 0.001){',
     '    float tl = dot(color, vec3(0.299,0.587,0.114));',
-    '    vec3 tint = mix(vec3(0.82,0.90,1.10), vec3(1.08,1.00,0.86), smoothstep(0.10, 0.65, tl));',
-    '    color *= mix(vec3(1.0), tint, uTone);',
+    '    vec3 tint = mix(vec3(0.82,0.90,1.10), vec3(1.08,1.00,0.86), smoothstep(0.010, 0.380, tl));',
+    '    color *= pow(mix(vec3(1.0), tint, uTone), vec3(2.4));',
     '  }',
-    // vinheta cinematográfica sutil
+    // vinheta cinematográfica sutil — o fator era de DISPLAY; elevar a 2.4
+    // preserva a queda visual aprovada com o MESMO knob (D·k ≙ V·k^2.4)
     '  vec2 vc = vUv - 0.5;',
-    '  color *= 1.0 - dot(vc, vc)*uVig;',
-    // dithering só nas áreas ESCURAS (céu/coroa, onde há banding);
-    // no disco ele viraria chuvisco isotrópico sobre as fibrilas
-    '  float dith = smoothstep(0.30, 0.06, dot(color, vec3(0.3333)));',
-    '  color += (hash12(gl_FragCoord.xy) - 0.5) * (1.6/255.0) * dith * uGrain;',
-    '  gl_FragColor = vec4(color, 1.0);',
+    '  color *= pow(max(1.0 - dot(vc, vc)*uVig, 0.0), 2.4);',
+    // dithering só nas áreas ESCURAS (céu/coroa, onde há banding); no disco
+    // ele viraria chuvisco isotrópico sobre as fibrilas. Achado 4: limiares
+    // do gate convertidos a linear (0.30/0.06 display → 0.0732/0.0049) e
+    // amplitude compensada pela inclinação inversa da OETF (dD/dV: 12.92 no
+    // ramo linear, 0.4396·V^-0.5833 acima) — o grão mantém a MESMA amplitude
+    // de display de antes (~1.6/255) em vez de explodir ×13 nos pretos.
+    '  float dlum = dot(color, vec3(0.3333));',
+    '  float dith = smoothstep(0.0732, 0.0049, dlum);',
+    '  float dslope = (dlum > 0.0031308) ? 2.2749*pow(max(dlum, 0.0), 0.58333) : 0.0774;',
+    '  color += (hash12(gl_FragCoord.xy) - 0.5) * (1.6/255.0) * dith * uGrain * dslope;',
+    // Achado 4 — patch numérico de QA (?colorpatch=1): quadrantes de cinza
+    // LINEAR conhecido por cima do frame graduado; atravessam só a OETF
+    // abaixo. sup-esq 0.18→118±1 · sup-dir 0.0031308→≈10 · inf-esq 0→0 ·
+    // inf-dir 1→255; 0.18 lido ≈181 = conversão DUPLA (falha).
+    '  if (uPatch > 0.5){',
+    '    color = (vUv.y >= 0.5) ? ((vUv.x < 0.5) ? vec3(0.18) : vec3(0.0031308))',
+    '                           : ((vUv.x < 0.5) ? vec3(0.0) : vec3(1.0));',
+    '  }',
+    // Achado 4 — ÚNICA conversão Linear-sRGB→sRGB do pipeline: o three gera
+    // linearToOutputTexel (OETF da spec, ramo 0.0031308) a partir do
+    // outputColorSpace do renderer (renderer.js). O max() protege o pow da
+    // OETF de negativos (grão/sat podem subamostrar abaixo de zero).
+    '  gl_FragColor = vec4(max(color, vec3(0.0)), 1.0);',
+    '  #include <colorspace_fragment>',
     '}'
   ].join('\n');
   // Achado 8: o composite é um quad fullscreen escrito no framebuffer

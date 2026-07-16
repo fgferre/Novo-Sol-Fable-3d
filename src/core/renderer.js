@@ -12,9 +12,14 @@ export function createRenderer(ctx){
   // resolve multisample + attachment de depth em resolução física (pior em
   // DPR 2–3). Desligados aqui; o depth da cena vive no sceneRT (pipeline.js).
   var renderer = new THREE.WebGLRenderer({ antialias: false, depth: false, powerPreference: 'high-performance' });
-  // three moderno liga saída sRGB por padrão; o composite já faz tonemap e
-  // gamma por conta própria — saída linear reproduz o r128 exatamente.
-  renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
+  // Achado 4: o canvas é sRGB. O pipeline trabalha em Linear-sRGB (targets
+  // intermediários lineares/HDR, NoToneMapping, ColorManagement off) e a
+  // conversão de exibição acontece UMA vez: o three gera linearToOutputTexel
+  // (OETF sRGB da spec, ramo linear 0.0031308) a partir deste outputColorSpace
+  // e o composite a aplica via #include <colorspace_fragment> como última
+  // operação (pipeline.js). Renders para RT usam workingColorSpace (linear) —
+  // só o passe com target null (o composite) converte.
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.NoToneMapping;
   // Achado 9: cap de DPR por tier (2 padrão, 3 no ultra) e BASE VIVA do
   // auto-tune. baseDpr = min(devicePixelRatio, dprCap)·RENDER_SCALE; o DPR

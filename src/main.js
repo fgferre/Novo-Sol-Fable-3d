@@ -1,7 +1,8 @@
 // Novo Sol — app principal. Migrado de sol-3d.html (script inline) para
 // módulo ES com three via npm. O pipeline de cor é 100% manual (HDR +
-// ACES no composite), então desligamos o ColorManagement do three e
-// mantemos a saída linear — comportamento idêntico ao r128.
+// ACES/AgX no composite em Linear-sRGB), então desligamos o ColorManagement
+// do three; a exibição converte para sRGB UMA vez, no fim do composite
+// (achado 4: outputColorSpace sRGB + #include <colorspace_fragment>).
 import * as THREE from 'three';
 import { NOISE_GLSL as NOISE_GLSL_SRC, WORLEY_GLSL, SFTDIR_GLSL, BFIELD_GLSL, LIC_GLSL, quadVertex, uvMeshVertex } from './glsl/common.js';
 import { createConfig } from './core/config.js';

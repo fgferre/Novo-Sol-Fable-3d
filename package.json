@@ -14,6 +14,7 @@
     "qa:ci": "npm run build && npm run build:single && npm run qa:controls && npm run qa:parity",
     "qa:controls": "node tools/qa-controls.js dist-single/index.html",
     "qa:parity": "node tools/parity.js qa-out --file dist-single/index.html && node tools/imgdiff.js qa/baselines qa-out --max-frac 0.001",
+    "qa:colorpatch": "node tools/qa-colorpatch.js dist-single/index.html",
     "qa:shot": "node tools/shot.js shots --file dist-single/index.html",
     "qa:phase1": "node tools/qa-phase1.js out/phase1 --file dist-single/index.html",
     "qa:phase3": "node tools/qa-phase3.js out/phase3 --file dist-single/index.html",

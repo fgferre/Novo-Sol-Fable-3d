@@ -29,7 +29,14 @@ export function createPipeline(ctx){
   // H-alfa pico ~0.98 de luminância, threshold 1.0 nunca florescia — só
   // flare raro. 0.72 + emissivos HDR de plage/limbo (no shader do sol)
   // fazem o bloom LER sem lavar o disco (p50 +2%, 0% de pixels clipados).
-  var EXP0 = isHDR ? 1.02 : 1.06;
+  // Achado 4 — recalibração de APRESENTAÇÃO pós-OETF: com a conversão
+  // sRGB correta no fim do composite, a exposição antiga (1.02/1.06)
+  // estourava os médios-tons (+48 de luminância média nas 7 vistas do
+  // gate). 0.41× o valor antigo (0.418/0.435) minimiza o L1 do histograma
+  // de luminância contra o look aprovado (grid GPU nas 5 vistas default:
+  // ΔL médio ≤ +6, resíduo = o lift físico das sombras que a OETF revela).
+  // O preset Sunshine (exposure 1.08 relativo) cavalga o mesmo fator.
+  var EXP0 = isHDR ? 0.418 : 0.435;
   var BLOOM_THRESHOLD = knob('bloomth', isHDR ? 0.72 : 0.82, 0.2, 2.0);
 
   // Achado 8: a cena 3D (esfera do Sol, estrelas) É rasterizada AQUI, então
@@ -292,7 +299,10 @@ export function createPipeline(ctx){
     uStreak:{value: 0.0},
     uBloomStrength:{value: ctx.BLOOM_STRENGTH_BASE},
     uExposure:{value: EXP0 * knob('exposure', lk('exposure', 1.0), 0.3, 2.5)},
-    uSat:{value: knob('sat', 1.0, 0.0, 2.0)},
+    // Achado 4 — recalibração: a saturação agora é misturada em LINEAR
+    // (antes, em display); 1.08 devolve a saturação média aprovada
+    // (Δsat ≤ ±0.04 nas 7 vistas do gate vs |−0.18| sem recalibrar).
+    uSat:{value: knob('sat', 1.08, 0.0, 2.0)},
     uVig:{value: knob('vig', lk('vig', 0.55), 0.0, 1.5)},
     uGrain:{value: knob('grain', lk('grain', 1.0), 0.0, 5.0)},
     uVeil:{value: 0.0},

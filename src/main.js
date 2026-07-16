@@ -405,7 +405,11 @@ function init(){
       bakeChromoSlice(ctx.bakeStep, ctx.bakeTime);
       ctx.bakeStep++;
       if (ctx.bakeStep >= 8){
-        ctx.bakeStep = -1; perfBakes.push(frameT0);
+        // Achado 14 (PR7): grava no ring de 64 (índice circular), sem push.
+        ctx.bakeStep = -1;
+        perfBakes[ctx.perfBakeIdx] = frameT0;
+        ctx.perfBakeIdx = (ctx.perfBakeIdx + 1) & 63;
+        if (ctx.perfBakeN < 64) ctx.perfBakeN++;
         ctx.bakePrev = ctx.bakeCur; ctx.bakeCur = ctx.bakeWrite;
         ctx.bakeWrite = (ctx.bakeCur === ctx.bakePrev) ? (ctx.bakeCur+1)%3 : 3 - ctx.bakeCur - ctx.bakePrev;
         // clamp 4.5: cobre o ciclo a speed=3/fps baixa (~2.4s×0.85) — o
@@ -636,7 +640,16 @@ function init(){
     ctx.camDist += (ctx.targetCamDist - ctx.camDist) * (1.0 - Math.exp(-9.0*rawDelta));
     sunUniforms.uCamDist.value = ctx.camDist;
 
-    if (pointers.size === 0 && performance.now()-ctx.lastInteraction > 2200 && !directorActive()){
+    // Achado 11 (PR7): gatilho da deriva idle. No modo normal continua
+    // wall-clock (2200ms desde a última interação). No modo determinístico o
+    // wall-clock quebrava a paridade — o frame em que a deriva começava
+    // dependia da velocidade da máquina (flake do A/B base-vs-base). Agora
+    // conta FRAMES desde a última interação: >132 (≈2200ms@60fps) ⇒ frame 132
+    // ainda sem deriva, frame 133 recebe o 1º incremento 0.066·rawDelta.
+    var idleDrift = DET
+      ? (ctx.detFrames - ctx.lastInteractionFrame > 132)
+      : (performance.now() - ctx.lastInteraction > 2200);
+    if (pointers.size === 0 && idleDrift && !directorActive()){
       ctx.theta += 0.066*rawDelta;
       // ?idle=1: câmera idle cinematográfica — deriva orbital + balanço
       // de latitude + respiração de zoom, tudo senoidal (média zero)

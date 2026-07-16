@@ -24,7 +24,8 @@ export function createControls(ctx){
   ctx.camDist = ctx.fitDist;
   ctx.targetCamDist = ctx.fitDist;           // zoom amortecido: camDist persegue este alvo
   var minDist = SUN_RADIUS*1.5, maxDist = 30;
-  ctx.lastInteraction = 0;
+  // ctx.lastInteraction / ctx.lastInteractionFrame nascem em createConfig
+  // (Achado 11): o relógio de interação é escrito via ctx.markInteraction().
 
   var pointers = new Map();
   var rotLast = null;
@@ -78,7 +79,7 @@ export function createControls(ctx){
       pinchPrevDist = pointerDistance();
       ctx.hudDown = null; clearTimeout(ctx.hudTimer);
     }
-    ctx.lastInteraction = performance.now();
+    ctx.markInteraction();
   }
 
   function onPointerMove(e){
@@ -96,7 +97,7 @@ export function createControls(ctx){
         ctx.targetCamDist = Math.max(minDist, Math.min(maxDist, ctx.targetCamDist));
       }
       pinchPrevDist = d;
-      ctx.lastInteraction = performance.now();
+      ctx.markInteraction();
       return;
     }
 
@@ -126,7 +127,7 @@ export function createControls(ctx){
       var evT = (e.timeStamp && e.timeStamp > 0) ? e.timeStamp : nowT;
       flingSamples.push({ t: evT, th: ctx.theta, ph: ctx.phi });
       if (flingSamples.length > 12) flingSamples.shift();
-      ctx.lastInteraction = nowT;
+      ctx.markInteraction();
     }
   }
 
@@ -165,7 +166,7 @@ export function createControls(ctx){
       // com 0-1 amostras, fica o estimador suavizado do arraste
       flingSamples.length = 0;
     }
-    ctx.lastInteraction = performance.now();
+    ctx.markInteraction();
   }
 
   function onWheel(e){
@@ -173,7 +174,7 @@ export function createControls(ctx){
     ctx.directorUserExit();   // FASE 5: input devolve a câmera ao usuário
     ctx.targetCamDist += e.deltaY*0.0035*ctx.targetCamDist;
     ctx.targetCamDist = Math.max(minDist, Math.min(maxDist, ctx.targetCamDist));
-    ctx.lastInteraction = performance.now();
+    ctx.markInteraction();
   }
 
   // ---- polimento AAA de controles ----
@@ -181,7 +182,7 @@ export function createControls(ctx){
   function toggleFrame(){
     var closeDist = Math.max(minDist*1.12, ctx.fitDist*0.42);
     ctx.targetCamDist = (ctx.targetCamDist > ctx.fitDist*0.72) ? closeDist : ctx.fitDist;
-    ctx.lastInteraction = performance.now();
+    ctx.markInteraction();
   }
   var lastTap = { t: -1e9, x: 0, y: 0 };
   function onTapCheck(e){
@@ -198,6 +199,14 @@ export function createControls(ctx){
   // teclado: setas giram (com a mesma inércia do arraste), +/- aproxima,
   // R volta ao enquadramento — acessível sem mouse
   function onKeyDown(e){
+    // Achado 12 (PR7): o keydown é global (window). Quando o foco está num
+    // controle editável — slider (range), select, campo de texto, botão ou
+    // contenteditable — o teclado pertence a ELE. Retorna ANTES de qualquer
+    // efeito: nada de girar a câmera, chamar directorUserExit() ou
+    // preventDefault() (que anulava setas/+/−/R dos sliders do painel).
+    var el = e.target;
+    if (el && el.matches &&
+        el.matches('input, select, textarea, button, [contenteditable="true"]')) return;
     ctx.directorUserExit();   // FASE 5: input devolve a câmera ao usuário
     var k = e.key;
     var handled = true;
@@ -213,7 +222,7 @@ export function createControls(ctx){
     else handled = false;
     if (handled){
       e.preventDefault();
-      ctx.lastInteraction = performance.now();
+      ctx.markInteraction();
     }
   }
 

@@ -116,7 +116,9 @@ export function createPanel(ctx){
       { k:'plageglow', label:'Brilho das plages', lo:0, hi:1.2, step:0.05, dflt:0.35,
         get:function(){ return sunUniforms.uPlageEm.value; },
         set:function(v){ sunUniforms.uPlageEm.value = v; } },
-      { k:'sat', label:'Saturação', lo:0, hi:1.6, step:0.05, dflt:1,
+      // Achado 4 (PR 11): default recalibrado — o mix de saturação opera
+      // em linear desde a OETF única; 1.08 é o novo neutro calibrado
+      { k:'sat', label:'Saturação', lo:0, hi:1.6, step:0.02, dflt:1.08,
         get:function(){ return compUniforms.uSat.value; },
         set:function(v){ compUniforms.uSat.value = v; } },
       { k:'vig', label:'Vinheta', lo:0, hi:1.2, step:0.05, dflt:0.55,

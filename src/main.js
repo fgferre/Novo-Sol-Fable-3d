@@ -575,6 +575,9 @@ function init(){
       m.material.uniforms.uIntensity.value = base;
       m.material.uniforms.uTime.value = ctx.elapsed;
     });
+    // PR6 — despeja o estado dos proxies de proeminência nos atributos das
+    // 4 InstancedMesh (após o loop de estados, antes do render)
+    ctx.flushProminences();
 
     coronaRays.quaternion.copy(camera.quaternion);
     coronaRaysUniforms.uTime.value = ctx.elapsed;

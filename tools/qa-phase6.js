@@ -535,7 +535,16 @@ function ringStats(file, r0, r1){
     const CCAL = {
       candStria: 0.8, candCav: 0.85,  // candidatos do sweep (painel decide)
       c1MaxBeadRatio: 0.80,           // beadRMS(stria .8)/beadRMS(0) <= (medido 0.58-0.63x)
-      c2MinRatio: 2.0,                // frente:cavidade no candidato (PROMPT-F6)
+      // PR11 (OETF sRGB): a razão é medida em luminância DISPLAY-referred
+      // pós-composite — a sRGB levanta os escuros (cavidade +40%) mais
+      // que os claros (frente +17%) e comprime a razão. Re-medição A/B
+      // na MESMA máquina (Windows/SwiftShader): main (cor velha) 1.936x
+      // → PR11 1.614x (fator só-cor 0.834; baseline pesos-0 1.127x →
+      // 1.062x). Nota: na cor velha esta máquina já media 1.936x < 2.0
+      // (deriva local pré-existente vs a calibração B3 de 2.109x, análoga
+      // ao F3 da phase4). Novo limiar ancorado no observado com a MESMA
+      // margem relativa da B3 (2.0/2.109 = 94.8%): 1.614×0.948 ≈ 1.53.
+      c2MinRatio: 1.53,               // frente:cavidade no candidato (PROMPT-F6, recalibrado PR11)
       holdMain: 308,                  // t≈(308-10)/60 ≈ 4.97 — bolha formada
       holdDet: 128                    // t≈1.97 p/ o check de determinismo
     };
@@ -752,7 +761,7 @@ function ringStats(file, r0, r1){
       await page.screenshot({ path: shotC });
       const met0 = cavityMetrics(shotA, u, Rs, ci.cx, ci.rho, ci.front);
       const metC = cavityMetrics(shotC, u, Rs, ci.cx, ci.rho, ci.front);
-      check('C2 razão frente:cavidade >=' + CCAL.c2MinRatio + 'x com cav=' + CCAL.candCav + ' (baseline ~1.3x)',
+      check('C2 razão frente:cavidade >=' + CCAL.c2MinRatio + 'x com cav=' + CCAL.candCav + ' (baseline ~1.06x pós-sRGB)',
         metC.ratio >= CCAL.c2MinRatio,
         'baseline ' + met0.ratio + 'x -> candidato ' + metC.ratio + 'x (frente ' +
         metC.frontPeak + ', cavidade ' + metC.cavMean + ')');

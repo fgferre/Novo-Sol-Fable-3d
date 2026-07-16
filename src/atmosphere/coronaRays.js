@@ -54,7 +54,10 @@ export function createCoronaRays(ctx){
     uTime: { value: 0 },
     uRight: { value: new THREE.Vector3(1,0,0) },
     uUp: { value: new THREE.Vector3(0,1,0) },
-    uRotY: { value: 0 },
+    // PR9 (achado 10): inversa da rotação mundial COMPLETA do Sol (tilt 7,25°
+    // + spin), compartilhada por frame via ctx.sunInvRot. Substitui o antigo
+    // uRotY, que só desfazia o spin e ignorava o tilt fixo.
+    uSunInvRot: { value: ctx.sunInvRot },
     uCharges: { value: charges },
     uActivity: { value: 0.5 },
     uHalo: { value: knob('halo', 0.55, 0.0, 2.0) },
@@ -72,7 +75,7 @@ export function createCoronaRays(ctx){
       'uniform float uTime;',
       'uniform vec3 uRight;',
       'uniform vec3 uUp;',
-      'uniform float uRotY;',
+      'uniform mat3 uSunInvRot;',
       'uniform vec4 uCharges[10];',
       'uniform float uActivity;',
       'uniform float uHalo;',
@@ -100,8 +103,10 @@ export function createCoronaRays(ctx){
       // raias acompanham a rotação e as regiões ativas — não são mais um
       // papel de parede da tela
       '  vec3 dirW = normalize(uRight*cos(ang) + uUp*sin(ang));',
-      '  float cy = cos(-uRotY); float sy = sin(-uRotY);',
-      '  vec3 dirO = vec3(dirW.x*cy - dirW.z*sy, dirW.y, dirW.x*sy + dirW.z*cy);',
+      // PR9 (achado 10): mundo -> objeto pela inversa COMPLETA da rotação do
+      // Sol (inclui o tilt de 7,25° antes ignorado), não só o spin -uRotY.
+      // uSunInvRot é ortonormal, mas mantemos o normalize por segurança.
+      '  vec3 dirO = normalize(uSunInvRot * dirW);',
       // coroa VIVA (backlog M2 nº4): os raios evoluíam a uTime*0.006 —
       // diff 0.00 em qualquer clipe, a camada morta que quebrava a
       // ilusão por contraste com as vivas. Três tempos: deriva angular

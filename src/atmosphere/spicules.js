@@ -15,8 +15,12 @@ export function createSpicules(ctx){
   var SPICULE_R = SUN_RADIUS*1.042;
   // mu na borda interna da casca (onde o disco a oculta):
   var SPICULE_MU0 = Math.sqrt(1.0 - (SUN_RADIUS*SUN_RADIUS)/(SPICULE_R*SPICULE_R));
+  // PR9 (achado 10): uSunInvRot é a inversa da rotação mundial COMPLETA do Sol
+  // (tilt 7,25° + spin), compartilhada por frame via ctx.sunInvRot. Traz o
+  // viewDir (mundo) ao espaço do objeto antes da projeção contra vPosObj.
   var spiculeUniforms = { uTime: { value: 0 }, uMu0: { value: SPICULE_MU0 },
-                          uSimTex: { value: simRTs[0].texture } };
+                          uSimTex: { value: simRTs[0].texture },
+                          uSunInvRot: { value: ctx.sunInvRot } };
   ctx.spiculeUniforms = spiculeUniforms;
   var spiculeMat = new THREE.ShaderMaterial({
     uniforms: spiculeUniforms,
@@ -36,6 +40,7 @@ export function createSpicules(ctx){
       'uniform float uTime;',
       'uniform float uMu0;',
       'uniform sampler2D uSimTex;',
+      'uniform mat3 uSunInvRot;',
       'varying vec3 vNormalW;',
       'varying vec3 vPositionW;',
       'varying vec3 vPosObj;',
@@ -50,8 +55,17 @@ export function createSpicules(ctx){
       '  float h = 1.0 - mu/uMu0;',
       '  if (h < -0.35) { discard; }',
       // coordenada angular estável ao longo do limbo (espaço do objeto,
-      // gira com o Sol): posição projetada perpendicular à direção de visão
-      '  vec3 sil = normalize(vPosObj - viewDir*dot(vPosObj, viewDir));',
+      // gira com o Sol): posição projetada perpendicular à direção de visão.
+      // PR9 (achado 10): viewDir é MUNDO e vPosObj é OBJETO — antes o dot/
+      // subtração misturava espaços. Trazemos viewDir ao espaço do objeto
+      // (inversa completa da rotação do Sol: tilt+spin) para a franja ficar
+      // ancorada ao Sol, não à câmera.
+      '  vec3 viewDirO = normalize(uSunInvRot * viewDir);',
+      '  vec3 silV = vPosObj - viewDirO*dot(vPosObj, viewDirO);',
+      // guarda por epsilon: com viewDirO ~paralelo à radial a rejeição
+      // degenera em vetor nulo e normalize daria NaN (piscada). Fallback.
+      '  float silLen = length(silV);',
+      '  vec3 sil = silLen > 1e-4 ? silV / silLen : vec3(0.0, 1.0, 0.0);',
       // T1.2: as espículas SENTEM o campo evoluído. |Br| do sim na direção
       // da silhueta (mesma textura que faz filamentos/plage no disco):
       // onde uma região ativa cruza o limbo, a franja fica mais alta,

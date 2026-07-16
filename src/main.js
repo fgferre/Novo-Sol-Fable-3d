@@ -123,6 +123,13 @@ function init(){
   createSunMesh(ctx);
   var sunMesh = ctx.sunMesh;
 
+  // PR9 (achado 10) — UMA inversa da rotação mundial COMPLETA do Sol (tilt de
+  // 7,25° + spin) por frame, compartilhada pelos raios coronais e pelas
+  // espículas para ancorar direções mundo->objeto. Criada aqui (antes das
+  // factories) para que os uniforms uSunInvRot referenciem o mesmo Matrix3;
+  // o valor é recomputado in-place no animate.
+  ctx.sunInvRot = new THREE.Matrix3();
+
   createCoronaRays(ctx);
   var coronaRays = ctx.coronaRays, coronaOuter = ctx.coronaOuter,
       coronaRaysUniforms = ctx.coronaRaysUniforms, CORONA_SIZE = ctx.CORONA_SIZE;
@@ -318,6 +325,8 @@ function init(){
   var promWorldTmp = new THREE.Vector3();
   var camRightTmp = new THREE.Vector3();
   var camUpTmp = new THREE.Vector3();
+  // PR9 — scratch p/ montar a rotação do Sol a partir da quaternion fresca
+  var sunRotM4 = new THREE.Matrix4();
   var SIM_STEP_INTERVAL = TP.simStep;
   // MACRO_SLOW (bug report do dono pós-LOOP-7): a macro-evolução — a
   // FORMA do campo de filamentos (fluxo advectado, canal G) e a
@@ -433,6 +442,13 @@ function init(){
     prominenceGroup.rotation.y = sunMesh.rotation.y;
     spiculeMesh.rotation.y = sunMesh.rotation.y;
     loopGroup.rotation.y = sunMesh.rotation.y;
+    // PR9 (achado 10): UMA inversa da rotação mundial do Sol por frame, da
+    // quaternion FRESCA (tilt.z + spin.y recém-atualizado) — consistente com o
+    // modelMatrix que o render usa neste frame. Ortonormal → inversa =
+    // transposta. Alimenta uSunInvRot dos raios coronais e das espículas.
+    // (sunMesh é filho da cena → quaternion == rotação mundial.)
+    sunRotM4.makeRotationFromQuaternion(sunMesh.quaternion);
+    ctx.sunInvRot.setFromMatrix4(sunRotM4).transpose();
     spiculeUniforms.uTime.value = ctx.elapsed;
 
     // FASE 3 — relógio do ciclo de 11 anos: só anda com cycle/lapse
@@ -591,7 +607,8 @@ function init(){
     camUpTmp.set(0,1,0).applyQuaternion(camera.quaternion);
     coronaRaysUniforms.uRight.value.copy(camRightTmp);
     coronaRaysUniforms.uUp.value.copy(camUpTmp);
-    coronaRaysUniforms.uRotY.value = sunMesh.rotation.y;
+    // PR9 (achado 10): uRotY removido — o uSunInvRot compartilhado (computado
+    // acima, tilt+spin) faz a transformação mundo->objeto completa no shader.
     var actSum = 0;
     for (var ai = 0; ai < pairStates.length; ai++) actSum += Math.abs(pairStates[ai].lead.w);
     coronaRaysUniforms.uActivity.value = Math.min(1.0, actSum/4.0);

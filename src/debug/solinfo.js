@@ -120,6 +120,16 @@ export function createSolInfo(ctx){
         return ctx.gpuPerf ? ctx.gpuPerf()
           : { supported: false, samples: 0, avgMs: 0, p95Ms: 0, worstMs: 0 };
       };
+      // PR10 — modo do bake da cromosfera (experimento ?chromoMrt=1):
+      // mode 'mrt' = 1º passe grava a fdir em attachment RG16F e o smear
+      // decodifica; 'legacy' = os dois passes recomputam o campo. reason
+      // documenta o gate ('knob-off' | 'active' | 'no-webgl2' | 'tier-low'
+      // | 'rt-8bit' | 'draw-buffers' | 'fbo-incomplete' | 'fbo-error').
+      window.__solInfo.chromoPerf = function(){
+        var m = ctx.chromoMode || { mode: 'legacy', reason: 'uninit', attachments: 1, rt: [0, 0] };
+        return { mode: m.mode, reason: m.reason,
+                 attachments: m.attachments, rt: m.rt };
+      };
       // PR0 — ?diag=1: manifesto do ambiente + ring de eventos (debug/
       // diag.js). Sem a query o módulo nem inicializa: manifest null e
       // ring vazio, sem custo algum no frame.

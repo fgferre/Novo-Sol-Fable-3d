@@ -22,8 +22,79 @@ export function createChromo(ctx){
   // ---------------------------------------------------------------
   var CHROMO_W = TP.chromo;
   var CHROMO_H = CHROMO_W >> 1;
-  var chromoRT = new THREE.WebGLRenderTarget(CHROMO_W, CHROMO_H, simRTOptions);
-  chromoRT.texture.wrapS = THREE.RepeatWrapping;   // costura de longitude
+  // ---------------------------------------------------------------
+  // PR10 (achado 5) — EXPERIMENTO MRT atrás de ?chromoMrt=1 (default 0 =
+  // caminho legado byte-idêntico). Os dois passes recalculavam o MESMO
+  // campo por texel (bField de 10 cargas + 3 snoise + sftGrad + ruído de
+  // giro + fdir) do mesmo snapshot/timestamp. Com MRT o 1º passe grava a
+  // direção fdir num attachment auxiliar RG16F (codificação octaédrica,
+  // 2×float16 — precisão de sobra p/ direção) e o smear a DECODIFICA em
+  // vez de recomputar. Gate de capacidade: WebGL2 + tier>low + RT half-
+  // float + 2 draw buffers + FBO completo; qualquer falha => fallback
+  // SILENCIOSO ao legado, exposto em __solInfo.chromoPerf() {mode,reason}.
+  // ---------------------------------------------------------------
+  var mrtWant = !!(ctx.urlQ && ctx.urlQ.chromoMrt === '1');
+  var mrtOk = false, mrtReason = 'knob-off';
+  if (mrtWant){
+    var glMrt = null;
+    try { glMrt = renderer.getContext(); } catch(e){}
+    if (!(renderer.capabilities && renderer.capabilities.isWebGL2)) mrtReason = 'no-webgl2';
+    else if (ctx.TIER === 'low') mrtReason = 'tier-low';
+    else if (!ctx.isHDR) mrtReason = 'rt-8bit';
+    else if (!glMrt || glMrt.getParameter(glMrt.MAX_DRAW_BUFFERS) < 2) mrtReason = 'draw-buffers';
+    else { mrtOk = true; mrtReason = 'active'; }
+  }
+  // RT do 1º passe: no modo MRT são 2 attachments (0 = RGBA idêntico ao
+  // legado; 1 = RG16F com a direção octaédrica). O bake é FATIADO: o
+  // scissor do slice recorta os DOIS attachments juntos, então cada banda
+  // grava cor+direção coerentes do mesmo timestamp.
+  function makeBakeRT(){
+    if (mrtOk){
+      var rtm = new THREE.WebGLRenderTarget(CHROMO_W, CHROMO_H, Object.assign({ count: 2 }, simRTOptions));
+      rtm.textures[0].wrapS = THREE.RepeatWrapping;   // costura de longitude
+      rtm.textures[1].format = THREE.RGFormat;        // + HalfFloat => RG16F
+      rtm.textures[1].type = THREE.HalfFloatType;
+      return rtm;
+    }
+    var rt1 = new THREE.WebGLRenderTarget(CHROMO_W, CHROMO_H, simRTOptions);
+    rt1.texture.wrapS = THREE.RepeatWrapping;   // costura de longitude
+    return rt1;
+  }
+  var chromoRT = makeBakeRT();
+  // fallback obrigatório: alguns drivers aceitam criar o FBO com RG16F e
+  // só reprovam no checkFramebufferStatus — sondar ANTES de comprometer
+  // os shaders com o caminho MRT.
+  if (mrtOk){
+    try {
+      renderer.setRenderTarget(chromoRT);
+      var glFb = renderer.getContext();
+      var fbSt = glFb.checkFramebufferStatus(glFb.FRAMEBUFFER);
+      renderer.setRenderTarget(null);
+      if (fbSt !== glFb.FRAMEBUFFER_COMPLETE){ mrtOk = false; mrtReason = 'fbo-incomplete'; }
+    } catch(e){
+      mrtOk = false; mrtReason = 'fbo-error';
+      try { renderer.setRenderTarget(null); } catch(e2){}
+    }
+    if (!mrtOk){ chromoRT.dispose(); chromoRT = makeBakeRT(); }
+  }
+  ctx.chromoMode = { mode: mrtOk ? 'mrt' : 'legacy', reason: mrtReason,
+                     attachments: mrtOk ? 2 : 1, rt: [CHROMO_W, CHROMO_H] };
+  // encode/decode octaédrico padrão: mapeia a esfera unitária no quadrado
+  // [-1,1]² (dobra o hemisfério z<0 sobre as bordas) — 2 floats bastam
+  var OCT_GLSL = [
+    'vec2 octWrap(vec2 v){',
+    '  return (1.0 - abs(v.yx)) * vec2(v.x >= 0.0 ? 1.0 : -1.0, v.y >= 0.0 ? 1.0 : -1.0);',
+    '}',
+    'vec2 octEncode(vec3 n){',
+    '  n /= (abs(n.x) + abs(n.y) + abs(n.z));',
+    '  return (n.z >= 0.0) ? n.xy : octWrap(n.xy);',
+    '}',
+    'vec3 octDecode(vec2 e){',
+    '  vec3 n = vec3(e, 1.0 - abs(e.x) - abs(e.y));',
+    '  if (n.z < 0.0) n.xy = octWrap(n.xy);',
+    '  return normalize(n);',
+    '}'
+  ].join('\n');
   var chromoUniforms = {
     uTime: { value: 0 },
     uSimTex: { value: simRTs[0].texture },
@@ -132,7 +203,23 @@ export function createChromo(ctx){
     '}'
   ].join('\n');
   chromoFragment = tuneLic(chromoFragment);
-  var chromoMaterial = new THREE.ShaderMaterial({ uniforms: chromoUniforms, vertexShader: quadVertex, fragmentShader: chromoFragment });
+  // PR10: a variante MRT é o MESMO shader (GLSL3) com outputs explícitos —
+  // attachment 0 recebe o vec4 legado intacto, attachment 1 a fdir
+  // octaédrica. Derivada por substituição textual da linha de saída para
+  // nunca divergir do corpo legado.
+  var chromoMaterial;
+  if (mrtOk){
+    var CHROMO_OUT = 'gl_FragColor = vec4(min(heatLS, 1.0), fil, min(plage, 1.0), 0.5 + 0.5*fibC);';
+    var chromoFragmentMrt = [
+      'layout(location = 0) out vec4 oColor;',
+      'layout(location = 1) out vec2 oDir;'
+    ].join('\n') + '\n' + OCT_GLSL + '\n' + chromoFragment.replace(CHROMO_OUT,
+      'oColor = vec4(min(heatLS, 1.0), fil, min(plage, 1.0), 0.5 + 0.5*fibC);\n' +
+      '  oDir = octEncode(fdir);');
+    chromoMaterial = new THREE.ShaderMaterial({ uniforms: chromoUniforms, vertexShader: quadVertex, fragmentShader: chromoFragmentMrt, glslVersion: THREE.GLSL3 });
+  } else {
+    chromoMaterial = new THREE.ShaderMaterial({ uniforms: chromoUniforms, vertexShader: quadVertex, fragmentShader: chromoFragment });
+  }
   var chromoScene = makeFullscreenScene(chromoMaterial);
 
   // ---------------------------------------------------------------
@@ -197,11 +284,55 @@ export function createChromo(ctx){
     '  gl_FragColor = vec4(sm.r, sm.g, sm.b, fib*0.5 + 0.5);',
     '}'
   ].join('\n');
-  var smearMaterial = new THREE.ShaderMaterial({ uniforms: smearUniforms, vertexShader: quadVertex, fragmentShader: smearFragment });
+  // PR10: no modo MRT o smear NÃO recomputa bField/snoise/sftGrad/giro —
+  // amostra a fdir do attachment 1 (mesmo texel, mesmo timestamp do 1º
+  // passe) e decodifica. Sobram só as leituras de textura da varredura.
+  var smearMaterial;
+  if (mrtOk){
+    smearUniforms.uFdir = { value: chromoRT.textures[1] };
+    var smearFragmentMrt = [
+      'layout(location = 0) out vec4 oColor;',
+      'uniform sampler2D uSrc;',
+      'uniform sampler2D uFdir;',
+      'uniform vec2 uTexel;',
+      'varying vec2 vUv;'
+    ].join('\n') + '\n' + OCT_GLSL + '\n' + [
+      'vec2 sphToUv(vec3 q){',
+      '  return vec2(fract(atan(q.z, q.x)/6.28318530718),',
+      '              asin(clamp(q.y, -1.0, 1.0))/3.14159265359 + 0.5);',
+      '}',
+      'void main(){',
+      '  float lon = vUv.x*6.28318530718;',
+      '  float lat = (vUv.y-0.5)*3.14159265359;',
+      '  vec3 sp = vec3(cos(lat)*cos(lon), sin(lat), cos(lat)*sin(lon));',
+      // direção do campo lida do bake (attachment 1), não recomputada
+      '  vec3 dir = octDecode(texture2D(uFdir, vUv).rg);',
+      // varredura longa: ±4 passos de ~3 texels ao longo do fluxo
+      '  float stepArc = uTexel.x * 6.28318530718 * 1.6;',
+      '  vec4 acc = vec4(0.0); float wsum = 0.0;',
+      '  for(int i=-4;i<=4;i++){',
+      '    vec3 q = normalize(sp + dir*(float(i)*stepArc));',
+      '    float w = 1.0 - abs(float(i))/5.2;',
+      '    acc += texture2D(uSrc, sphToUv(q)) * w;',
+      '    wsum += w;',
+      '  }',
+      '  vec4 sm = acc / wsum;',
+      // recupera o contraste dos fios após o borrão direcional
+      '  float fib = sm.a*2.0 - 1.0;',
+      '  fib = sign(fib) * pow(abs(fib), 0.62);',
+      '  oColor = vec4(sm.r, sm.g, sm.b, fib*0.5 + 0.5);',
+      '}'
+    ].join('\n');
+    smearMaterial = new THREE.ShaderMaterial({ uniforms: smearUniforms, vertexShader: quadVertex, fragmentShader: smearFragmentMrt, glslVersion: THREE.GLSL3 });
+  } else {
+    smearMaterial = new THREE.ShaderMaterial({ uniforms: smearUniforms, vertexShader: quadVertex, fragmentShader: smearFragment });
+  }
   var smearScene = makeFullscreenScene(smearMaterial);
 
   // 3 conjuntos de bake (atual / anterior / escrita): o shader lê os dois
-  // primeiros em crossfade enquanto o terceiro é assado fatiado
+  // primeiros em crossfade enquanto o terceiro é assado fatiado.
+  // PR10: os alvos `c` (1º passe) nascem via makeBakeRT — 2 attachments no
+  // modo MRT, idênticos ao legado fora dele; os `s` (smear) seguem RGBA.
   function cloneChromoRT(){
     var rt = new THREE.WebGLRenderTarget(CHROMO_W, CHROMO_H, simRTOptions);
     rt.texture.wrapS = THREE.RepeatWrapping;
@@ -209,8 +340,8 @@ export function createChromo(ctx){
   }
   var bakeSets = [
     { c: chromoRT, s: chromoRT2 },
-    { c: cloneChromoRT(), s: cloneChromoRT() },
-    { c: cloneChromoRT(), s: cloneChromoRT() }
+    { c: makeBakeRT(), s: cloneChromoRT() },
+    { c: makeBakeRT(), s: cloneChromoRT() }
   ];
   ctx.bakeCur = 0, ctx.bakePrev = 0, ctx.bakeWrite = 1;
   ctx.bakeSwapT = 0, ctx.bakeCycleDt = 0.25;
@@ -254,6 +385,9 @@ export function createChromo(ctx){
     } else {
       smearUniforms.uTime.value = timeNow;
       smearUniforms.uSrc.value = ws.c.texture;
+      // PR10: a fdir acompanha o conjunto de escrita (attachment 1 do
+      // MESMO ciclo que o uSrc — sem costura temporal entre cor e direção)
+      if (mrtOk) smearUniforms.uFdir.value = ws.c.textures[1];
       renderer.setRenderTarget(ws.s);
       renderer.render(smearScene, quadCamera);
     }

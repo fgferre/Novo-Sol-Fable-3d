@@ -24,6 +24,18 @@ export function createConfig(ctx){
   // Math.random internamente (UUIDs) em quantidades que variam por versão
   // e contaminaria o stream. Sem ?det=1, srand === Math.random.
   var DET = urlQ.det === '1';
+  // Achado 11 (PR7) — deriva idle determinística. markInteraction() é o
+  // relógio ÚNICO da última interação, escrito por todo listener de câmera
+  // (controls.js) e por setView (solinfo.js). No modo normal continua
+  // wall-clock (performance.now); no modo determinístico registra o FRAME
+  // (ctx.detFrames) em vez do tempo real. A deriva idle no animate lê o mesmo
+  // relógio: em ?det o gatilho vira frame-exato (frame 133) e para de depender
+  // da velocidade da máquina — era o flake do A/B base-vs-base no desktop-fit.
+  ctx.lastInteraction = 0;
+  ctx.lastInteractionFrame = 0;
+  ctx.markInteraction = DET
+    ? function(){ ctx.lastInteractionFrame = ctx.detFrames; }
+    : function(){ ctx.lastInteraction = performance.now(); };
   // ?hold=F congela o tempo simulado a partir do frame F (delta=0): o
   // frame renderizado vira uma imagem ESTÁTICA e o screenshot deixa de
   // correr contra o requestAnimationFrame.

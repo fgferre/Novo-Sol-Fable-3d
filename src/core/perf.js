@@ -18,7 +18,15 @@ export function createPerf(ctx){
   var perfFrameMs = new Float32Array(240);
   var perfBusyMs  = new Float32Array(240);
   ctx.perfIdx = 0, ctx.perfN = 0, ctx.perfLastT = 0, ctx.perfCalls = 0;
-  var perfBakes = [];
+  // Achado 14 (PR7): ring FIXO de 64 timestamps de bake (índice circular),
+  // escrito 1×/ciclo no hot path do animate — SEM push/shift ilimitado. Antes
+  // era um Array com push() a cada ciclo e a poda (shift dos >5s) só rodava
+  // dentro de perf(), chamado ~só com o HUD ligado: no default o array crescia
+  // ~7,5 entradas/s (leak lento). 64 slots cobrem >8s de bakes a 60fps, folga
+  // sobre a janela de 5s de bakesPerSec, então nenhuma amostra em-janela se
+  // perde. perf() virou só-leitura (conta os slots vivos dentro de 5s).
+  var perfBakes = new Float64Array(64);
+  ctx.perfBakeIdx = 0; ctx.perfBakeN = 0;
   var subToggle = { sim:true, bake:true, bloom:true, spicules:true,
                     corona:true, prominences:true, stars:true, loops:true,
                     corona3d:true,     // FASE 4: A/B do raymarch isolado

@@ -46,15 +46,23 @@ export function createSolInfo(ctx){
           return { avg: +(s/n).toFixed(2),
                    p95: +a[Math.min(n-1, Math.floor(n*0.95))].toFixed(2) };
         }
+        // Achado 14 (PR7): perfBakes é um RING fixo de 64 timestamps escrito
+        // no hot path; perf() é SÓ-LEITURA — conta quantos bakes caíram nos
+        // últimos 5s sem podar (a poda antiga só rodava aqui, então com o HUD
+        // desligado o array crescia sem limite). A ordem circular é
+        // irrelevante para a contagem: basta varrer os perfBakeN slots vivos.
         var now = performance.now();
-        while (perfBakes.length && now - perfBakes[0] > 5000) perfBakes.shift();
+        var nBakes = 0;
+        for (var bi = 0; bi < ctx.perfBakeN; bi++){
+          if (now - perfBakes[bi] <= 5000) nBakes++;
+        }
         var f = stats(perfFrameMs, ctx.perfN);
         return { tier: TIER, scale: RENDER_SCALE, dpr: ctx.pixelRatio,
                  autoScale: SCALE_STEPS[ctx.scaleIdx],
                  tune: { on: autoTuneOn, events: ctx.tuneEvents },
                  frames: ctx.perfN, ms: f, busy: stats(perfBusyMs, ctx.perfN),
                  fps: f.avg > 0 ? +(1000/f.avg).toFixed(1) : 0,
-                 calls: ctx.perfCalls, bakesPerSec: +(perfBakes.length/5).toFixed(2),
+                 calls: ctx.perfCalls, bakesPerSec: +(nBakes/5).toFixed(2),
                  toggles: JSON.parse(JSON.stringify(subToggle)),
                  size: [renderer.domElement.width, renderer.domElement.height] };
       };
@@ -89,7 +97,8 @@ export function createSolInfo(ctx){
                  look: LOOK ? 'sunshine' : '' };
       };
       window.__solInfo.perfReset = function(){
-        ctx.perfN = 0; ctx.perfIdx = 0; ctx.perfLastT = 0; perfBakes.length = 0;
+        ctx.perfN = 0; ctx.perfIdx = 0; ctx.perfLastT = 0;
+        ctx.perfBakeN = 0; ctx.perfBakeIdx = 0;
       };
       // Achado 9 — QA do resize/DPR/auto-tune transacional. cssW/cssH = últimas
       // dims LÓGICAS aplicadas; physW/physH = dims FÍSICAS do drawing buffer/
@@ -435,7 +444,7 @@ export function createSolInfo(ctx){
         ctx.theta = th; ctx.phi = Math.max(0.18, Math.min(Math.PI-0.18, ph));
         ctx.targetCamDist = ctx.camDist = Math.max(minDist, Math.min(maxDist, dist));
         ctx.thetaVel = 0; ctx.phiVel = 0;
-        ctx.lastInteraction = performance.now();
+        ctx.markInteraction();
         updateCamera();
       };
       // FASE 5 — QA do CME: força a erupção no par i (flare grande +

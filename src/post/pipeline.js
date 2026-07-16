@@ -157,9 +157,10 @@ export function createPipeline(ctx){
   });
   var upsampleScene = makeFullscreenScene(upsampleMaterial);
 
-  // streak anamórfico (camada cinema): blur horizontal longo em RT
-  // pequeno (w/4 × h/16), 2 passadas com alcance crescente; só roda
-  // quando o knob streak > 0 — custo zero no default
+  // streak anamórfico (camada cinema): pré-filtro vertical + blur
+  // horizontal longo em RT pequeno (w/4 × h/16), 3 passes reusando 2 RTs
+  // (fonte→A, A→B, B→A) com alcance horizontal crescente; só roda quando
+  // o knob streak > 0 — custo zero no default
   var streakRTa = new THREE.WebGLRenderTarget(2,2, {
     minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter,
     format:THREE.RGBAFormat, type: rtType, depthBuffer:false, stencilBuffer:false
@@ -184,17 +185,47 @@ export function createPipeline(ctx){
   ].join('\n');
   var streakMaterial = new THREE.ShaderMaterial({ uniforms: streakUniforms, vertexShader: quadVertex, fragmentShader: streakFragment });
   var streakScene = makeFullscreenScene(streakMaterial);
+  // Achado 13 — pré-filtro vertical do streak. O 1º passe reduz 4:1 em Y
+  // (bloomMips[1] ~h/4 → streakRTa ~h/16): o centro de cada texel-destino d
+  // mapeia para ~4d+2 no espaço de texel da FONTE, exatamente na fronteira
+  // entre as linhas 4d+1 e 4d+2. Uma ÚNICA amostra bilinear (o que havia)
+  // lê só esse par do meio e IGNORA as linhas 4d e 4d+3 → fontes brilhantes
+  // em pan vertical aliasam/pulsam. Duas amostras bilineares em ±1 texel-
+  // fonte caem em 4d+1 (média bilinear de 4d,4d+1) e 4d+3 (média de 4d+2,
+  // 4d+3); a média das duas integra as QUATRO linhas com peso 0.25 cada.
+  // Largura idêntica (fonte w/4 → A w/4) ⇒ mapeamento identidade em X, sem
+  // reamostragem horizontal; o blur H fica nos passes 2 e 3.
+  var streakPreUniforms = { tDiffuse:{value:null}, uTexelY:{value:1} };
+  var streakPreFragment = [
+    'uniform sampler2D tDiffuse;',
+    'uniform float uTexelY;',
+    'varying vec2 vUv;',
+    'void main(){',
+    '  vec3 c = texture2D(tDiffuse, vUv + vec2(0.0,  uTexelY)).rgb;',
+    '  c     += texture2D(tDiffuse, vUv + vec2(0.0, -uTexelY)).rgb;',
+    '  gl_FragColor = vec4(c * 0.5, 1.0);',
+    '}'
+  ].join('\n');
+  var streakPreMaterial = new THREE.ShaderMaterial({ uniforms: streakPreUniforms, vertexShader: quadVertex, fragmentShader: streakPreFragment });
+  var streakPreScene = makeFullscreenScene(streakPreMaterial);
   function renderStreak(){
+    // passe 1 — pré-filtro vertical (fonte bloomMips[1] → A): a redução 4:1
+    // em Y integra as 4 linhas-fonte (2 taps bilineares em ±1 texel-fonte)
     var src = bloomMips[Math.min(1, bloomMips.length-1)];
-    streakUniforms.tDiffuse.value = src.rt.texture;
-    streakUniforms.uTexelX.value = 1/src.w;
-    streakUniforms.uStride.value = 2.0;
+    streakPreUniforms.tDiffuse.value = src.rt.texture;
+    streakPreUniforms.uTexelY.value = 1/src.h;
     renderer.setRenderTarget(streakRTa);
-    renderer.render(streakScene, quadCamera);
+    renderer.render(streakPreScene, quadCamera);
+    // passe 2 — blur horizontal curto (A → B, stride 2)
     streakUniforms.tDiffuse.value = streakRTa.texture;
     streakUniforms.uTexelX.value = 1/streakW;
-    streakUniforms.uStride.value = 8.0;
+    streakUniforms.uStride.value = 2.0;
     renderer.setRenderTarget(streakRTb);
+    renderer.render(streakScene, quadCamera);
+    // passe 3 — blur horizontal longo (B → A, stride 8); o composite lê A
+    streakUniforms.tDiffuse.value = streakRTb.texture;
+    streakUniforms.uStride.value = 8.0;
+    renderer.setRenderTarget(streakRTa);
     renderer.render(streakScene, quadCamera);
   }
 
@@ -520,7 +551,9 @@ export function createPipeline(ctx){
     streakRTb.setSize(streakW, streakH);
   }
   ctx.EXP0 = EXP0; ctx.BLOOM_BASE0 = BLOOM_BASE0; ctx.BLOOM_THRESHOLD = BLOOM_THRESHOLD;
-  ctx.sceneRT = sceneRT; ctx.bloomMips = bloomMips; ctx.streakRTb = streakRTb;
+  // Achado 13: após o 3º passe (B→A) o streak final está em A; o composite
+  // lê streakOut (= streakRTa)
+  ctx.sceneRT = sceneRT; ctx.bloomMips = bloomMips; ctx.streakOut = streakRTa;
   ctx.downsampleUniforms = downsampleUniforms; ctx.upsampleUniforms = upsampleUniforms;
   ctx.compUniforms = compUniforms; ctx.compScene = compScene;
   ctx.renderBloom = renderBloom; ctx.renderStreak = renderStreak;

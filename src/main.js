@@ -170,7 +170,7 @@ function init(){
 
   createPipeline(ctx);
   var EXP0 = ctx.EXP0, BLOOM_BASE0 = ctx.BLOOM_BASE0, BLOOM_THRESHOLD = ctx.BLOOM_THRESHOLD,
-      sceneRT = ctx.sceneRT, bloomMips = ctx.bloomMips, streakRTb = ctx.streakRTb,
+      sceneRT = ctx.sceneRT, bloomMips = ctx.bloomMips, streakOut = ctx.streakOut,
       downsampleUniforms = ctx.downsampleUniforms, upsampleUniforms = ctx.upsampleUniforms,
       compUniforms = ctx.compUniforms, compScene = ctx.compScene,
       renderBloom = ctx.renderBloom, renderStreak = ctx.renderStreak,
@@ -675,7 +675,7 @@ function init(){
     compUniforms.tVeil.value = bloomMips[bloomMips.length-1].rt.texture;
     if (ctx.STREAK_K > 0.001 && subToggle.bloom) renderStreak();
     compUniforms.uStreak.value = subToggle.bloom ? ctx.STREAK_K : 0.0;
-    compUniforms.tStreak.value = streakRTb.texture;
+    compUniforms.tStreak.value = streakOut.texture;
     compUniforms.uCTime.value = ctx.elapsed;
     // centro/raio do disco em UV de tela (p/ o anel de heat-haze)
     cineProj.set(0,0,0).project(camera);

@@ -39,6 +39,8 @@ jobs:
         run: node tools/qa-time-controls.js dist-single/index.html
       - name: QA de previews e DOF
         run: node tools/qa-event-controls.js dist-single/index.html
+      - name: QA temporal dos efeitos sutis
+        run: node tools/qa-subtle-controls.js dist-single/index.html qa-subtle
       - name: Paridade visual vs baselines
         run: |
           node tools/parity.js qa-out --file dist-single/index.html
@@ -51,6 +53,7 @@ jobs:
           path: |
             qa-out/
             qa-diff/
+            qa-subtle/
           if-no-files-found: ignore
       # PR0: builds TESTADOS viram artifact (só chega aqui com o QA verde;
       # steps posteriores a uma falha são pulados). O workflow Pages

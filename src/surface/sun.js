@@ -453,7 +453,9 @@ export function createSunMesh(ctx){
     '    pmSum *= uPmode;',
     '  }',
     '  vPm = pmSum;',
-    '  vec3 displaced = position + normal * (n * uDispScale + pmSum * 0.004 * length(position));',
+    // PR 7: autoridade dobrada no topo do controle; uPmode=0 continua
+    // passando exatamente pelo mesmo ramo e preserva o frame padrão.
+    '  vec3 displaced = position + normal * (n * uDispScale + pmSum * 0.008 * length(position));',
     '  vec4 worldPos = modelMatrix * vec4(displaced, 1.0);',
     '  vPositionW = worldPos.xyz;',
     '  vNormalW = normalize(mat3(modelMatrix) * normal);',
@@ -798,7 +800,7 @@ export function createSunMesh(ctx){
     '  color += vec3(1.0, 0.70, 0.32) * clamp(plage, 0.0, 1.0) * uPlageEm;',
     // p-mode: a crista da onda acústica é levemente mais quente/brilhante
     // (perturbação de temperatura acompanha a de deslocamento)
-    '  color *= 1.0 + vPm * 0.05;',
+    '  color *= 1.0 + vPm * 0.10;',
     '  gl_FragColor = vec4(color, 1.0);',
     '}'
   ].join('\n');

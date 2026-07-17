@@ -5,14 +5,14 @@ const { chromium } = require('playwright');
 
 const htmlFile = process.argv[2] || 'dist-single/index.html';
 const base = 'file://' + path.resolve(htmlFile);
-let fails = 0;
+let fails = 0, browser;
 function check(name, ok, detail){
   if (!ok) fails++;
   console.log((ok ? 'PASS  ' : 'FAIL  ') + name + (detail ? '  (' + detail + ')' : ''));
 }
 
 (async () => {
-  const browser = await chromium.launch({
+  browser = await chromium.launch({
     args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
   });
   const page = await browser.newPage({ viewport: { width: 960, height: 600 }, deviceScaleFactor: 1 });
@@ -200,6 +200,7 @@ function check(name, ok, detail){
 
   check('console sem erros', errors.length === 0, errors.slice(0, 3).join(' | '));
   await browser.close();
+  browser = null;
   if (fails){ console.log('QA ESTADO: ' + fails + ' FALHA(S)'); process.exitCode = 1; }
   else console.log('QA ESTADO: tudo verde');
-})().catch((e) => { console.error(e); process.exitCode = 2; });
+})().catch(async (e) => { console.error(e); if (browser) await browser.close(); process.exitCode = 2; });

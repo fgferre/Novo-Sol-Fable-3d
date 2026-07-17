@@ -4,11 +4,11 @@ const path=require('path');
 const {chromium}=require('playwright');
 const htmlFile=process.argv[2]||'dist-single/index.html';
 const base='file://'+path.resolve(htmlFile);
-let fails=0;
+let fails=0,browser;
 function check(name,ok,detail){if(!ok)fails++;console.log((ok?'PASS  ':'FAIL  ')+name+(detail?'  ('+detail+')':''));}
 
 (async()=>{
-  const browser=await chromium.launch({args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
+  browser=await chromium.launch({args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
   const page=await browser.newPage({viewport:{width:800,height:520},deviceScaleFactor:1});
   page.setDefaultTimeout(420000);
   const errors=[];page.on('pageerror',(e)=>errors.push(e.message));
@@ -62,5 +62,6 @@ function check(name,ok,detail){if(!ok)fails++;console.log((ok?'PASS  ':'FAIL  ')
 
   check('console sem erros',errors.length===0,errors.slice(0,3).join(' | '));
   await browser.close();
+  browser=null;
   if(fails){console.log('QA TEMPO: '+fails+' FALHA(S)');process.exitCode=1;}else console.log('QA TEMPO: tudo verde');
-})().catch((e)=>{console.error(e);process.exitCode=2;});
+})().catch(async(e)=>{console.error(e);if(browser)await browser.close();process.exitCode=2;});

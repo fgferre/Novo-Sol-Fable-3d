@@ -60,6 +60,13 @@ function milkyWay(ctx, v){
   if (ctx.milkyWay) ctx.milkyWay.material.opacity = v;
   if (ctx.mwNebUniforms) ctx.mwNebUniforms.uMW.value = v;
 }
+export function grainGain(v){
+  v = Math.max(0, v);
+  return v < 1 ? Math.sqrt(v) : v;
+}
+function grain(ctx, v){
+  if (ctx.compUniforms) ctx.compUniforms.uGrain.value = grainGain(v);
+}
 bloomStrength.read=function(ctx){ return ctx.BLOOM_STRENGTH_BASE; };
 exposure.read=function(ctx){ return ctx.compUniforms ? ctx.compUniforms.uExposure.value : undefined; };
 bloomThreshold.read=function(ctx){ return ctx.thresholdUniforms ? ctx.thresholdUniforms.uThreshold.value : ctx.BLOOM_THRESHOLD; };
@@ -67,6 +74,7 @@ bloomKnee.read=function(ctx){ return ctx.thresholdUniforms ? ctx.thresholdUnifor
 bloomSpread.read=function(ctx){ return ctx.downsampleUniforms ? ctx.downsampleUniforms.uSpread.value : ctx.BLOOM_SPREAD; };
 stars.read=function(ctx){ return ctx.stars ? ctx.stars.material.opacity : undefined; };
 milkyWay.read=function(ctx){ return ctx.milkyWay ? ctx.milkyWay.material.opacity : undefined; };
+grain.read=function(ctx){ return ctx.compUniforms ? ctx.compUniforms.uGrain.value : undefined; };
 
 function cvolCondition(ctx, v){
   if (ctx.CVOL_STEPS <= 0) return { effective:0, active:false, reason:'tier-unavailable' };
@@ -114,7 +122,9 @@ function timeMetrics(ctx, runtime){
 
 export const CONTROL_SCHEMA = [
   def('tempo','speed','Ritmo do tempo',0.05,3,0.05,1,setCtx('TIME_SCALE')),
-  def('tempo','pmode','Oscilações (p-modes)',0,1,0.05,0,setUniform('sunUniforms','uPmode')),
+  def('tempo','pmode','Oscilações (p-modes)',0,1,0.05,0,setUniform('sunUniforms','uPmode'),{
+    metrics:function(ctx, v){ return { runtime:ctx.sunUniforms ? ctx.sunUniforms.uPmode.value : 0,
+      displacementLimit:0.0088*v, brightnessLimit:0.11*v }; }}),
   def('tempo','cycle','Profundidade do ciclo',0,1,0.05,0,setCtx('CYCLE_K'),{condition:cycleCondition,
     metrics:function(ctx){ return timeMetrics(ctx,ctx.CYCLE_K); }}),
   def('tempo','lapse','Velocidade do ciclo',0,1,0.05,0,setCtx('LAPSE_K'),{condition:lapseCondition,
@@ -131,7 +141,10 @@ export const CONTROL_SCHEMA = [
   def('luz & cor','plageglow','Brilho das plages',0,1.5,0.05,0.35,setUniform('sunUniforms','uPlageEm')),
   def('luz & cor','sat','Saturação',0,2,0.02,1.08,setUniform('compUniforms','uSat')),
   def('luz & cor','vig','Vinheta',0,1.5,0.05,0.55,setUniform('compUniforms','uVig'),{preset:0.85}),
-  def('luz & cor','grain','Grão de filme',0,5,0.1,1,setUniform('compUniforms','uGrain'),{preset:1.7}),
+  def('luz & cor','grain','Grão de filme',0,5,0.1,1,grain,{preset:1.7,
+    metrics:function(ctx, v){ var gain=grainGain(v); return {
+      runtime:ctx.compUniforms ? ctx.compUniforms.uGrain.value : gain,
+      gain:gain, amplitude8bit:0.8*gain }; }}),
 
   def('cinema','veil','Halação (glare)',0,1.5,0.05,0,setCtx('VEIL_BASE'),{preset:0.85}),
   def('cinema','streak','Flare anamórfico',0,1.5,0.05,0,setCtx('STREAK_K'),{preset:0.65}),
@@ -143,7 +156,10 @@ export const CONTROL_SCHEMA = [
   def('cinema','shimmer','Calor no limbo',0,1.5,0.05,0,setUniform('compUniforms','uShimmer'),{preset:0.45}),
   def('cinema','tone','Grade Sunshine',0,1.2,0.05,0,setUniform('compUniforms','uTone'),{preset:0.65}),
   def('cinema','film','Filme (ACES→AgX)',0,1,0.05,0,setUniform('compUniforms','uFilm')),
-  def('cinema','hand','Câmera de mão',0,1.5,0.05,0,setCtx('HAND_K')),
+  def('cinema','hand','Micro-movimento de câmera',0,1.5,0.05,0,setCtx('HAND_K'),{
+    metrics:function(ctx, v){ return { runtime:ctx.HAND_K,
+      thetaOffset:ctx.handThetaOffset || 0, phiOffset:ctx.handPhiOffset || 0,
+      maxTheta:0.0146*v, maxPhi:0.011*v }; }}),
   def('cinema','dof','Foco raso (bokeh hex)',0,1.5,0.05,0,setCtx('DOF_K'),{preset:0.5,condition:dofCondition,
     metrics:function(ctx){ return { runtime:ctx.compUniforms ? ctx.compUniforms.uDof.value : 0,
       focus:ctx.compUniforms ? ctx.compUniforms.uDofFocus.value : 0 }; }}),

@@ -3,8 +3,9 @@
 const path = require('path');
 const { chromium } = require('playwright');
 const url = 'file://' + path.resolve(process.argv[2] || 'dist-single/index.html');
+let browser;
 (async () => {
-  const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+  browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
   const page = await browser.newPage({ viewport: { width: 1000, height: 700 } });
   // SwiftShader renderiza devagar; o default de 30s estoura em screenshot
   page.setDefaultTimeout(120000);
@@ -71,5 +72,6 @@ const url = 'file://' + path.resolve(process.argv[2] || 'dist-single/index.html'
   for (const [name, ok] of results) { console.log((ok ? 'PASS' : 'FAIL') + '  ' + name); if (!ok) fail++; }
   if (msgs.length) { console.log('console errors:'); msgs.forEach((m) => console.log(m)); fail++; }
   await browser.close();
+  browser = null;
   process.exitCode = fail ? 2 : 0;
-})();
+})().catch(async(e)=>{console.error(e);if(browser)await browser.close();process.exitCode=2;});

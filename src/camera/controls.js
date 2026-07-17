@@ -32,15 +32,21 @@ export function createControls(ctx){
   var rotId = null;
   var pinchPrevDist = 0;
   var flingSamples = [];
+  ctx.handThetaOffset = 0;
+  ctx.handPhiOffset = 0;
 
   function updateCamera(){
     var th = ctx.theta, ph = ctx.phi;
     // offsets de "mão" aplicados só na POSE do frame (theta/phi reais
     // ficam intactos: soltar o knob volta exatamente ao enquadramento)
+    ctx.handThetaOffset = 0;
+    ctx.handPhiOffset = 0;
     if (ctx.HAND_K > 0.001){
       var ht = ctx.elapsed || 0;
-      th += ctx.HAND_K*(0.0042*Math.sin(ht*0.291) + 0.0023*Math.sin(ht*0.833+1.7) + 0.0008*Math.sin(ht*2.31+0.4));
-      ph += ctx.HAND_K*(0.0031*Math.sin(ht*0.247+0.9) + 0.0017*Math.sin(ht*0.911+2.6) + 0.0007*Math.sin(ht*2.73+1.2));
+      ctx.handThetaOffset = ctx.HAND_K*(0.0084*Math.sin(ht*0.291) + 0.0046*Math.sin(ht*0.833+1.7) + 0.0016*Math.sin(ht*2.31+0.4));
+      ctx.handPhiOffset = ctx.HAND_K*(0.0062*Math.sin(ht*0.247+0.9) + 0.0034*Math.sin(ht*0.911+2.6) + 0.0014*Math.sin(ht*2.73+1.2));
+      th += ctx.handThetaOffset;
+      ph += ctx.handPhiOffset;
     }
     var sp = Math.sin(ph);
     camera.position.set(

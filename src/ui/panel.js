@@ -141,6 +141,8 @@ export function createPanel(ctx){
       var seconds=info.metrics.duration, duration=seconds<90?Math.round(seconds)+' s':Math.round(seconds/60)+' min';
       return info.metrics.multiplier.toFixed(info.metrics.multiplier<10?1:0)+'× · ciclo em ~'+duration;
     }
+    if (info.key === 'grain' && info.metrics.amplitude8bit !== undefined)
+      return '≈ ±'+info.metrics.amplitude8bit.toFixed(1).replace('.',',')+' níveis (8-bit)';
     return '';
   }
   function previewMessage(reason){

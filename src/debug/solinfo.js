@@ -227,6 +227,8 @@ export function createSolInfo(ctx){
       window.__solInfo.state = function(){
         return { camDist: ctx.camDist, targetCamDist: ctx.targetCamDist, theta: ctx.theta, phi: ctx.phi,
                  thetaVel: ctx.thetaVel, phiVel: ctx.phiVel,
+                 handThetaOffset: ctx.handThetaOffset || 0,
+                 handPhiOffset: ctx.handPhiOffset || 0,
                  rotY: sunMesh.rotation.y, fitDist: ctx.fitDist, minDist: minDist };
       };
       window.__solInfo.regions = function(){

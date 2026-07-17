@@ -124,7 +124,7 @@ const meanAbsLat = (regs) => regs.reduce((s, r) => s + Math.abs(r.lat), 0) / reg
     await page.close();
   }
   {
-    const page = await open('fprom=1.2');
+    const page = await open('fprom=1');
     // maturidade forçada: sob hold o envelope natural fica onde caiu
     await page.evaluate(() => {
       for (let i = 0; i < 12; i++) try { window.__solInfo.setPromLife(i, 0.35); } catch (e) {}
@@ -137,10 +137,10 @@ const meanAbsLat = (regs) => regs.reduce((s, r) => s + Math.abs(r.lat), 0) / reg
       fi.length > 0 && fi.every((f) => f.seedMatch),
       JSON.stringify(fi.map((f) => f.seedMatch)));
     // E3 — absorção viva contra o disco: pelo menos uma proeminência de
-    // frente com gêmeo escuro forte, e o knob limita o teto (≤0.55·1.2)
+    // frente com gêmeo escuro forte, e o knob limita o teto (≤0.55)
     const maxAb = Math.max.apply(null, fi.map((f) => f.absorb));
     check('E3 filamento escuro contra o disco (max absorb>0.3, teto respeitado)',
-      maxAb > 0.3 && maxAb <= 0.55*1.2 + 1e-6, 'max ' + maxAb.toFixed(3));
+      maxAb > 0.3 && maxAb <= 0.55 + 1e-6, 'max ' + maxAb.toFixed(3));
     // E4 — crossfade no limbo: varrendo a órbita em torno da âncora da
     // prom mais forte, existe uma faixa onde absorção E emissão
     // coexistem (a estrutura atravessa a borda sem trocar de

@@ -108,10 +108,10 @@ function init(){
   var charges = ctx.act.charges, pairStates = ctx.act.pairStates,
       updateCycleState = ctx.act.updateCycleState, placePair = ctx.act.placePair,
       updateActiveRegions = ctx.act.updateActiveRegions, cycleDepth = ctx.act.cycleDepth,
+      cycleMultiplier = ctx.act.cycleMultiplier,
       lifeEnvelope = ctx.act.lifeEnvelope, bFieldJS = ctx.act.bFieldJS,
       flicker1f = ctx.act.flicker1f, cyclePolarN = ctx.act.cyclePolarN,
-      CYCLE_PERIOD = ctx.act.CYCLE_PERIOD, CYCLE_PHASE0 = ctx.act.CYCLE_PHASE0,
-      CYCLE_LAPSE_MUL = ctx.act.CYCLE_LAPSE_MUL;
+      CYCLE_PERIOD = ctx.act.CYCLE_PERIOD, CYCLE_PHASE0 = ctx.act.CYCLE_PHASE0;
   ctx.charges = charges; ctx.pairStates = pairStates;
 
   createSunUniforms(ctx);
@@ -458,12 +458,12 @@ function init(){
     spiculeUniforms.uTime.value = ctx.elapsed;
 
     // FASE 3 — relógio do ciclo de 11 anos: só anda com cycle/lapse
-    // ligados. cycle>1 acelera o relógio natural; lapse (time-lapse
-    // documental) multiplica o relógio do ciclo E o tempo das regiões
+    // ligados. cycle controla só a PROFUNDIDADE e sempre roda em 1×;
+    // lapse (time-lapse documental) multiplica o relógio do ciclo e regiões
     // (cycleWarp), sem tocar rotação/sim/proeminências. Default 0:
     // warp fica 0.0 e elapsed+0.0 é bit-exato — baseline intocado.
     if (cycleDepth() > 0.001){
-      var cycMul = Math.max(1.0, ctx.CYCLE_K) + ctx.LAPSE_K * CYCLE_LAPSE_MUL;
+      var cycMul = cycleMultiplier();
       ctx.cycleTime += delta * cycMul;
       if (cycMul > 1.0) ctx.cycleWarp += delta * (cycMul - 1.0);
       updateCycleState();

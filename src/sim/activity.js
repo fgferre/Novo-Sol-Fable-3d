@@ -44,7 +44,6 @@ export function createActivity(ctx){
   // ---------------------------------------------------------------
   var CYCLE_PERIOD = 1800;    // unidades de tempo simulado por ciclo
   var CYCLE_PHASE0 = 0.35;    // fase do sol default (meio de ciclo)
-  var CYCLE_LAPSE_MUL = 26.0; // lapse=1.5 => relógio ~×40
   ctx.cycleTime = 0;          // só anda com o ciclo ligado
   ctx.cycleWarp = 0;          // tempo EXTRA acumulado p/ as regiões (lapse)
   ctx.cyclePhase01 = CYCLE_PHASE0;
@@ -53,9 +52,13 @@ export function createActivity(ctx){
   ctx.cycleAmpK = 1;          // ganho global de atividade
   ctx.cyclePolF = 1;          // fator do dipolo polar (1 = default)
   var cyclePolarN = null, cyclePolarS = null;
+  function cycleMultiplier(){
+    if (ctx.LAPSE_K <= 0.001) return 1.0;
+    return 1.0 + 39.0*Math.sqrt(Math.min(1,Math.max(0,ctx.LAPSE_K)));
+  }
   function cycleDepth(){
     // lapse sozinho liga o ciclo (modo documental de um toque)
-    return (ctx.LAPSE_K > 0.001 && ctx.CYCLE_K < 0.001) ? 1.0 : Math.min(1.0, ctx.CYCLE_K);
+    return ctx.LAPSE_K > 0.001 ? 1.0 : Math.min(1.0, ctx.CYCLE_K);
   }
   function updateCycleState(){
     var d = cycleDepth();
@@ -175,16 +178,20 @@ export function createActivity(ctx){
     if (x < 0.90) { var b = (x-0.34)/0.56; return 1.0 - b*b*(3.0-2.0*b); }
     return 0.0;
   }
-  // blend por min(1, LAPSE_K): com lapse=0 devolve lifeEnvelope SEM
-  // aritmética extra (default bit-exato); o director, que anima LAPSE_K
-  // continuamente (0→0.85→0), morfa o envelope sem salto. Usada só
+  // O easing deriva do multiplicador efetivo: quando o relógio já corre
+  // perto de 10× (menor step da UI), as rampas largas entram por completo
+  // para nascimento/morte não virarem strobo. Com lapse=0 o envelope
+  // original volta sem aritmética extra. Usada só
   // pelos consumidores do relógio WARPADO (regiões reais + grupos de
   // manchas do sun.js — que assim seguem em sincronia com a plage);
   // proeminências/loops correm em wall-clock e ficam no envelope de
   // sempre.
   function lifeEnvelopeEased(x){
     var e = lifeEnvelope(x);
-    if (ctx.LAPSE_K > 0.001) e += (lifeEnvelopeLapse(x) - e)*Math.min(1, ctx.LAPSE_K);
+    if (ctx.LAPSE_K > 0.001){
+      var easeK=Math.min(1,(cycleMultiplier()-1)/8);
+      e += (lifeEnvelopeLapse(x) - e)*easeK;
+    }
     return e;
   }
   var lastRegionT = 0;
@@ -256,9 +263,9 @@ export function createActivity(ctx){
   return { charges: charges, pairStates: pairStates,
            updateCycleState: updateCycleState, placePair: placePair,
            updateActiveRegions: updateActiveRegions, cycleDepth: cycleDepth,
+           cycleMultiplier: cycleMultiplier,
            lifeEnvelope: lifeEnvelope, lifeEnvelopeEased: lifeEnvelopeEased,
            bFieldJS: bFieldJS, flicker1f: flicker1f,
            cyclePolarN: cyclePolarN, cyclePolarS: cyclePolarS,
-           CYCLE_PERIOD: CYCLE_PERIOD, CYCLE_PHASE0: CYCLE_PHASE0,
-           CYCLE_LAPSE_MUL: CYCLE_LAPSE_MUL };
+           CYCLE_PERIOD: CYCLE_PERIOD, CYCLE_PHASE0: CYCLE_PHASE0 };
 }

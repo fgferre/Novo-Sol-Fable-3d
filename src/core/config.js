@@ -76,8 +76,8 @@ export function createConfig(ctx){
   ctx.IDLE_CINE = urlQ.idle === '1' || (urlQ.idle === undefined && ctx.savedKnobs.idle == 1);
   // FASE 3 — o tempo da estrela: cycle liga o ciclo de 11 anos (0 = o
   // sol "de meio de ciclo" eterno de sempre; frame default intocado;
-  // >1 acelera o relógio natural do ciclo). lapse é o time-lapse
-  // documental da camada cinema: multiplica o relógio do ciclo E o
+  // 0..1 define a profundidade). lapse é o time-lapse documental da
+  // camada cinema: define apenas a velocidade do relógio do ciclo E o
   // tempo de vida das regiões ativas (só a maquinaria de manchas —
   // rotação, granulação e proeminências seguem no tempo normal, a
   // mesma honestidade de VFX de p-modes/convecção). lapse>0 com

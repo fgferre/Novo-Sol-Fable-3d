@@ -93,12 +93,32 @@ function dofCondition(ctx, v){
     return { effective:0, active:false, reason:'fit-framing' };
   return { effective:v, active:true, reason:'' };
 }
+function timeMultiplier(ctx){
+  return ctx.LAPSE_K > 0.001 ? 1+39*Math.sqrt(Math.min(1,Math.max(0,ctx.LAPSE_K))) : 1;
+}
+function cycleCondition(ctx, v){
+  if (ctx.LAPSE_K > 0.001) return { effective:1, active:true, reason:'' };
+  return v > 0.001 ? { effective:v, active:true, reason:'' }
+                   : { effective:0, active:false, reason:'source-empty' };
+}
+function lapseCondition(ctx, v){
+  return v > 0.001 ? { effective:v, active:true, reason:'' }
+                   : { effective:0, active:false, reason:'source-empty' };
+}
+function timeMetrics(ctx, runtime){
+  var mul=timeMultiplier(ctx),period=ctx.act ? ctx.act.CYCLE_PERIOD : 1800;
+  return { runtime:runtime, multiplier:mul,
+    duration:period/(mul*Math.max(0.05,ctx.TIME_SCALE || 1)),
+    easing:Math.min(1,(mul-1)/8), cycleOn:ctx.CYCLE_K>0.001||ctx.LAPSE_K>0.001 };
+}
 
 export const CONTROL_SCHEMA = [
   def('tempo','speed','Ritmo do tempo',0.05,3,0.05,1,setCtx('TIME_SCALE')),
   def('tempo','pmode','Oscilações (p-modes)',0,1,0.05,0,setUniform('sunUniforms','uPmode')),
-  def('tempo','cycle','Ciclo de 11 anos',0,1.5,0.05,0,setCtx('CYCLE_K')),
-  def('tempo','lapse','Time-lapse do ciclo',0,1.5,0.05,0,setCtx('LAPSE_K')),
+  def('tempo','cycle','Profundidade do ciclo',0,1,0.05,0,setCtx('CYCLE_K'),{condition:cycleCondition,
+    metrics:function(ctx){ return timeMetrics(ctx,ctx.CYCLE_K); }}),
+  def('tempo','lapse','Velocidade do ciclo',0,1,0.05,0,setCtx('LAPSE_K'),{condition:lapseCondition,
+    metrics:function(ctx){ return timeMetrics(ctx,ctx.LAPSE_K); }}),
   def('tempo','spots','Manchas solares (grupos)',0,1.5,0.05,0,setCtx('SPOTS_K'),{preset:1}),
 
   def('luz & cor','bloom','Bloom',0,3,0.05,1,bloomStrength,{preset:1.15,

@@ -18,6 +18,7 @@ export function createSolInfo(ctx){
       coronaOuter = ctx.coronaOuter, prominenceGroup = ctx.prominenceGroup,
       sunMesh = ctx.sunMesh, minDist = ctx.minDist, maxDist = ctx.maxDist,
       pairStates = ctx.pairStates, cycleDepth = ctx.act.cycleDepth,
+      cycleMultiplier = ctx.act.cycleMultiplier,
       cyclePolarN = ctx.act.cyclePolarN, CYCLE_PHASE0 = ctx.act.CYCLE_PHASE0,
       CYCLE_PERIOD = ctx.act.CYCLE_PERIOD, updateCycleState = ctx.act.updateCycleState,
       placePair = ctx.act.placePair, lifeEnvelope = ctx.act.lifeEnvelope,
@@ -232,7 +233,10 @@ export function createSolInfo(ctx){
       };
       // FASE 3 — QA do ciclo de 11 anos: fase/índice/sinais correntes...
       window.__solInfo.cycleInfo = function(){
+        var mul=cycleMultiplier();
         return { cycle: ctx.CYCLE_K, lapse: ctx.LAPSE_K, depth: cycleDepth(),
+                 multiplier:mul, duration:CYCLE_PERIOD/(mul*Math.max(0.05,ctx.TIME_SCALE)),
+                 easing:Math.min(1,(mul-1)/8), time:ctx.cycleTime,
                  phase: ctx.cyclePhase01, n: ctx.cycleN, hale: ctx.cycleHale,
                  amp: ctx.cycleAmpK, pol: ctx.cyclePolF, polNorth: cyclePolarN.w,
                  warp: ctx.cycleWarp,

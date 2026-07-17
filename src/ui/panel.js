@@ -119,6 +119,10 @@ export function createPanel(ctx){
     if (info.reason === 'preparing') return 'preparando volume';
     if (info.reason === 'waiting-flare') return 'aguardando flare';
     if (info.reason === 'fit-framing') return 'sem efeito no enquadramento geral';
+    if ((info.key === 'cycle' || info.key === 'lapse') && info.metrics.cycleOn){
+      var seconds=info.metrics.duration, duration=seconds<90?Math.round(seconds)+' s':Math.round(seconds/60)+' min';
+      return info.metrics.multiplier.toFixed(info.metrics.multiplier<10?1:0)+'× · ciclo em ~'+duration;
+    }
     return '';
   }
   function syncEntry(key, info){

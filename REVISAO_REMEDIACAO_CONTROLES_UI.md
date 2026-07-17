@@ -112,11 +112,11 @@ O sweep de "faixa plana silenciosa" (`tools/qa-control-state.js:65-84`) roda num
 - **GPU real**: branch `step()` do knee=0 e `spread` extremo podem se comportar diferente em driver NVIDIA.
 - **Auto-tune sob pressão real de perf**: analisado por rastreamento de código, não reproduzido.
 
-## 5. Redesign de UX recomendado (direção acordada com o usuário — **aberta a contraproposta**)
+## 5. Redesign de UX recomendado (aberto a ideias melhores)
 
-A causa-raiz da queixa não é só amplitude: o painel é um **painel de calibração exposto a leigo** (35 sliders, incluindo threshold/knee/spread do Bloom, que são parâmetros de engine).
+O painel de hoje é técnico demais para leigos (35 sliders, incluindo parâmetros de engine como threshold/knee/spread do Bloom).
 
-**O que é fixo aqui é o problema, não a solução**: percepção imediata dos efeitos e clareza para leigos. A direção abaixo foi discutida e aprovada em conceito pelo usuário, mas ele está explicitamente aberto a alternativas que melhorem UX/QA/UI — critique, refine e contraproponha com justificativa; ideias melhores são bem-vindas.
+A direção abaixo foi aprovada em conceito pelo usuário, mas não é fechada: se você tiver propostas melhores de UX/QA/UI, apresente.
 
 ### R-UX1: eventos viram botões de primeira classe
 - "Disparar flare" e "Ejetar CME" como botões (a infra já existe e funciona: `previewBurst/previewCME` disparam o caminho físico real).
@@ -151,16 +151,13 @@ A causa-raiz da queixa não é só amplitude: o painel é um **painel de calibra
 
 Critério transversal de aceite para toda a série seguinte: **nenhum check novo pode validar apenas instrumentação criada para ele** — todo controle/botão precisa de pelo menos um assert no consumidor real (pixel, uniform consumido por draw executado, ou DOM visível ao usuário).
 
-## 7. Política de testes — proteger invariantes, não engessar a estética
+## 7. Testes não podem travar a evolução do projeto
 
-Preocupação explícita do usuário: testes não podem congelar estruturas que precisarão de revisão, nem bloquear melhorias futuras mais realistas, fisicamente corretas ou cinematograficamente melhores. O repositório tem hoje os dois tipos de teste, com efeitos opostos:
+Requisito do usuário: o projeto deve estar sempre aberto a melhorias — efeitos mais realistas, fisicamente mais corretos e cinematograficamente mais bonitos. Testes servem para pegar erro, não para impedir isso.
 
-- **Invariantes/contratos** (determinismo, sem NaN, knob chega ao consumidor, UI≡estado, `loops=0` cancela arcadas, editar encerra o diretor): manter **fortes e literais**. Eles não fixam estética — são o que dá segurança para mudá-la.
-- **Pinagem da saída atual**: baselines de pixel e, pior, **constantes da implementação duplicadas no teste** (`40×`/`45 s` literais em `tools/qa-time-controls.js:42-48`, teto `0.55` em `tools/qa-phase3.js:141`, `expectedClose` duplicando a fórmula do `toggleFrame` em `tools/qa-event-controls.js:57`). Cada literal desses transforma uma escolha estética de hoje em contrato — vira atrito quando a física/arte evoluir, sem proteger nada que o usuário veja.
+Regras simples:
 
-Regras para a próxima série (e para revisar os testes existentes quando tocados):
-
-1. **Estética se testa por propriedade, não por número**: monotonicidade ("mais knob → mais efeito"), extremos ≠ default, "evento dispara e é visível" — em vez de `===40` ou envelopes exatos. Números exatos só para invariantes de contrato.
-2. **Nenhuma constante de implementação duplicada em teste**: o teste lê do schema/`ctx`/hook, nunca reescreve a fórmula (senão o teste "passa" validando a cópia, e engessa o original).
-3. **Baseline de pixel é fotografia datada, não veredito**: mantê-las (elas pegam regressão não intencional), mas com o rito de re-baseline que a série técnica já criou — mudança visual intencional = proposta + antes/depois + aprovação visual do usuário + atualização atômica. Um teste vermelho por melhoria intencional é sinal para re-baselinar com aprovação, nunca para abandonar a melhoria nem para afrouxar o teste às escondidas.
-4. **Thresholds estéticos são dados de calibração, não asserts**: quando inevitáveis, viver em arquivo de calibração versionado (padrão já existente em `tools/motion2-thresholds.json`), com racional documentado.
+1. **Teste com valor exato só o que não pode quebrar nunca**: determinismo, sem NaN, controle chega ao consumidor, UI mostra o estado real.
+2. **Teste a parte visual por comportamento, não por número exato**: "mais knob → mais efeito", "extremo ≠ default", "evento dispara e aparece". Números como `===40` ou `0.55` são escolhas de hoje e vão mudar.
+3. **Não copie fórmulas/constantes do código dentro do teste** — leia do schema/`ctx`. Casos a corrigir: `tools/qa-time-controls.js:42-48`, `tools/qa-phase3.js:141`, `tools/qa-event-controls.js:57`.
+4. **Melhoria visual intencional que quebra baseline de imagem**: mostrar antes/depois, usuário aprova, atualizar o baseline. Nunca desistir da melhoria por causa do teste.

@@ -64,11 +64,12 @@ export function createChromo(ctx){
     '  vec2 sg = worleyF1F2(sp*23.0 + vec3(0.0, 0.0, t*0.004));',
     '  float network = 1.0 - smoothstep(0.0, 0.17, sg.y - sg.x);',
     '  network *= 0.6 + 0.4*(snoise(sp*7.0 + vec3(1.3))*0.5+0.5);',
-    // EVENTO DE MÁXIMO (uMaxK): o peso da rede sobe 0.075→0.26 — a
-    // teia craquelada de células salta ao primeiro plano no pico do
-    // ciclo. Com uMaxK=0 o termo extra é exatamente 0.0 (bake calmo/det
+    // EVENTO DE MÁXIMO (uMaxK): o peso da rede sobe 0.075→0.34 no
+    // ápice — a teia craquelada de células salta ao primeiro plano no
+    // pico do ciclo (no meio da subida ~0.55 vale ~0.22, o pico da v1).
+    // Com uMaxK=0 o termo extra é exatamente 0.0 (bake calmo/det
     // bit-exato ao baseline).
-    '  heatLS += network * (0.075 + 0.185*uMaxK);',
+    '  heatLS += network * (0.075 + 0.265*uMaxK);',
     // campo magnético + ruído do sol calmo (idêntico ao shader do disco)
     '  vec3 B = bField(sp);',
     // sol calmo: a direção vem do GRADIENTE do fluxo transportado pela

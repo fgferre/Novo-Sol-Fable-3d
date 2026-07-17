@@ -548,13 +548,16 @@ export function createSunMesh(ctx){
     // plano em enquadramento cheio (métrica G: spread 0.10-0.16).
     // 0.31 dá margem ao gate mesmo com região ativa no centro do disco
     // EVENTO DE MÁXIMO (uMaxK): a disciplina tonal relaxa — o fator FAR
-    // do achatamento sobe 0.31→0.55 (o contraste de larga escala da rede
-    // craquelada volta ao disco cheio) e o disco ganha um empurrão de
-    // heat (+0.08) rumo ao amarelo-vivo. O termo extra é SOMADO ao mix
-    // original: com uMaxK=0 vale exatamente 0.0 e o frame calmo/det é
-    // bit-exato por construção (independe de constant-folding do mix).
-    '  heat = 0.50 + (heat - 0.52)*(mix(0.31, 0.26, close) + 0.24*uMaxK*(1.0 - close));',
-    '  heat += uMaxK*0.08;',
+    // do achatamento sobe 0.31→0.70 no ápice e o fator CLOSE sobe
+    // 0.26→0.46 (o close-up também craquela/arde durante o máximo, em
+    // vez de mostrar o estado calmo ondulado), e o disco ganha um
+    // empurrão de heat (+0.12) rumo ao amarelo-vivo. Interpolado por
+    // maxK: o meio da subida (~0.55) reproduz o antigo pico da v1. O
+    // termo extra é SOMADO ao mix original: com uMaxK=0 vale exatamente
+    // 0.0 e o frame calmo/det é bit-exato por construção (independe de
+    // constant-folding do mix).
+    '  heat = 0.50 + (heat - 0.52)*(mix(0.31, 0.26, close) + uMaxK*mix(0.39, 0.20, close));',
+    '  heat += uMaxK*0.12;',
     // --- fibrilas grossas: baked (canal A). De perto, o claro/escuro é
     // FEITO de fibrilas: a larga escala modula o contraste dos fios ---
     '  float fibC = st.a*2.0 - 1.0;',
@@ -789,7 +792,15 @@ export function createSunMesh(ctx){
     // plage quase branca (refs 01/03, sweep T2.2): desvio de matiz para
     // creme SÓ onde plage E heat são altos — mosqueado preservado, 0% clip
     '  color = mix(color, vec3(1.0, 0.86, 0.62), 0.55 * smoothstep(0.55, 1.0, clamp(plage, 0.0, 1.0)) * smoothstep(0.72, 1.12, heat));',
+    // EVENTO DE MÁXIMO (uMaxK): no ápice as células mais quentes vão a
+    // creme/branco-amarelo (núcleo quase branco, como nas compostas de
+    // máximo solar). mix(color, X, 0.0) = color exato com ciclo
+    // desligado/det — bit-exato por construção.
+    '  color = mix(color, vec3(1.0, 0.95, 0.80), uMaxK * 0.60 * smoothstep(0.90, 1.24, heat));',
     '  color *= mix(0.16, 1.42, smoothstep(0.04, 1.08, heat));',
+    // e as mesmas células viram fonte HDR extra (>1.0) — o bloom desenha
+    // o glow do máximo; termo aditivo ×uMaxK, 0.0 exato no calmo/det
+    '  color += vec3(1.0, 0.85, 0.60) * uMaxK * 0.30 * smoothstep(0.95, 1.24, heat);',
     '  color += vec3(1.0, 0.55, 0.22) * flareGlow * 3.6;',   // pico HDR do flare (~4x, backlog M2 nº5)
     // fitas: cromosfera aquecida a ~branco (mais neutra que o flash);
     // HDR um degrau abaixo do núcleo (2.2: acima disso o ACES achata os
@@ -806,9 +817,9 @@ export function createSunMesh(ctx){
     '  float spic = 0.7 + 0.5*fbmLight(sp*46.0 + vec3(0.0, 0.0, t*0.5));',
     // 1.15 (era 0.4): a borda quente da ref-02 e fonte HDR p/ o bloom do
     // limbo; 1.30 já começava a ler como anel em monitor claro
-    // no máximo solar o limbo arde um degrau acima (fonte HDR p/ o bloom
-    // do glow); 1.15 + 0.45*0.0 = 1.15 exato com o ciclo desligado
-    '  color += vec3(1.0, 0.30, 0.10) * pow(1.0-mu, 3.5) * (1.15 + 0.45*uMaxK) * spic;',
+    // no máximo solar o limbo arde forte (fonte HDR p/ o bloom do
+    // glow); 1.15 + 0.85*0.0 = 1.15 exato com o ciclo desligado
+    '  color += vec3(1.0, 0.30, 0.10) * pow(1.0-mu, 3.5) * (1.15 + 0.85*uMaxK) * spic;',
     // plage como fonte HDR (>1.0): é o que faz o bloom finalmente ler
     // como bloom (glow suave em volta das regiões ativas, ref-03) sem
     // tocar na luminância mediana do disco

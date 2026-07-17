@@ -184,6 +184,7 @@ export function createControls(ctx){
     ctx.targetCamDist = (ctx.targetCamDist > ctx.fitDist*0.72) ? closeDist : ctx.fitDist;
     ctx.markInteraction();
   }
+  ctx.toggleFrame = toggleFrame;
   var lastTap = { t: -1e9, x: 0, y: 0 };
   function onTapCheck(e){
     if (e.pointerType !== 'touch') return;

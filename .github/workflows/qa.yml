@@ -37,6 +37,8 @@ jobs:
         run: node tools/qa-bloom.js dist-single/index.html
       - name: QA dos controles temporais
         run: node tools/qa-time-controls.js dist-single/index.html
+      - name: QA de previews e DOF
+        run: node tools/qa-event-controls.js dist-single/index.html
       - name: Paridade visual vs baselines
         run: |
           node tools/parity.js qa-out --file dist-single/index.html

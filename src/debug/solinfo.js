@@ -118,6 +118,13 @@ export function createSolInfo(ctx){
         return ctx.getControlInfo(key);
       };
       window.__solInfo.bloomInfo = function(){ return ctx.measureBloom(); };
+      window.__solInfo.previewAvailability = function(key){
+        if(key==='burst')return ctx.canPreviewBurst();
+        if(key==='cme')return ctx.canPreviewCME();
+        return {ok:false,reason:'source-empty'};
+      };
+      window.__solInfo.previewBurst = function(){ return ctx.previewBurst(); };
+      window.__solInfo.previewCME = function(){ return ctx.previewCME(); };
       window.__solInfo.perfReset = function(){
         ctx.perfN = 0; ctx.perfIdx = 0; ctx.perfLastT = 0;
         ctx.perfBakeN = 0; ctx.perfBakeIdx = 0;

@@ -33,6 +33,9 @@ export function createPanel(ctx){
     '#knobPanel .val{font-variant-numeric:tabular-nums;color:rgba(255,190,130,.9);font-size:11.5px}',
     '#knobPanel .state{font-size:9.5px;line-height:1.35;color:rgba(233,228,218,.48)}',
     '#knobPanel .state:empty{display:none}',
+    '#knobPanel .rowAction{margin:3px 0 1px;padding:4px 9px;border-radius:7px;cursor:pointer;',
+    ' border:1px solid rgba(255,170,90,.25);background:rgba(255,140,50,.08);color:#ffc891;font-size:10px}',
+    '#knobPanel .rowAction:disabled{opacity:.38;cursor:default}#knobPanel .rowAction[hidden]{display:none}',
     '#knobPanel .row.unavailable .lab{opacity:.52}#knobPanel .row.unavailable input{opacity:.45}',
     'input[type=range].kn{-webkit-appearance:none;appearance:none;width:100%;height:24px;',
     ' background:transparent;margin:0;display:block}',
@@ -107,8 +110,23 @@ export function createPanel(ctx){
       if (ctx.directorUserExit) ctx.directorUserExit();
       ctx.setControl(d.key, v, { source:'user', persist:true });
     });
-    row.appendChild(lab); row.appendChild(input); row.appendChild(state); panel.appendChild(row);
-    entries[d.key] = { def:d, row:row, input:input, state:state, paint:paint };
+    row.appendChild(lab); row.appendChild(input); row.appendChild(state);
+    var action=null;
+    if(d.key==='burst'||d.key==='cme'||d.key==='dof'){
+      action=document.createElement('button');action.type='button';action.className='rowAction';
+      action.textContent=d.key==='dof'?'aproximar':'prévia';
+      action.setAttribute('aria-label',d.key==='dof'?'aproximar para ativar foco raso':'prévia de '+d.label);
+      action.addEventListener('click',function(){
+        if(ctx.directorUserExit)ctx.directorUserExit();
+        if(d.key==='dof')ctx.toggleFrame();
+        else if(d.key==='burst'&&ctx.previewBurst)ctx.previewBurst();
+        else if(d.key==='cme'&&ctx.previewCME)ctx.previewCME();
+        refreshAvailability();
+      });
+      row.appendChild(action);
+    }
+    panel.appendChild(row);
+    entries[d.key] = { def:d, row:row, input:input, state:state, action:action, paint:paint };
   });
 
   function stateMessage(info){
@@ -125,6 +143,29 @@ export function createPanel(ctx){
     }
     return '';
   }
+  function previewMessage(reason){
+    if(reason==='source-empty')return 'defina intensidade para a prévia';
+    if(reason==='event-active')return 'evento em andamento';
+    if(reason==='cooldown')return 'aguarde o rescaldo';
+    if(reason==='not-visible')return 'nenhuma região visível';
+    if(reason==='tier-unavailable')return 'indisponível nesta qualidade';
+    if(reason==='autotune-disabled')return 'desativado pelo ajuste automático';
+    return '';
+  }
+  function syncAction(key,e,info){
+    if(!e.action)return;
+    if(key==='dof'){
+      var fit=info.reason==='fit-framing';e.action.hidden=!fit;e.action.disabled=!fit;return;
+    }
+    var state=key==='burst'?(ctx.canPreviewBurst&&ctx.canPreviewBurst()):(ctx.canPreviewCME&&ctx.canPreviewCME());
+    if(!state){e.action.disabled=true;return;}
+    e.action.hidden=false;e.action.disabled=!state.ok;
+    if(!state.ok){
+      var msg=previewMessage(state.reason);
+      if(msg&&(!e.state.textContent||state.reason==='event-active'||state.reason==='cooldown'||state.reason==='not-visible'))
+        e.state.textContent=msg;
+    }
+  }
   function syncEntry(key, info){
     var e = entries[key]; if (!e) return;
     info = info || ctx.getControlInfo(key);
@@ -134,6 +175,7 @@ export function createPanel(ctx){
       var hard = info.reason === 'tier-unavailable' || info.reason === 'autotune-disabled';
       e.input.disabled=hard; e.row.classList.toggle('unavailable',hard);
       e.state.textContent=stateMessage(info);
+      syncAction(key,e,info);
     }
   }
   function syncControlUI(keys){ (keys || Object.keys(entries)).forEach(function(k){ syncEntry(k); }); }

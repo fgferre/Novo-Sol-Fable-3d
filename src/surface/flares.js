@@ -79,7 +79,64 @@ export function createFlares(ctx){
     agitateNearestProm(surfFlareDir);
     return true;
   }
+  // Previews de UI usam exatamente a moldura física do flare/CME, mas a
+  // escolha da região é determinística e orientada pela câmera: Burst pega
+  // a região mais frontal; CME pega a região visível mais perto do limbo,
+  // onde o peso de Thomson é máximo.
+  var previewObj=new THREE.Vector3(),previewWorld=new THREE.Vector3(),previewCam=new THREE.Vector3();
+  function previewRegion(mode){
+    previewCam.copy(ctx.camera.position).normalize();
+    var best=-1,bestScore=1e9,bestFacing=0;
+    for(var i=0;i<pairStates.length;i++){
+      var ps=pairStates[i];
+      previewObj.set((ps.lead.x+ps.foll.x)*0.5,(ps.lead.y+ps.foll.y)*0.5,(ps.lead.z+ps.foll.z)*0.5).normalize();
+      previewWorld.copy(previewObj).applyQuaternion(ctx.sunMesh.quaternion);
+      var facing=previewWorld.dot(previewCam);
+      if(facing<=0.02)continue;
+      var score=mode==='burst'?-facing:Math.abs(facing-0.08);
+      if(score<bestScore){bestScore=score;best=i;bestFacing=facing;}
+    }
+    return best<0?null:{index:best,facing:bestFacing,thomson:1-bestFacing*bestFacing};
+  }
+  function firePreviewPair(sel,amp){
+    var ps=pairStates[sel.index];
+    surfFlareDir.set((ps.lead.x+ps.foll.x)*0.5,(ps.lead.y+ps.foll.y)*0.5,(ps.lead.z+ps.foll.z)*0.5).normalize();
+    ctx.surfFlareT=0;ctx.surfFlareAmp=amp;
+    setFlareFrame(surfFlareDir);scheduleFlareArcade();agitateNearestProm(surfFlareDir);
+    ctx.surfFlareCooldown=Math.max(ctx.surfFlareCooldown,8);
+  }
+  function canPreviewBurst(){
+    if(ctx.getControl('burst')<=0.001)return {ok:false,reason:'source-empty'};
+    if(ctx.surfFlareT<8)return {ok:false,reason:'event-active'};
+    var sel=previewRegion('burst');
+    return sel?Object.assign({ok:true,reason:''},sel):{ok:false,reason:'not-visible'};
+  }
+  function previewBurst(){
+    if(ctx.directorUserExit)ctx.directorUserExit();
+    var state=canPreviewBurst();if(!state.ok)return state;
+    var amp=ctx.getControl('burst');
+    firePreviewPair(state,amp);
+    return Object.assign({},state,{amp:amp});
+  }
+  function canPreviewCME(){
+    if(ctx.getControl('cme')<=0.001)return {ok:false,reason:'source-empty'};
+    if(ctx.CME_STEPS<=0)return {ok:false,reason:'tier-unavailable'};
+    if(ctx.cmeKilled)return {ok:false,reason:'autotune-disabled'};
+    if(ctx.cmeT<900)return {ok:false,reason:'event-active'};
+    if(ctx.cmeCooldown>0)return {ok:false,reason:'cooldown'};
+    var sel=previewRegion('cme');
+    return sel?Object.assign({ok:true,reason:''},sel):{ok:false,reason:'not-visible'};
+  }
+  function previewCME(){
+    if(ctx.directorUserExit)ctx.directorUserExit();
+    var state=canPreviewCME();if(!state.ok)return state;
+    var amp=ctx.getControl('cme');
+    firePreviewPair(state,amp);ctx.launchCME(amp);
+    return Object.assign({},state,{amp:amp});
+  }
   ctx.flareEnvImp = flareEnvImp; ctx.setFlareFrame = setFlareFrame;
   ctx.agitateNearestProm = agitateNearestProm;
   ctx.triggerSurfaceFlare = triggerSurfaceFlare;
+  ctx.canPreviewBurst=canPreviewBurst;ctx.previewBurst=previewBurst;
+  ctx.canPreviewCME=canPreviewCME;ctx.previewCME=previewCME;
 }

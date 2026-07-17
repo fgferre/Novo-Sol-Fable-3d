@@ -22,8 +22,9 @@ function setUniform(group, name){
   fn.read=function(ctx){ return ctx[group] && ctx[group][name] ? ctx[group][name].value : undefined; };
   return fn;
 }
+export function bloomGain(v){ return v <= 1 ? v : 1 + 2*(v - 1); }
 function bloomStrength(ctx, v){
-  if (ctx.BLOOM_BASE0 !== undefined) ctx.BLOOM_STRENGTH_BASE = ctx.BLOOM_BASE0 * v;
+  if (ctx.BLOOM_BASE0 !== undefined) ctx.BLOOM_STRENGTH_BASE = ctx.BLOOM_BASE0 * bloomGain(v);
 }
 function exposure(ctx, v){
   if (ctx.compUniforms && ctx.EXP0 !== undefined) ctx.compUniforms.uExposure.value = ctx.EXP0 * v;
@@ -31,6 +32,15 @@ function exposure(ctx, v){
 function bloomThreshold(ctx, v){
   ctx.BLOOM_THRESHOLD = v;
   if (ctx.thresholdUniforms) ctx.thresholdUniforms.uThreshold.value = v;
+}
+function bloomKnee(ctx, v){
+  ctx.BLOOM_KNEE = v;
+  if (ctx.thresholdUniforms) ctx.thresholdUniforms.uKnee.value = v;
+}
+function bloomSpread(ctx, v){
+  ctx.BLOOM_SPREAD = v;
+  if (ctx.downsampleUniforms) ctx.downsampleUniforms.uSpread.value = v;
+  if (ctx.upsampleUniforms) ctx.upsampleUniforms.uSpread.value = v;
 }
 function stars(ctx, v){
   if (!ctx.stars || !ctx.brightStars) return;
@@ -53,6 +63,8 @@ function milkyWay(ctx, v){
 bloomStrength.read=function(ctx){ return ctx.BLOOM_STRENGTH_BASE; };
 exposure.read=function(ctx){ return ctx.compUniforms ? ctx.compUniforms.uExposure.value : undefined; };
 bloomThreshold.read=function(ctx){ return ctx.thresholdUniforms ? ctx.thresholdUniforms.uThreshold.value : ctx.BLOOM_THRESHOLD; };
+bloomKnee.read=function(ctx){ return ctx.thresholdUniforms ? ctx.thresholdUniforms.uKnee.value : ctx.BLOOM_KNEE; };
+bloomSpread.read=function(ctx){ return ctx.downsampleUniforms ? ctx.downsampleUniforms.uSpread.value : ctx.BLOOM_SPREAD; };
 stars.read=function(ctx){ return ctx.stars ? ctx.stars.material.opacity : undefined; };
 milkyWay.read=function(ctx){ return ctx.milkyWay ? ctx.milkyWay.material.opacity : undefined; };
 
@@ -89,9 +101,12 @@ export const CONTROL_SCHEMA = [
   def('tempo','lapse','Time-lapse do ciclo',0,1.5,0.05,0,setCtx('LAPSE_K')),
   def('tempo','spots','Manchas solares (grupos)',0,1.5,0.05,0,setCtx('SPOTS_K'),{preset:1}),
 
-  def('luz & cor','bloom','Bloom',0,3,0.05,1,bloomStrength,{preset:1.15}),
+  def('luz & cor','bloom','Bloom',0,3,0.05,1,bloomStrength,{preset:1.15,
+    metrics:function(ctx){ return { runtime:ctx.BLOOM_STRENGTH_BASE, gain:bloomGain(ctx.getAppliedControl('bloom')) }; }}),
   def('luz & cor','bloomth','Threshold do Bloom',0.2,2,0.02,
-    function(ctx){ return ctx.isHDR ? 0.72 : 0.82; },bloomThreshold,{hidden:true}),
+    function(ctx){ return ctx.isHDR ? 0.72 : 0.82; },bloomThreshold),
+  def('luz & cor','bloomknee','Suavidade do Bloom',0,0.6,0.02,0.3,bloomKnee),
+  def('luz & cor','bloomspread','Espalhamento do Bloom',0.5,2.5,0.05,1,bloomSpread),
   def('luz & cor','exposure','Exposição',0.3,2.5,0.02,1,exposure,{preset:1.08}),
   def('luz & cor','plageglow','Brilho das plages',0,1.5,0.05,0.35,setUniform('sunUniforms','uPlageEm')),
   def('luz & cor','sat','Saturação',0,2,0.02,1.08,setUniform('compUniforms','uSat')),

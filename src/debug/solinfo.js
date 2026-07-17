@@ -69,7 +69,10 @@ export function createSolInfo(ctx){
       // painel de knobs ativos (introspecção p/ QA e usuário)
       window.__solInfo.knobs = function(){
         return { speed: ctx.TIME_SCALE, idle: ctx.IDLE_CINE,
-                 bloom: compUniforms.uBloomStrength.value, bloomth: BLOOM_THRESHOLD,
+                 bloom: compUniforms.uBloomStrength.value,
+                 bloomth: ctx.thresholdUniforms.uThreshold.value,
+                 bloomknee: ctx.thresholdUniforms.uKnee.value,
+                 bloomspread: ctx.downsampleUniforms.uSpread.value,
                  exposure: compUniforms.uExposure.value, sat: compUniforms.uSat.value,
                  vig: compUniforms.uVig.value, grain: compUniforms.uGrain.value,
                  plageglow: sunUniforms.uPlageEm.value,
@@ -113,6 +116,7 @@ export function createSolInfo(ctx){
         if (ctx.onPerformanceStateChange) ctx.onPerformanceStateChange();
         return ctx.getControlInfo(key);
       };
+      window.__solInfo.bloomInfo = function(){ return ctx.measureBloom(); };
       window.__solInfo.perfReset = function(){
         ctx.perfN = 0; ctx.perfIdx = 0; ctx.perfLastT = 0;
         ctx.perfBakeN = 0; ctx.perfBakeIdx = 0;

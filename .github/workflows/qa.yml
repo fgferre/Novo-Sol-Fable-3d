@@ -33,6 +33,8 @@ jobs:
         run: node tools/qa-controls.js dist-single/index.html
       - name: QA de estado dos controles
         run: node tools/qa-control-state.js dist-single/index.html
+      - name: QA do Bloom
+        run: node tools/qa-bloom.js dist-single/index.html
       - name: Paridade visual vs baselines
         run: |
           node tools/parity.js qa-out --file dist-single/index.html

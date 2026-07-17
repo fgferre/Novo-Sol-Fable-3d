@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import { quadVertex } from '../glsl/common.js';
+import { bloomGain } from '../core/controls.js';
 
 export function createPipeline(ctx){
   var renderer = ctx.renderer, isHDR = ctx.isHDR, rtType = ctx.rtType,
@@ -38,6 +39,8 @@ export function createPipeline(ctx){
   // O preset Sunshine (exposure 1.08 relativo) cavalga o mesmo fator.
   var EXP0 = isHDR ? 0.418 : 0.435;
   var BLOOM_THRESHOLD = knob('bloomth');
+  var BLOOM_KNEE = knob('bloomknee');
+  var BLOOM_SPREAD = knob('bloomspread');
 
   // Achado 8: a cena 3D (esfera do Sol, estrelas) É rasterizada AQUI, então
   // o depth DESTE alvo é obrigatório para a oclusão 3D — NÃO desligar. Só o
@@ -58,11 +61,13 @@ export function createPipeline(ctx){
     }
   })();
 
-  var thresholdUniforms = { tDiffuse:{value:null}, uTexel:{value:new THREE.Vector2(1,1)}, uThreshold:{value:BLOOM_THRESHOLD} };
+  var thresholdUniforms = { tDiffuse:{value:null}, uTexel:{value:new THREE.Vector2(1,1)},
+    uThreshold:{value:BLOOM_THRESHOLD}, uKnee:{value:BLOOM_KNEE} };
   var thresholdFragment = [
     'uniform sampler2D tDiffuse;',
     'uniform vec2 uTexel;',
     'uniform float uThreshold;',
+    'uniform float uKnee;',
     'varying vec2 vUv;',
     'void main(){',
     '  vec3 c = texture2D(tDiffuse, vUv).rgb;',
@@ -73,18 +78,21 @@ export function createPipeline(ctx){
     '  c2 += texture2D(tDiffuse, vUv-vec2(0.0,uTexel.y)).rgb;',
     '  c2 /= 5.0;',
     '  float b = dot(c2, vec3(0.299,0.587,0.114));',
-    '  float f = smoothstep(uThreshold, uThreshold+0.3, b);',
+    '  float f = (uKnee <= 0.0001) ? step(uThreshold, b)',
+    '             : smoothstep(uThreshold, uThreshold+uKnee, b);',
     '  gl_FragColor = vec4(c2*f, 1.0);',
     '}'
   ].join('\n');
   var thresholdMaterial = new THREE.ShaderMaterial({ uniforms: thresholdUniforms, vertexShader: quadVertex, fragmentShader: thresholdFragment });
   var thresholdScene = makeFullscreenScene(thresholdMaterial);
 
-  var downsampleUniforms = { tDiffuse:{value:null}, uTexel:{value:new THREE.Vector2(1,1)}, uDisp:{value:0.0} };
+  var downsampleUniforms = { tDiffuse:{value:null}, uTexel:{value:new THREE.Vector2(1,1)},
+    uDisp:{value:0.0}, uSpread:{value:BLOOM_SPREAD} };
   var downsampleFragment = [
     'uniform sampler2D tDiffuse;',
     'uniform vec2 uTexel;',
     'uniform float uDisp;',
+    'uniform float uSpread;',
     'varying vec2 vUv;',
     'void main(){',
     // FASE 2 — bloom espectral ponderado por corpo negro: raio de blur
@@ -94,17 +102,18 @@ export function createPipeline(ctx){
     // canal no upsampleFragment). Sem passes novos: só taps a mais, e
     // só quando o knob liga.
     '  if (uDisp > 0.001){',
-    '    vec2 oR = uTexel * (1.0 + 0.35*uDisp);',
-    '    vec2 oB = uTexel * (1.0 - 0.25*uDisp);',
+    '    vec2 oR = uTexel * uSpread * (1.0 + 0.35*uDisp);',
+    '    vec2 oB = uTexel * uSpread * (1.0 - 0.25*uDisp);',
+    '    vec2 oG = uTexel * uSpread;',
     '    vec3 cS;',
     '    cS.r = texture2D(tDiffuse, vUv+vec2( oR.x, oR.y)).r',
     '         + texture2D(tDiffuse, vUv+vec2(-oR.x, oR.y)).r',
     '         + texture2D(tDiffuse, vUv+vec2( oR.x,-oR.y)).r',
     '         + texture2D(tDiffuse, vUv+vec2(-oR.x,-oR.y)).r;',
-    '    cS.g = texture2D(tDiffuse, vUv+vec2( uTexel.x, uTexel.y)).g',
-    '         + texture2D(tDiffuse, vUv+vec2(-uTexel.x, uTexel.y)).g',
-    '         + texture2D(tDiffuse, vUv+vec2( uTexel.x,-uTexel.y)).g',
-    '         + texture2D(tDiffuse, vUv+vec2(-uTexel.x,-uTexel.y)).g;',
+    '    cS.g = texture2D(tDiffuse, vUv+vec2( oG.x, oG.y)).g',
+    '         + texture2D(tDiffuse, vUv+vec2(-oG.x, oG.y)).g',
+    '         + texture2D(tDiffuse, vUv+vec2( oG.x,-oG.y)).g',
+    '         + texture2D(tDiffuse, vUv+vec2(-oG.x,-oG.y)).g;',
     '    cS.b = texture2D(tDiffuse, vUv+vec2( oB.x, oB.y)).b',
     '         + texture2D(tDiffuse, vUv+vec2(-oB.x, oB.y)).b',
     '         + texture2D(tDiffuse, vUv+vec2( oB.x,-oB.y)).b',
@@ -112,21 +121,24 @@ export function createPipeline(ctx){
     '    gl_FragColor = vec4(cS*0.25, 1.0);',
     '    return;',
     '  }',
-    '  vec3 c = texture2D(tDiffuse, vUv+vec2(uTexel.x,uTexel.y)).rgb;',
-    '  c += texture2D(tDiffuse, vUv+vec2(-uTexel.x,uTexel.y)).rgb;',
-    '  c += texture2D(tDiffuse, vUv+vec2(uTexel.x,-uTexel.y)).rgb;',
-    '  c += texture2D(tDiffuse, vUv+vec2(-uTexel.x,-uTexel.y)).rgb;',
+    '  vec2 o = uTexel*uSpread;',
+    '  vec3 c = texture2D(tDiffuse, vUv+vec2(o.x,o.y)).rgb;',
+    '  c += texture2D(tDiffuse, vUv+vec2(-o.x,o.y)).rgb;',
+    '  c += texture2D(tDiffuse, vUv+vec2(o.x,-o.y)).rgb;',
+    '  c += texture2D(tDiffuse, vUv+vec2(-o.x,-o.y)).rgb;',
     '  gl_FragColor = vec4(c*0.25, 1.0);',
     '}'
   ].join('\n');
   var downsampleMaterial = new THREE.ShaderMaterial({ uniforms: downsampleUniforms, vertexShader: quadVertex, fragmentShader: downsampleFragment });
   var downsampleScene = makeFullscreenScene(downsampleMaterial);
 
-  var upsampleUniforms = { tDiffuse:{value:null}, uTexel:{value:new THREE.Vector2(1,1)}, uDisp:{value:0.0} };
+  var upsampleUniforms = { tDiffuse:{value:null}, uTexel:{value:new THREE.Vector2(1,1)},
+    uDisp:{value:0.0}, uSpread:{value:BLOOM_SPREAD} };
   var upsampleFragment = [
     'uniform sampler2D tDiffuse;',
     'uniform vec2 uTexel;',
     'uniform float uDisp;',
+    'uniform float uSpread;',
     'varying vec2 vUv;',
     'void main(){',
     // FASE 2 — bloom espectral: o grosso do raio do dual-Kawase vem da
@@ -137,9 +149,9 @@ export function createPipeline(ctx){
     // (só o downsample espectral era imperceptível: ΔR médio +0.2/255
     // no smoke; medido 2026-07).
     '  if (uDisp > 0.001){',
-    '    vec2 oR = uTexel * (0.5 + 1.70*uDisp);',
-    '    vec2 oG = uTexel * 0.5;',
-    '    vec2 oB = uTexel * max(0.5 - 0.34*uDisp, 0.0);',
+    '    vec2 oR = uTexel * uSpread * (0.5 + 1.70*uDisp);',
+    '    vec2 oG = uTexel * uSpread * 0.5;',
+    '    vec2 oB = uTexel * uSpread * max(0.5 - 0.34*uDisp, 0.0);',
     '    vec3 cS;',
     '    cS.r = texture2D(tDiffuse, vUv+vec2( oR.x, oR.y)).r',
     '         + texture2D(tDiffuse, vUv+vec2(-oR.x, oR.y)).r',
@@ -260,8 +272,72 @@ export function createPipeline(ctx){
     }
   }
 
+  // Métrica sob demanda: reduz o bright-pass e o bloom acumulado para um
+  // alvo byte 64² e faz um único readback síncrono somente quando QA/UI de
+  // diagnóstico pede. O caminho normal não renderiza nem lê este alvo.
+  var bloomMetricRT = new THREE.WebGLRenderTarget(64,64, {
+    minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter,
+    format:THREE.RGBAFormat, type:THREE.UnsignedByteType,
+    depthBuffer:false, stencilBuffer:false
+  });
+  var bloomMetricUniforms = { tDiffuse:{value:null} };
+  var bloomMetricMaterial = new THREE.ShaderMaterial({
+    uniforms:bloomMetricUniforms, vertexShader:quadVertex,
+    fragmentShader:[
+      'uniform sampler2D tDiffuse;',
+      'varying vec2 vUv;',
+      'void main(){ gl_FragColor=vec4(texture2D(tDiffuse,vUv).rgb,1.0); }'
+    ].join('\n')
+  });
+  var bloomMetricScene = makeFullscreenScene(bloomMetricMaterial);
+  var bloomMetricPixels = new Uint8Array(64*64*4);
+  function summarizeBloomMetric(){
+    renderer.readRenderTargetPixels(bloomMetricRT,0,0,64,64,bloomMetricPixels);
+    var energy=0, cover=0, sx=0, sy=0, i, x, y;
+    for (y=0;y<64;y++) for(x=0;x<64;x++){
+      i=(y*64+x)*4;
+      var lum=(bloomMetricPixels[i]*0.299+bloomMetricPixels[i+1]*0.587+bloomMetricPixels[i+2]*0.114)/255;
+      if(lum>1/255)cover++;
+      energy+=lum;sx+=lum*(x+0.5);sy+=lum*(y+0.5);
+    }
+    var radius=0;
+    if(energy>1e-9){
+      var cx=sx/energy,cy=sy/energy;
+      for(y=0;y<64;y++)for(x=0;x<64;x++){
+        i=(y*64+x)*4;
+        var l=(bloomMetricPixels[i]*0.299+bloomMetricPixels[i+1]*0.587+bloomMetricPixels[i+2]*0.114)/255;
+        var dx=x+0.5-cx,dy=y+0.5-cy;radius+=l*(dx*dx+dy*dy);
+      }
+      radius=Math.sqrt(radius/energy)/64;
+    }
+    return { coverage:cover/(64*64), energy:energy/(64*64), radius:radius };
+  }
+  function measureBloom(){
+    var previous=renderer.getRenderTarget(), autoClear=renderer.autoClear;
+    thresholdUniforms.tDiffuse.value=sceneRT.texture;
+    thresholdUniforms.uTexel.value.set(1/sceneRT.width,1/sceneRT.height);
+    renderer.setRenderTarget(bloomMetricRT);renderer.autoClear=true;
+    renderer.render(thresholdScene,quadCamera);
+    var bright=summarizeBloomMetric();
+    bloomMetricUniforms.tDiffuse.value=bloomMips[0].rt.texture;
+    renderer.setRenderTarget(bloomMetricRT);renderer.render(bloomMetricScene,quadCamera);
+    var spread=summarizeBloomMetric();
+    renderer.setRenderTarget(previous);renderer.autoClear=autoClear;
+    ctx.lastBloomMetrics={
+      coverage:+bright.coverage.toFixed(6),
+      brightEnergy:+bright.energy.toFixed(6),
+      energy:+(spread.energy*ctx.BLOOM_STRENGTH_BASE).toFixed(6),
+      radius:+spread.radius.toFixed(6),
+      threshold:thresholdUniforms.uThreshold.value,
+      knee:thresholdUniforms.uKnee.value,
+      spread:downsampleUniforms.uSpread.value,
+      gain:bloomGain(ctx.getAppliedControl('bloom'))
+    };
+    return Object.assign({},ctx.lastBloomMetrics);
+  }
+
   var BLOOM_BASE0 = isHDR ? 0.62 : 0.55;
-  ctx.BLOOM_STRENGTH_BASE = BLOOM_BASE0 * knob('bloom');
+  ctx.BLOOM_STRENGTH_BASE = BLOOM_BASE0 * bloomGain(knob('bloom'));
   // camada cinema (ver docs/cinema-sunshine.md): defaults 0 = frame
   // pixel-idêntico ao calibrado; valores em JS p/ gating por toggle
   ctx.VEIL_BASE = knob('veil');
@@ -599,6 +675,7 @@ export function createPipeline(ctx){
     streakRTb.setSize(streakW, streakH);
   }
   ctx.EXP0 = EXP0; ctx.BLOOM_BASE0 = BLOOM_BASE0; ctx.BLOOM_THRESHOLD = BLOOM_THRESHOLD;
+  ctx.BLOOM_KNEE = BLOOM_KNEE; ctx.BLOOM_SPREAD = BLOOM_SPREAD;
   ctx.thresholdUniforms = thresholdUniforms;
   // Achado 13: após o 3º passe (B→A) o streak final está em A; o composite
   // lê streakOut (= streakRTa)
@@ -606,6 +683,7 @@ export function createPipeline(ctx){
   ctx.downsampleUniforms = downsampleUniforms; ctx.upsampleUniforms = upsampleUniforms;
   ctx.compUniforms = compUniforms; ctx.compScene = compScene;
   ctx.renderBloom = renderBloom; ctx.renderStreak = renderStreak;
+  ctx.measureBloom = measureBloom;
   ctx.resizeTargets = resizeTargets; ctx.cineProj = cineProj;
   ctx.flareWorldTmp = flareWorldTmp; ctx.burstProj = burstProj;
 }

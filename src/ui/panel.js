@@ -66,11 +66,15 @@ export function createPanel(ctx){
     '#tierRow button.cur{background:rgba(255,140,50,.30);color:#ffd9a8;border-color:rgba(255,170,90,.55)}',
     '#tierNote{font-size:10px;color:rgba(233,228,218,.46);margin:4px 0 0}',
     '#tierApply{display:none;margin-top:7px;width:100%;padding:7px 0;border-radius:8px;cursor:pointer;',
-    ' border:1px solid rgba(255,170,90,.32);background:rgba(255,140,50,.10);color:#ffd9a8;font-size:10.5px}'
+    ' border:1px solid rgba(255,170,90,.32);background:rgba(255,140,50,.10);color:#ffd9a8;font-size:10.5px}',
+    '#knobPanel button:focus-visible,#knobBtn:focus-visible,#knobPanel input:focus-visible{',
+    ' outline:2px solid rgba(255,190,125,.9);outline-offset:3px}'
   ].join('\n');
   document.head.appendChild(css);
 
   var panel = document.createElement('div'); panel.id = 'knobPanel';
+  panel.setAttribute('aria-label','Ajustes da cena'); panel.setAttribute('aria-hidden','true');
+  panel.inert = true;
   var head = document.createElement('h2'); head.textContent = 'Ajustes';
   var sub = document.createElement('p'); sub.className = 'sub';
   sub.textContent = 'cena, luz e câmera · salvo neste aparelho';
@@ -107,33 +111,36 @@ export function createPanel(ctx){
     entries[d.key] = { def:d, row:row, input:input, state:state, paint:paint };
   });
 
-  function hardReason(key){
-    if (key === 'cvol'){
-      if (ctx.CVOL_STEPS <= 0) return 'indisponível nesta qualidade';
-      if (ctx.cvolKilled) return 'desativada pelo ajuste automático';
-    }
-    if (key === 'cme'){
-      if (ctx.CME_STEPS <= 0) return 'indisponível nesta qualidade';
-      if (ctx.cmeKilled) return 'desativada pelo ajuste automático';
-    }
+  function stateMessage(info){
+    if (!info) return '';
+    if (info.reason === 'director-override') return 'efetivo ' + (+info.effective).toFixed(2) + ' durante o diretor';
+    if (info.reason === 'tier-unavailable') return 'indisponível nesta qualidade';
+    if (info.reason === 'autotune-disabled') return 'desativado pelo ajuste automático';
+    if (info.reason === 'preparing') return 'preparando volume';
+    if (info.reason === 'waiting-flare') return 'aguardando flare';
+    if (info.reason === 'fit-framing') return 'sem efeito no enquadramento geral';
     return '';
   }
   function syncEntry(key, info){
     var e = entries[key]; if (!e) return;
-    var v = info ? info.nominal : ctx.getControl(key);
+    info = info || ctx.getControlInfo(key);
+    var v = info.nominal;
     e.input.value = v; e.paint(v);
+    if (panel.classList.contains('open')){
+      var hard = info.reason === 'tier-unavailable' || info.reason === 'autotune-disabled';
+      e.input.disabled=hard; e.row.classList.toggle('unavailable',hard);
+      e.state.textContent=stateMessage(info);
+    }
   }
   function syncControlUI(keys){ (keys || Object.keys(entries)).forEach(function(k){ syncEntry(k); }); }
   function refreshAvailability(){
-    Object.keys(entries).forEach(function(key){
-      var e=entries[key], msg=hardReason(key);
-      e.input.disabled=!!msg; e.row.classList.toggle('unavailable',!!msg); e.state.textContent=msg;
-    });
+    if (!panel.classList.contains('open')) return;
+    Object.keys(entries).forEach(function(key){ syncEntry(key,ctx.getControlInfo(key)); });
     refreshTierRecommendation();
   }
   ctx.syncControlUI = syncControlUI;
   ctx.subscribeControls(function(key, info){ syncEntry(key, info); });
-  ctx.onPerformanceStateChange = refreshAvailability;
+  ctx.onPerformanceStateChange = function(){ if(panel.classList.contains('open'))refreshAvailability(); };
 
   function saveIdle(){
     try { ctx.savedKnobs.idle = ctx.IDLE_CINE ? 1 : 0;
@@ -142,7 +149,7 @@ export function createPanel(ctx){
   var idleRow=document.createElement('div'); idleRow.className='switch';
   var idleLabel=document.createElement('span'); idleLabel.textContent='Câmera contemplativa';
   var idleSwitch=document.createElement('button'); idleSwitch.className='sw'+(ctx.IDLE_CINE?' on':'');
-  idleSwitch.type='button'; idleSwitch.setAttribute('role','switch');
+  idleSwitch.type='button'; idleSwitch.setAttribute('role','switch'); idleSwitch.setAttribute('aria-label','Câmera contemplativa');
   function syncIdle(){ idleSwitch.classList.toggle('on',ctx.IDLE_CINE); idleSwitch.setAttribute('aria-checked',String(!!ctx.IDLE_CINE)); }
   syncIdle();
   idleSwitch.addEventListener('click',function(){ if(ctx.directorUserExit)ctx.directorUserExit(); ctx.IDLE_CINE=!ctx.IDLE_CINE; syncIdle(); saveIdle(); });
@@ -158,7 +165,7 @@ export function createPanel(ctx){
   var diagSec=document.createElement('div'); diagSec.className='sec'; diagSec.textContent='diagnóstico'; panel.appendChild(diagSec);
   var hudRow=document.createElement('div'); hudRow.className='switch';
   var hudLabel=document.createElement('span'); hudLabel.textContent='HUD de FPS';
-  var hudSwitch=document.createElement('button'); hudSwitch.className='sw'; hudSwitch.type='button'; hudSwitch.setAttribute('role','switch');
+  var hudSwitch=document.createElement('button'); hudSwitch.className='sw'; hudSwitch.type='button'; hudSwitch.setAttribute('role','switch'); hudSwitch.setAttribute('aria-label','HUD de FPS');
   function syncHud(on){ hudSwitch.classList.toggle('on',on); hudSwitch.setAttribute('aria-checked',String(!!on)); }
   syncHud(ctx.hudOn); hudSwitch.addEventListener('click',function(){ ctx.setHudState(!ctx.hudOn); });
   ctx.onHudStateChange=syncHud; hudRow.appendChild(hudLabel); hudRow.appendChild(hudSwitch); panel.appendChild(hudRow);
@@ -171,6 +178,7 @@ export function createPanel(ctx){
   }
   TIER_ORDER.forEach(function(t){
     var b=document.createElement('button'); b.textContent=t; if(t===TIER)b.className='cur';
+    b.setAttribute('aria-pressed',String(t===TIER));
     b.addEventListener('click',function(){ if(t===TIER)return; if(ctx.directorUserExit)ctx.directorUserExit(); ctx.persistTier(t); reloadWithoutTier(); });
     tierRow.appendChild(b);
   });
@@ -197,16 +205,19 @@ export function createPanel(ctx){
 
   var gear=document.createElement('button'); gear.id='knobBtn'; gear.type='button'; gear.title='ajustes';
   gear.setAttribute('aria-label','abrir ajustes'); gear.setAttribute('aria-controls',panel.id); gear.setAttribute('aria-expanded','false'); gear.textContent='⚙';
+  var stateTimer=0;
   function setPanelOpen(open){
     panel.classList.toggle('open',open);gear.classList.toggle('open',open);gear.setAttribute('aria-expanded',String(open));
+    panel.setAttribute('aria-hidden',String(!open)); panel.inert=!open;
     gear.setAttribute('aria-label',open?'fechar ajustes':'abrir ajustes');
     gear.style.right=open?'calc(min(330px, 86vw) + 14px)':'14px';
     hudEl.style.right=open?'calc(min(330px, 86vw) + 18px)':'10px';
-    if(open)refreshAvailability();
+    clearInterval(stateTimer); stateTimer=0;
+    if(open){ refreshAvailability(); stateTimer=setInterval(refreshAvailability,400); }
   }
   gear.addEventListener('click',function(){setPanelOpen(!panel.classList.contains('open'));});
   hudEl.style.transition='right .55s cubic-bezier(.22,1,.36,1)'; document.body.appendChild(gear);
 
-  refreshTierRecommendation(); refreshAvailability();
+  refreshTierRecommendation();
   ctx.controlPanel={ element:panel, gear:gear, entries:entries, refresh:refreshAvailability, setOpen:setPanelOpen };
 }

@@ -96,6 +96,23 @@ export function createSolInfo(ctx){
                  adaptMul: compUniforms.uAdapt.value,
                  look: LOOK ? 'sunshine' : '' };
       };
+      // Contrato canônico dos controles. Sem argumento devolve o mapa
+      // completo; com chave devolve um snapshot único. Setters históricos
+      // abaixo continuam wrappers, mas toda escrita converge no store.
+      window.__solInfo.controls = function(key){
+        return key ? ctx.getControlInfo(key) : ctx.getControlsInfo();
+      };
+      window.__solInfo.setControl = function(key, value){
+        if (ctx.directorUserExit) ctx.directorUserExit();
+        return ctx.setControl(key, value, { source:'qa', persist:true });
+      };
+      window.__solInfo.setAutoTuneKill = function(key, on){
+        if (key === 'cme') ctx.cmeKilled=!!on;
+        else if (key === 'cvol') ctx.cvolKilled=!!on;
+        else return false;
+        if (ctx.onPerformanceStateChange) ctx.onPerformanceStateChange();
+        return ctx.getControlInfo(key);
+      };
       window.__solInfo.perfReset = function(){
         ctx.perfN = 0; ctx.perfIdx = 0; ctx.perfLastT = 0;
         ctx.perfBakeN = 0; ctx.perfBakeIdx = 0;

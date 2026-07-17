@@ -2,13 +2,25 @@
 // dirige boot (URL/storage/preset/default), painel, runtime, overrides e QA.
 
 function def(section, key, label, min, max, step, dflt, apply, extra){
-  return Object.assign({ section:section, key:key, label:label, min:min, max:max,
-    step:step, default:dflt, apply:apply }, extra || {});
+  var out = Object.assign({ section:section, key:key, label:label, min:min, max:max,
+    range:[min,max], step:step, default:dflt, setter:apply,
+    condition:alwaysAvailable }, extra || {});
+  if (!out.metrics) out.metrics = function(ctx){
+    return { runtime:apply.read ? apply.read(ctx) : undefined };
+  };
+  return out;
 }
 
-function setCtx(name){ return function(ctx, v){ ctx[name] = v; }; }
+function alwaysAvailable(ctx, v){ return { effective:v, active:true, reason:'' }; }
+function setCtx(name){
+  var fn=function(ctx, v){ ctx[name] = v; };
+  fn.read=function(ctx){ return ctx[name]; };
+  return fn;
+}
 function setUniform(group, name){
-  return function(ctx, v){ if (ctx[group] && ctx[group][name]) ctx[group][name].value = v; };
+  var fn=function(ctx, v){ if (ctx[group] && ctx[group][name]) ctx[group][name].value = v; };
+  fn.read=function(ctx){ return ctx[group] && ctx[group][name] ? ctx[group][name].value : undefined; };
+  return fn;
 }
 function bloomStrength(ctx, v){
   if (ctx.BLOOM_BASE0 !== undefined) ctx.BLOOM_STRENGTH_BASE = ctx.BLOOM_BASE0 * v;
@@ -38,6 +50,37 @@ function milkyWay(ctx, v){
   if (ctx.milkyWay) ctx.milkyWay.material.opacity = v;
   if (ctx.mwNebUniforms) ctx.mwNebUniforms.uMW.value = v;
 }
+bloomStrength.read=function(ctx){ return ctx.BLOOM_STRENGTH_BASE; };
+exposure.read=function(ctx){ return ctx.compUniforms ? ctx.compUniforms.uExposure.value : undefined; };
+bloomThreshold.read=function(ctx){ return ctx.thresholdUniforms ? ctx.thresholdUniforms.uThreshold.value : ctx.BLOOM_THRESHOLD; };
+stars.read=function(ctx){ return ctx.stars ? ctx.stars.material.opacity : undefined; };
+milkyWay.read=function(ctx){ return ctx.milkyWay ? ctx.milkyWay.material.opacity : undefined; };
+
+function cvolCondition(ctx, v){
+  if (ctx.CVOL_STEPS <= 0) return { effective:0, active:false, reason:'tier-unavailable' };
+  if (ctx.cvolKilled) return { effective:0, active:false, reason:'autotune-disabled' };
+  if (v <= 0.001) return { effective:0, active:false, reason:'source-empty' };
+  if (!ctx.cvolReady) return { effective:0, active:false, reason:'preparing' };
+  return { effective:v, active:true, reason:'' };
+}
+function cmeCondition(ctx, v){
+  if (ctx.CME_STEPS <= 0) return { effective:0, active:false, reason:'tier-unavailable' };
+  if (ctx.cmeKilled) return { effective:0, active:false, reason:'autotune-disabled' };
+  if (v <= 0.001) return { effective:0, active:false, reason:'source-empty' };
+  if (ctx.cmeT >= 900) return { effective:0, active:false, reason:'waiting-flare' };
+  return { effective:v, active:true, reason:'' };
+}
+function burstCondition(ctx, v){
+  if (v <= 0.001) return { effective:0, active:false, reason:'source-empty' };
+  if (!(ctx.lastFlareHDR > 0.004)) return { effective:0, active:false, reason:'waiting-flare' };
+  return { effective:v, active:true, reason:'' };
+}
+function dofCondition(ctx, v){
+  if (v <= 0.001) return { effective:0, active:false, reason:'source-empty' };
+  if (!ctx.compUniforms || ctx.compUniforms.uDof.value <= 0.0008)
+    return { effective:0, active:false, reason:'fit-framing' };
+  return { effective:v, active:true, reason:'' };
+}
 
 export const CONTROL_SCHEMA = [
   def('tempo','speed','Ritmo do tempo',0.05,3,0.05,1,setCtx('TIME_SCALE')),
@@ -57,7 +100,7 @@ export const CONTROL_SCHEMA = [
 
   def('cinema','veil','Halação (glare)',0,1.5,0.05,0,setCtx('VEIL_BASE'),{preset:0.85}),
   def('cinema','streak','Flare anamórfico',0,1.5,0.05,0,setCtx('STREAK_K'),{preset:0.65}),
-  def('cinema','burst','Starburst (difração)',0,1.5,0.05,0,setCtx('BURST_K'),{preset:0.55}),
+  def('cinema','burst','Starburst (difração)',0,1.5,0.05,0,setCtx('BURST_K'),{preset:0.55,condition:burstCondition}),
   def('cinema','disp','Bloom espectral (dispersão)',0,1.5,0.05,0,setCtx('DISP_K'),{preset:0.40}),
   def('cinema','hal','Halação quente (corpo negro)',0,1.5,0.05,0,setCtx('HAL_K'),{preset:0.45}),
   def('cinema','adapt','Olho (adaptação)',0,1,0.05,0,setCtx('ADAPT_K'),{preset:0.55}),
@@ -66,17 +109,24 @@ export const CONTROL_SCHEMA = [
   def('cinema','tone','Grade Sunshine',0,1.2,0.05,0,setUniform('compUniforms','uTone'),{preset:0.65}),
   def('cinema','film','Filme (ACES→AgX)',0,1,0.05,0,setUniform('compUniforms','uFilm')),
   def('cinema','hand','Câmera de mão',0,1.5,0.05,0,setCtx('HAND_K')),
-  def('cinema','dof','Foco raso (bokeh hex)',0,1.5,0.05,0,setCtx('DOF_K'),{preset:0.5}),
+  def('cinema','dof','Foco raso (bokeh hex)',0,1.5,0.05,0,setCtx('DOF_K'),{preset:0.5,condition:dofCondition,
+    metrics:function(ctx){ return { runtime:ctx.compUniforms ? ctx.compUniforms.uDof.value : 0,
+      focus:ctx.compUniforms ? ctx.compUniforms.uDofFocus.value : 0 }; }}),
 
   def('coroa','halo','Halo coronal',0,2,0.05,0.55,setUniform('coronaRaysUniforms','uHalo')),
   def('coroa','ray','Streamers',0,3,0.05,0.9,setUniform('coronaRaysUniforms','uRayBoost')),
   def('coroa','cact','Resposta à atividade',0,2,0.05,0.5,setUniform('coronaRaysUniforms','uActGain')),
-  def('coroa','cvol','Coroa volumétrica (raymarch)',0,1.5,0.05,0,setCtx('CVOL_K'),{preset:0.5}),
-  def('coroa','cme','CME (erupção)',0,1.5,0.05,0,setCtx('CME_K'),{preset:0.9}),
+  def('coroa','cvol','Coroa volumétrica (raymarch)',0,1.5,0.05,0,setCtx('CVOL_K'),{preset:0.5,condition:cvolCondition,
+    metrics:function(ctx){ return { runtime:ctx.CVOL_K, ready:!!ctx.cvolReady, cycles:ctx.cvolCycles || 0 }; }}),
+  def('coroa','cme','CME (erupção)',0,1.5,0.05,0,setCtx('CME_K'),{preset:0.9,condition:cmeCondition,
+    metrics:function(ctx){ return { runtime:ctx.CME_K, event:ctx.cmeT < 900, cooldown:ctx.cmeCooldown || 0 }; }}),
   def('coroa','loops','Loops coronais',0,1.5,0.05,0,setCtx('LOOP_K'),{preset:0.55}),
   def('coroa','fprom','Absorção de filamentos',0,1,0.05,0,setCtx('FPROM_K'),{preset:0.55}),
 
-  def('céu','stars','Estrelas',0,2,0.05,1,stars),
+  def('céu','stars','Estrelas',0,2,0.05,1,stars,{metrics:function(ctx){
+    return { runtime:ctx.stars ? ctx.stars.material.opacity : undefined,
+      bright:ctx.brightStars ? ctx.brightStars.material.opacity : undefined };
+  }}),
   def('céu','mw','Via Láctea',0,1,0.02,0.62,milkyWay)
 ];
 
@@ -121,9 +171,26 @@ export function createControlState(ctx, options){
     records[key].applied = records[key].nominal;
     return records[key];
   }
+  function evaluated(d, r){
+    var state;
+    try { state = d.condition(ctx, r.applied, r.nominal) || {}; }
+    catch(e){ state = {}; }
+    var reason = state.reason || '';
+    // Tier e kill-switch vencem qualquer override. Nos demais casos a UI
+    // precisa dizer que o diretor está aplicando um valor transitório.
+    if (r.override && reason !== 'tier-unavailable' && reason !== 'autotune-disabled')
+      reason = 'director-override';
+    var metrics = {};
+    try { metrics = d.metrics(ctx, r.applied, r.nominal) || {}; } catch(e){}
+    return { effective:state.effective === undefined ? r.applied : state.effective,
+      active:state.active === undefined ? true : !!state.active,
+      reason:reason, metrics:metrics };
+  }
   function info(key){
     var d = BY_KEY[key], r = ensure(key);
-    return { key:key, nominal:r.nominal, applied:r.applied, source:r.source,
+    var ev = evaluated(d, r);
+    return { key:key, nominal:r.nominal, applied:r.applied, effective:ev.effective,
+      active:ev.active, reason:ev.reason, source:r.source, metrics:ev.metrics,
       overrideOwner:r.override ? r.override.owner : '', min:d.min, max:d.max,
       step:d.step, default:defaultOf(d), label:d.label, section:d.section };
   }
@@ -134,7 +201,7 @@ export function createControlState(ctx, options){
   function apply(key){
     var d = BY_KEY[key], r = ensure(key);
     r.applied = r.override ? r.override.value : r.nominal;
-    d.apply(ctx, r.applied);
+    d.setter(ctx, r.applied);
     notify(key);
     return r.applied;
   }
@@ -144,6 +211,7 @@ export function createControlState(ctx, options){
   function setControl(key, value, opts){
     opts = opts || {};
     var d = BY_KEY[key]; if (!d) return false;
+    if (opts.stopDirector !== false && ctx.directorUserExit) ctx.directorUserExit();
     var r = ensure(key);
     r.nominal = clamp(d, value);
     r.source = opts.source || 'user';
@@ -193,6 +261,9 @@ export function createControlState(ctx, options){
   ctx.getControl = function(key){ return ensure(key).nominal; };
   ctx.getAppliedControl = function(key){ return ensure(key).applied; };
   ctx.getControlInfo = info;
+  ctx.getControlsInfo = function(){
+    var out = {}; CONTROL_SCHEMA.forEach(function(d){ out[d.key] = info(d.key); }); return out;
+  };
   ctx.setControl = setControl; ctx.setControls = setControls;
   ctx.setControlOverride = setOverride; ctx.clearControlOverride = clearOverride;
   ctx.clearControlOverrides = clearOverrides;

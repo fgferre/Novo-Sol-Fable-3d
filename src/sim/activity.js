@@ -52,9 +52,20 @@ export function createActivity(ctx){
   ctx.cycleHale = 1;          // sinal de Hale do ciclo corrente
   ctx.cycleAmpK = 1;          // ganho global de atividade
   ctx.cyclePolF = 1;          // fator do dipolo polar (1 = default)
+  // EVENTO "máximo/mínimo solar" (prévia do painel + hook de QA): boost
+  // TEMPORÁRIO do multiplicador do relógio do ciclo até um alvo de fase,
+  // segura ~20 s no alvo (relógio parado) e devolve ao ritmo normal.
+  // Mesma física, tempo comprimido — nenhum uniform é setado na mão.
+  // Com evento nulo, cycleEventMul=1 e nada muda (caminho det intocado).
+  ctx.solarMaxK = 0;          // 0 em amp<=1.0, 1 em amp>=1.14 (smoothstep)
+  ctx.cycleEventMul = 1;
+  var cycleEvent = null;
+  var CYCLE_EVT_RAMP = 6;     // s simulados de subida até o alvo
   var cyclePolarN = null, cyclePolarS = null;
   function cycleMultiplier(){
-    return cycleMultiplierFor(ctx.LAPSE_K);
+    // durante um evento o boost É o multiplicador (0 no hold = relógio
+    // parado no pico); fora dele, a lei de sempre derivada do lapse
+    return cycleEvent ? ctx.cycleEventMul : cycleMultiplierFor(ctx.LAPSE_K);
   }
   function cycleDepth(){
     // lapse sozinho liga o ciclo (modo documental de um toque)
@@ -73,6 +84,13 @@ export function createActivity(ctx){
     // pop perceptível nas regiões vivas)
     var amp = 0.10 + 1.06 * Math.pow(Math.sin(Math.PI * ctx.cyclePhase01), 1.15);
     ctx.cycleAmpK = 1.0 + (amp - 1.0) * d;
+    // EVENTO DE MÁXIMO — escalar de apresentação derivado da física:
+    // smoothstep(1.0, 1.14, ampK). Teto real do amp = 1.16 (fase 0.5,
+    // d=1). Com o ciclo desligado (d=0) ampK=1.0 => maxK=0 exato — o
+    // frame default/det permanece byte-idêntico por construção.
+    var mk = (ctx.cycleAmpK - 1.0) / 0.14;
+    mk = mk < 0 ? 0 : (mk > 1 ? 1 : mk);
+    ctx.solarMaxK = mk * mk * (3.0 - 2.0 * mk);
     // dipolo polar: cruza zero na fase 0.45 (reversão no máximo) e
     // satura invertido no fim do ciclo; contínuo na virada de ciclo
     // porque o sinal de Hale flipa junto
@@ -188,12 +206,89 @@ export function createActivity(ctx){
   // sempre.
   function lifeEnvelopeEased(x){
     var e = lifeEnvelope(x);
-    if (ctx.LAPSE_K > 0){
+    // o boost do evento acelera o MESMO relógio warpado do lapse: as
+    // rampas largas entram pelo mesmo easing (sem strobo na subida)
+    if (ctx.LAPSE_K > 0 || (cycleEvent && ctx.cycleEventMul > 1)){
       var easeK=cycleEasingFor(cycleMultiplier());
       e += (lifeEnvelopeLapse(x) - e)*easeK;
     }
     return e;
   }
+  // ---------------------------------------------------------------
+  // EVENTO máximo/mínimo solar. startCycleEvent(alvo, hold): comprime o
+  // caminho de fase até o alvo em ~CYCLE_EVT_RAMP s (multiplicador
+  // derivado do que falta / tempo restante — nunca abaixo do ritmo do
+  // lapse), congela o relógio no alvo por `hold` s simulados e libera.
+  // tickCycleEvent roda todo frame no animate (com evento nulo é um
+  // return imediato — caminho default/det intocado).
+  // ---------------------------------------------------------------
+  function startCycleEvent(target01, hold){
+    var tot = CYCLE_PHASE0 + ctx.cycleTime / CYCLE_PERIOD;
+    var ahead = target01 - (tot - Math.floor(tot));
+    if (ahead < 0.002) ahead += 1.0;   // alvo sempre À FRENTE (fase anda, nunca salta)
+    cycleEvent = { targetTot: tot + ahead, holdLeft: hold,
+                   rampLeft: CYCLE_EVT_RAMP, state: 'ramp' };
+    ctx.cycleEventMul = 1;
+  }
+  function endCycleEvent(){
+    cycleEvent = null;
+    ctx.cycleEventMul = 1;
+  }
+  function tickCycleEvent(delta){
+    if (!cycleEvent) return;
+    // ciclo desligado no meio do evento (usuário zerou cycle/lapse):
+    // aborta limpo — sem relógio não há o que acelerar/segurar
+    if (cycleDepth() <= 0.001){ endCycleEvent(); return; }
+    var ev = cycleEvent;
+    if (ev.state === 'ramp'){
+      var remain = (ev.targetTot - (CYCLE_PHASE0 + ctx.cycleTime / CYCLE_PERIOD)) * CYCLE_PERIOD;
+      if (remain <= 0.5){
+        ev.state = 'hold';        // chegou: segura no alvo (relógio parado)
+        ctx.cycleEventMul = 0;
+      } else {
+        ev.rampLeft = Math.max(0, ev.rampLeft - delta);
+        // cobre o que falta no tempo de rampa restante; no último frame
+        // (rampLeft<delta) fecha exato em delta*mul = remain — sem overshoot
+        var need = remain / Math.max(ev.rampLeft, Math.max(delta, 1/240));
+        ctx.cycleEventMul = Math.max(cycleMultiplierFor(ctx.LAPSE_K), Math.min(need, 3600));
+      }
+    } else {
+      ctx.cycleEventMul = 0;
+      ev.holdLeft -= delta;
+      if (ev.holdLeft <= 0) endCycleEvent();
+    }
+  }
+  function cycleEventInfo(){
+    return cycleEvent
+      ? { on: true, state: cycleEvent.state, mul: +ctx.cycleEventMul.toFixed(2),
+          holdLeft: +Math.max(0, cycleEvent.holdLeft).toFixed(2),
+          targetTot: cycleEvent.targetTot }
+      : { on: false, state: '', mul: 1, holdLeft: 0, targetTot: 0 };
+  }
+  // prévias do painel (padrão canPreviewBurst/previewBurst do flares.js)
+  function canPreviewCycleEvent(){
+    if (cycleDepth() <= 0.001) return { ok:false, reason:'source-empty' };
+    if (cycleEvent) return { ok:false, reason:'event-active' };
+    return { ok:true, reason:'' };
+  }
+  function previewSolarMax(){
+    var state = canPreviewCycleEvent();
+    if (!state.ok) return state;
+    if (ctx.directorUserExit) ctx.directorUserExit();
+    startCycleEvent(0.5, 20);   // fase 0.5 = pico do envelope (amp 1.16)
+    return { ok:true, reason:'', target:'max' };
+  }
+  function previewSolarMin(){
+    var state = canPreviewCycleEvent();
+    if (!state.ok) return state;
+    if (ctx.directorUserExit) ctx.directorUserExit();
+    startCycleEvent(1.0, 20);   // fase 0/1 = fundo do envelope (amp 0.10)
+    return { ok:true, reason:'', target:'min' };
+  }
+  ctx.canPreviewSolarMax = canPreviewCycleEvent;
+  ctx.canPreviewSolarMin = canPreviewCycleEvent;
+  ctx.previewSolarMax = previewSolarMax;
+  ctx.previewSolarMin = previewSolarMin;
   var lastRegionT = 0;
   function updateActiveRegions(timeNow){
     // rotação diferencial nas CARGAS (mesma lei Snodgrass do sim, relativa
@@ -264,6 +359,8 @@ export function createActivity(ctx){
            updateCycleState: updateCycleState, placePair: placePair,
            updateActiveRegions: updateActiveRegions, cycleDepth: cycleDepth,
            cycleMultiplier: cycleMultiplier,
+           startCycleEvent: startCycleEvent, tickCycleEvent: tickCycleEvent,
+           cycleEventInfo: cycleEventInfo,
            lifeEnvelope: lifeEnvelope, lifeEnvelopeEased: lifeEnvelopeEased,
            bFieldJS: bFieldJS, flicker1f: flicker1f,
            cyclePolarN: cyclePolarN, cyclePolarS: cyclePolarS,

@@ -182,7 +182,13 @@ export const CONTROL_SCHEMA = [
   def('tempo','pmode','Oscilações (p-modes)',0,1,0.025,0,setUniform('sunUniforms','uPmode'),{
     metrics:function(ctx, v){ return { runtime:ctx.sunUniforms ? ctx.sunUniforms.uPmode.value : 0,
       displacementLimit:0.0088*v, brightnessLimit:0.11*v }; }}),
-  def('tempo','cycle','Profundidade do ciclo',0,1,0.05,0,setCtx('CYCLE_K'),{condition:cycleCondition,
+  // default do ciclo: no modo NORMAL a estrela vive o ciclo de 11 anos
+  // por inteiro (profundidade 1, período natural ~1800 un ≈ 30 min a
+  // speed=1); sob ?det=1 o default volta a 0 — relógio congelado em
+  // amp=1.0, QA determinístico byte-idêntico por construção. URL e
+  // storage continuam vencendo o default (ensure() do store).
+  def('tempo','cycle','Profundidade do ciclo',0,1,0.05,
+    function(ctx){ return ctx.DET ? 0 : 1; },setCtx('CYCLE_K'),{condition:cycleCondition,
     metrics:function(ctx){ return timeMetrics(ctx,ctx.CYCLE_K); }}),
   def('tempo','lapse','Velocidade do ciclo',0,1,0.05,0,setCtx('LAPSE_K'),{condition:lapseCondition,
     metrics:function(ctx){ return timeMetrics(ctx,ctx.LAPSE_K); }}),

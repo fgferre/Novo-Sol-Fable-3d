@@ -55,6 +55,11 @@ export function createConfig(ctx){
       return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
   }
+  // ctx.DET precisa existir ANTES do createControlState: o default do
+  // controle `cycle` é uma função de ctx (0 sob ?det=1 — QA congelado e
+  // byte-idêntico; 1 no modo normal — o ciclo de 11 anos anda por
+  // default). A reatribuição no fim do módulo é idempotente.
+  ctx.DET = DET;
   ctx.savedKnobs = {};
   try { ctx.savedKnobs = JSON.parse(localStorage.getItem('solKnobs') || '{}') || {}; } catch(e){}
   var savedMigration = migrateSavedControls(ctx.savedKnobs);

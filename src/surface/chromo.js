@@ -29,7 +29,12 @@ export function createChromo(ctx){
     uSimTex: { value: simRTs[0].texture },
     uSimTexel: { value: simUniforms.uTexel.value },
     uGranFreq: { value: TP.granFreq },
-    uCharges: { value: charges }
+    uCharges: { value: charges },
+    // EVENTO DE MÁXIMO SOLAR: peso da rede de supergranulação no bake.
+    // Snapshotado por CICLO de bake (snapshotBakeInputs) — as 8 fatias
+    // de um ciclo leem o MESMO valor (sem tearing entre bandas) e o
+    // crossfade uBakeMix do disco suaviza a evolução entre ciclos.
+    uMaxK: { value: ctx.solarMaxK || 0 }
   };
   var chromoFragment = NOISE_GLSL + '\n' + WORLEY_GLSL + '\n' + [
     'uniform float uTime;',
@@ -37,6 +42,7 @@ export function createChromo(ctx){
     'uniform vec2 uSimTexel;',
     'uniform float uGranFreq;',
     'uniform vec4 uCharges[10];',
+    'uniform float uMaxK;',
     'varying vec2 vUv;'].join('\n') + '\n' + SFTDIR_GLSL + '\n' + BFIELD_GLSL + '\n' + LIC_GLSL + '\n' + [
     'void main(){',
     '  float lon = vUv.x*6.28318530718;',
@@ -58,7 +64,11 @@ export function createChromo(ctx){
     '  vec2 sg = worleyF1F2(sp*23.0 + vec3(0.0, 0.0, t*0.004));',
     '  float network = 1.0 - smoothstep(0.0, 0.17, sg.y - sg.x);',
     '  network *= 0.6 + 0.4*(snoise(sp*7.0 + vec3(1.3))*0.5+0.5);',
-    '  heatLS += network * 0.075;',
+    // EVENTO DE MÁXIMO (uMaxK): o peso da rede sobe 0.075→0.26 — a
+    // teia craquelada de células salta ao primeiro plano no pico do
+    // ciclo. Com uMaxK=0 o termo extra é exatamente 0.0 (bake calmo/det
+    // bit-exato ao baseline).
+    '  heatLS += network * (0.075 + 0.185*uMaxK);',
     // campo magnético + ruído do sol calmo (idêntico ao shader do disco)
     '  vec3 B = bField(sp);',
     // sol calmo: a direção vem do GRADIENTE do fluxo transportado pela
@@ -279,6 +289,10 @@ export function createChromo(ctx){
   smearUniforms.uCharges.value = bakeCharges;
   function snapshotBakeInputs(){
     ctx.diagEvent('chromo-bake');   // início de um ciclo fatiado (~8Hz)
+    // maxK snapshotado JUNTO com sim/cargas: todas as fatias do ciclo
+    // assam com o mesmo peso de rede (coerência intra-ciclo; a transição
+    // temporal fica por conta do crossfade prev/cur do disco)
+    chromoUniforms.uMaxK.value = ctx.solarMaxK;
     bakeCopyUniforms.tSrc.value = simRTs[ctx.simIndex].texture;
     renderer.setRenderTarget(bakeSimRT);
     renderer.render(bakeCopyScene, quadCamera);

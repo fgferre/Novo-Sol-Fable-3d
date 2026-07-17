@@ -38,6 +38,7 @@ export function createPanel(ctx){
     '#knobPanel .rowAction{margin:3px 0 1px;padding:4px 9px;border-radius:7px;cursor:pointer;',
     ' border:1px solid rgba(255,170,90,.25);background:rgba(255,140,50,.08);color:#ffc891;font-size:10px}',
     '#knobPanel .rowAction:disabled{opacity:.38;cursor:default}#knobPanel .rowAction[hidden]{display:none}',
+    '#knobPanel .rowAction+.rowAction{margin-left:6px}',
     '#knobPanel .row.unavailable .lab{opacity:.52}#knobPanel .row.unavailable input{opacity:.45}',
     'input[type=range].kn{-webkit-appearance:none;appearance:none;width:100%;height:24px;',
     ' background:transparent;margin:0;display:block}',
@@ -120,7 +121,27 @@ export function createPanel(ctx){
       ctx.setControl(d.key, v, { source:'user', persist:true });
     });
     row.appendChild(lab); row.appendChild(input); row.appendChild(state);
-    var action=null;
+    var action=null,action2=null;
+    // prévias do ciclo (padrão Burst/CME): aceleram o relógio do ciclo
+    // até o pico/fundo, seguram ~20 s e devolvem ao ritmo normal —
+    // mesma física, tempo comprimido (activity.js)
+    if(d.key==='cycle'){
+      action=document.createElement('button');action.type='button';action.className='rowAction';
+      action.textContent='máximo solar';
+      action.setAttribute('aria-label','acelerar o ciclo até o máximo solar (prévia)');
+      action.addEventListener('click',function(){
+        if(ctx.previewSolarMax)ctx.previewSolarMax();
+        refreshAvailability();
+      });
+      action2=document.createElement('button');action2.type='button';action2.className='rowAction';
+      action2.textContent='mínimo solar';
+      action2.setAttribute('aria-label','acelerar o ciclo até o mínimo solar (prévia)');
+      action2.addEventListener('click',function(){
+        if(ctx.previewSolarMin)ctx.previewSolarMin();
+        refreshAvailability();
+      });
+      row.appendChild(action);row.appendChild(action2);
+    }
     if(d.key==='burst'||d.key==='cme'||d.key==='cvol'||d.key==='dof'){
       action=document.createElement('button');action.type='button';action.className='rowAction';
       action.textContent=d.key==='dof'?'aproximar':d.key==='burst'?'disparar flare':d.key==='cme'?'ejetar CME':'reativar';
@@ -141,7 +162,7 @@ export function createPanel(ctx){
       row.appendChild(action);
     }
     panel.appendChild(row);
-    entries[d.key] = { def:d, row:row, input:input, state:state, action:action, paint:paint };
+    entries[d.key] = { def:d, row:row, input:input, state:state, action:action, action2:action2, paint:paint };
   });
 
   function stateMessage(info){
@@ -173,6 +194,16 @@ export function createPanel(ctx){
   }
   function syncAction(key,e,info){
     if(!e.action)return;
+    if(key==='cycle'){
+      var evState=ctx.canPreviewSolarMax&&ctx.canPreviewSolarMax();
+      var evOk=!!(evState&&evState.ok);
+      e.action.disabled=!evOk;if(e.action2)e.action2.disabled=!evOk;
+      if(evState&&!evState.ok){
+        var evMsg=previewMessage(evState.reason);
+        if(evMsg&&(!e.state.textContent||evState.reason==='event-active'))e.state.textContent=evMsg;
+      }
+      return;
+    }
     if(key==='dof'){
       var fit=info.reason==='fit-framing';e.action.hidden=!fit;e.action.disabled=!fit;return;
     }

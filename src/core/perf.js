@@ -45,7 +45,13 @@ export function createPerf(ctx){
   ctx.hudOn = urlQ.hud === '1';
   if (ctx.hudOn) hudEl.style.display = 'block';
   ctx.hudTimer = 0, ctx.hudDown = null, ctx.hudAccum = 0;
-  function hudToggle(){ ctx.hudOn = !ctx.hudOn; hudEl.style.display = ctx.hudOn ? 'block' : 'none'; }
+  function setHudState(on){
+    ctx.hudOn = !!on;
+    hudEl.style.display = ctx.hudOn ? 'block' : 'none';
+    if (ctx.onHudStateChange) ctx.onHudStateChange(ctx.hudOn);
+    return ctx.hudOn;
+  }
+  function hudToggle(){ return setHudState(!ctx.hudOn); }
 
   // ---------------------------------------------------------------
   // T3.2: auto-tune em runtime. Trocar o TIER ao vivo exigiria
@@ -55,9 +61,9 @@ export function createPerf(ctx){
   // acima de 18ms desce a escala 1.0 -> 0.85 -> 0.7; p95 < 9ms
   // sustentado por 10s sobe de volta (histerese pelos degraus + janela
   // limpa a cada troca). Nos EXTREMOS, persiste uma recomendação de
-  // tier no localStorage para a PRÓXIMA carga — assim um aparelho que
-  // não segura nem 0.7 abre direto num tier menor, e um que sobra
-  // fôlego por 30s no teto abre num maior.
+  // tier para a PRÓXIMA carga. A recomendação fica só na sessão e a UI
+  // exige confirmação antes de persistir/recarregar: o próximo boot nunca
+  // muda de qualidade silenciosamente.
   // ---------------------------------------------------------------
   var SCALE_STEPS = [1.0, 0.85, 0.7];
   ctx.scaleIdx = 0; var tuneWin = [], tuneGoodT = 0, tuneCooldown = 0; ctx.tuneEvents = 0;
@@ -76,6 +82,21 @@ export function createPerf(ctx){
   }
   function persistTier(t){ try { localStorage.setItem('solTier', t); } catch(e){} }
   var TIER_ORDER = ['low', 'mid', 'high', 'ultra'];
+  ctx.recommendedTier = null;
+  function notifyPerformanceState(){
+    if (ctx.onPerformanceStateChange) ctx.onPerformanceStateChange();
+  }
+  function recommendTier(t){
+    if (TIER_ORDER.indexOf(t) < 0 || t === TIER) return false;
+    ctx.recommendedTier = t;
+    notifyPerformanceState();
+    return true;
+  }
+  function applyRecommendedTier(){
+    if (!ctx.recommendedTier) return false;
+    persistTier(ctx.recommendedTier);
+    return true;
+  }
   // Alvos por classe de aparelho: no desktop degrada acima de 18ms p95
   // (~55fps) como antes; no móvel o compromisso decidido é OUTRO — piso
   // de 24fps (42ms p95): o aparelho segura o tier/escala enquanto estiver
@@ -106,6 +127,7 @@ export function createPerf(ctx){
         // não pode afundar o tier inteiro.
         if (CME_STEPS > 0 && !ctx.cmeKilled && ctx.CME_K > 0.001){
           ctx.cmeKilled = true; ctx.tuneEvents++;
+          notifyPerformanceState();
           tuneCooldown = 4; tuneWin.length = 0;
         } else
         // FASE 4: antes de rebaixar o tier persistido, derruba a coroa
@@ -115,10 +137,11 @@ export function createPerf(ctx){
         // piso de 24fps: nenhuma medição é pedida ao dono.
         if (CVOL_STEPS > 0 && !ctx.cvolKilled && ctx.CVOL_K > 0.001){
           ctx.cvolKilled = true; ctx.tuneEvents++;
+          notifyPerformanceState();
           tuneCooldown = 4; tuneWin.length = 0;
         } else {
           var k = TIER_ORDER.indexOf(TIER);
-          if (k > 0){ persistTier(TIER_ORDER[k-1]); tuneCooldown = 1e9; }
+          if (k > 0){ recommendTier(TIER_ORDER[k-1]); tuneCooldown = 1e9; }
         }
       }
     } else if (p95 < TUNE_LO){
@@ -131,12 +154,13 @@ export function createPerf(ctx){
         // ultra é só para ponteiro fino (desktop): DPR 3 + malha 192
         // afogariam um celular que por acaso sustente 60 no high
         var kMax = coarsePointer ? 2 : TIER_ORDER.length - 1;
-        if (k2 < kMax && !urlQ.tier){ persistTier(TIER_ORDER[k2+1]); }
+        if (k2 < kMax && !urlQ.tier){ recommendTier(TIER_ORDER[k2+1]); }
         tuneGoodT = -1e9;   // uma recomendação por sessão
       }
     } else tuneGoodT = 0;
   }
-  ctx.hudEl = hudEl; ctx.hudToggle = hudToggle; ctx.persistTier = persistTier;
+  ctx.hudEl = hudEl; ctx.setHudState = setHudState; ctx.hudToggle = hudToggle;
+  ctx.persistTier = persistTier; ctx.applyRecommendedTier = applyRecommendedTier;
   ctx.autoTune = autoTune; ctx.autoTuneOn = autoTuneOn;
   ctx.SCALE_STEPS = SCALE_STEPS; ctx.TIER_ORDER = TIER_ORDER;
   ctx.perfFrameMs = perfFrameMs; ctx.perfBusyMs = perfBusyMs; ctx.perfBakes = perfBakes;

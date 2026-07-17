@@ -10,7 +10,8 @@ export function createPanel(ctx){
       BLOOM_BASE0 = ctx.BLOOM_BASE0, STARS_OP0 = ctx.STARS_OP0,
       BRIGHT_OP0 = ctx.BRIGHT_OP0, LOOK_SUNSHINE = ctx.LOOK_SUNSHINE,
       TIER = ctx.TIER, TIER_ORDER = ctx.TIER_ORDER, hudEl = ctx.hudEl,
-      hudToggle = ctx.hudToggle, persistTier = ctx.persistTier;
+      setHudState = ctx.setHudState, persistTier = ctx.persistTier,
+      applyRecommendedTier = ctx.applyRecommendedTier;
 
   // ---------------------------------------------------------------
   // PAINEL DE AJUSTES (drawer): sliders para os knobs cinematográficos,
@@ -45,6 +46,10 @@ export function createPanel(ctx){
       '#knobPanel .row{margin:10px 0 2px}',
       '#knobPanel .lab{display:flex;justify-content:space-between;font-size:12px;color:rgba(233,228,218,.85)}',
       '#knobPanel .val{font-variant-numeric:tabular-nums;color:rgba(255,190,130,.9);font-size:11.5px}',
+      '#knobPanel .state{min-height:13px;margin-top:-2px;font-size:9.5px;line-height:1.35;',
+      ' color:rgba(233,228,218,.46)}',
+      '#knobPanel .row.unavailable .lab{opacity:.52}',
+      '#knobPanel .row.unavailable input{opacity:.45}',
       'input[type=range].kn{-webkit-appearance:none;appearance:none;width:100%;height:24px;',
       ' background:transparent;margin:0;display:block}',
       'input[type=range].kn::-webkit-slider-runnable-track{height:3px;border-radius:2px;',
@@ -81,7 +86,9 @@ export function createPanel(ctx){
       ' border:1px solid rgba(255,170,90,.25);background:transparent;color:rgba(233,228,218,.75);',
       ' letter-spacing:.04em;transition:background .25s}',
       '#tierRow button.cur{background:rgba(255,140,50,.30);color:#ffd9a8;border-color:rgba(255,170,90,.55)}',
-      '#tierNote{font-size:10px;color:rgba(233,228,218,.38);margin:4px 0 0}'
+      '#tierNote{font-size:10px;color:rgba(233,228,218,.46);margin:4px 0 0}',
+      '#tierApply{display:none;margin-top:7px;width:100%;padding:7px 0;border-radius:8px;cursor:pointer;',
+      ' border:1px solid rgba(255,170,90,.32);background:rgba(255,140,50,.10);color:#ffd9a8;font-size:10.5px}'
     ].join('\n');
     document.head.appendChild(css);
 
@@ -167,9 +174,19 @@ export function createPanel(ctx){
         get:function(){ return coronaRaysUniforms.uActGain.value; },
         set:function(v){ coronaRaysUniforms.uActGain.value = v; } },
       { k:'cvol', label:'Coroa volumétrica (raymarch)', lo:0, hi:1.5, step:0.05, dflt:0,
-        get:function(){ return ctx.CVOL_K; }, set:function(v){ ctx.CVOL_K = v; } },
+        get:function(){ return ctx.CVOL_K; }, set:function(v){ ctx.CVOL_K = v; },
+        availability:function(){
+          if (ctx.CVOL_STEPS <= 0) return 'indisponível nesta qualidade';
+          if (ctx.cvolKilled) return 'desativada pelo ajuste automático';
+          return '';
+        } },
       { k:'cme', label:'CME (erupção)', lo:0, hi:1.5, step:0.05, dflt:0,
-        get:function(){ return ctx.CME_K; }, set:function(v){ ctx.CME_K = v; } },
+        get:function(){ return ctx.CME_K; }, set:function(v){ ctx.CME_K = v; },
+        availability:function(){
+          if (ctx.CME_STEPS <= 0) return 'indisponível nesta qualidade';
+          if (ctx.cmeKilled) return 'desativada pelo ajuste automático';
+          return '';
+        } },
       { k:'loops', label:'Loops coronais', lo:0, hi:1.5, step:0.05, dflt:0,
         get:function(){ return ctx.LOOP_K; }, set:function(v){ ctx.LOOP_K = v; } },
       { k:'fprom', label:'Filamento ↔ proeminência', lo:0, hi:1.5, step:0.05, dflt:0,
@@ -193,6 +210,7 @@ export function createPanel(ctx){
     panel.appendChild(head); panel.appendChild(sub);
 
     var sliders = [];
+    var sliderByKey = {};
     DEFS.forEach(function(d){
       if (d.sec){
         var s = document.createElement('div'); s.className = 'sec';
@@ -213,18 +231,44 @@ export function createPanel(ctx){
       inp.value = d.get(); paint(inp.value);
       inp.addEventListener('input', function(){
         var v = parseFloat(inp.value);
+        // Uma edição é uma tomada explícita de controle. O valor é lido
+        // antes da saída, porque a restauração do diretor também sincroniza
+        // o DOM e não pode apagar o gesto que acabou de acontecer.
+        if (ctx.directorUserExit) ctx.directorUserExit();
         d.set(v); paint(v); saveKnob(d.k, v);
       });
       row.appendChild(lab); row.appendChild(inp);
+      var state = document.createElement('div'); state.className = 'state';
+      row.appendChild(state);
       panel.appendChild(row);
-      sliders.push({ d: d, inp: inp, paint: paint });
+      var entry = { d: d, inp: inp, paint: paint, row: row, state: state };
+      sliders.push(entry); sliderByKey[d.k] = entry;
     });
+
+    function syncControlUI(keys){
+      (keys || Object.keys(sliderByKey)).forEach(function(k){
+        var s = sliderByKey[k]; if (!s) return;
+        var v = s.d.get(); s.inp.value = v; s.paint(v);
+      });
+    }
+    function refreshAvailability(){
+      sliders.forEach(function(s){
+        var msg = s.d.availability ? s.d.availability() : '';
+        s.inp.disabled = !!msg;
+        s.row.classList.toggle('unavailable', !!msg);
+        s.state.textContent = msg;
+      });
+      refreshTierRecommendation();
+    }
+    ctx.syncControlUI = syncControlUI;
+    ctx.onPerformanceStateChange = refreshAvailability;
 
     // switch da câmera idle cinematográfica
     var swRow = document.createElement('div'); swRow.className = 'switch';
     var swLab = document.createElement('span'); swLab.textContent = 'Câmera contemplativa';
     var sw = document.createElement('div'); sw.className = 'sw' + (ctx.IDLE_CINE ? ' on' : '');
     sw.addEventListener('click', function(){
+      if (ctx.directorUserExit) ctx.directorUserExit();
       ctx.IDLE_CINE = !ctx.IDLE_CINE;
       sw.classList.toggle('on', ctx.IDLE_CINE);
       saveKnob('idle', ctx.IDLE_CINE ? 1 : 0);
@@ -240,6 +284,7 @@ export function createPanel(ctx){
     var lookBtn = document.createElement('button');
     lookBtn.id = 'lookBtn'; lookBtn.textContent = 'aplicar look Sunshine';
     lookBtn.addEventListener('click', function(){
+      if (ctx.directorUserExit) ctx.directorUserExit();
       sliders.forEach(function(s){
         var v = LOOK_SUNSHINE[s.d.k];
         if (v === undefined) return;
@@ -268,9 +313,9 @@ export function createPanel(ctx){
     var hudLab = document.createElement('span'); hudLab.textContent = 'HUD de FPS';
     var hudSw = document.createElement('div'); hudSw.className = 'sw' + (ctx.hudOn ? ' on' : '');
     hudSw.addEventListener('click', function(){
-      hudToggle();
-      hudSw.classList.toggle('on', ctx.hudOn);
+      setHudState(!ctx.hudOn);
     });
+    ctx.onHudStateChange = function(on){ hudSw.classList.toggle('on', on); };
     hudRow.appendChild(hudLab); hudRow.appendChild(hudSw);
     panel.appendChild(hudRow);
 
@@ -287,6 +332,7 @@ export function createPanel(ctx){
       if (t === TIER) tb.className = 'cur';
       tb.addEventListener('click', function(){
         if (t === TIER) return;
+        if (ctx.directorUserExit) ctx.directorUserExit();
         persistTier(t);
         var q = (location.search || '').replace(/^\?/, '').split('&')
           .filter(function(kv){ return kv && kv.indexOf('tier=') !== 0; }).join('&');
@@ -298,16 +344,43 @@ export function createPanel(ctx){
     var tierNote = document.createElement('p'); tierNote.id = 'tierNote';
     tierNote.textContent = 'trocar a qualidade recarrega a cena';
     panel.appendChild(tierNote);
+    var tierApply = document.createElement('button'); tierApply.id = 'tierApply';
+    tierApply.addEventListener('click', function(){
+      if (!applyRecommendedTier()) return;
+      var q = (location.search || '').replace(/^\?/, '').split('&')
+        .filter(function(kv){ return kv && kv.indexOf('tier=') !== 0; }).join('&');
+      location.href = location.pathname + (q ? '?' + q : '');
+    });
+    panel.appendChild(tierApply);
+    function refreshTierRecommendation(){
+      var t = ctx.recommendedTier;
+      tierNote.textContent = t
+        ? 'qualidade recomendada para a próxima carga: ' + t
+        : 'trocar a qualidade recarrega a cena';
+      tierApply.style.display = t ? 'block' : 'none';
+      tierApply.textContent = t ? 'aplicar ' + t + ' e recarregar' : '';
+    }
+    refreshTierRecommendation();
 
     var reset = document.createElement('button');
     reset.id = 'knobReset'; reset.textContent = 'restaurar padrão';
     reset.addEventListener('click', function(){
-      try { localStorage.removeItem('solKnobs'); } catch(e){}
+      if (!window.confirm('Restaurar toda a sessão e recarregar a cena?')) return;
+      if (ctx.directorUserExit) ctx.directorUserExit();
+      setHudState(false);
+      ctx.cmeKilled = false; ctx.cvolKilled = false; ctx.recommendedTier = null;
+      try { localStorage.removeItem('solKnobs'); localStorage.removeItem('solTier'); } catch(e){}
       ctx.savedKnobs = {};
-      sliders.forEach(function(s){ s.d.set(s.d.dflt); s.inp.value = s.d.dflt; s.paint(s.d.dflt); });
-      if (ctx.IDLE_CINE){ ctx.IDLE_CINE = false; sw.classList.remove('on'); }
+      var controlKeys = sliders.map(function(s){ return s.d.k; });
+      var uiKeys = controlKeys.concat(['look','idle','director','hud','tier','tune','scale']);
+      try {
+        var target = new URL(location.href);
+        uiKeys.forEach(function(k){ target.searchParams.delete(k); });
+        location.replace(target.href);
+      } catch(e){ location.reload(); }
     });
     panel.appendChild(reset);
+    refreshAvailability();
     document.body.appendChild(panel);
 
     var btn = document.createElement('div');
@@ -316,6 +389,7 @@ export function createPanel(ctx){
     btn.addEventListener('click', function(){
       var open = panel.classList.toggle('open');
       btn.classList.toggle('open', open);
+      if (open) refreshAvailability();
       // o ⚙ acompanha a borda do painel (não flutua sobre os controles)
       // e o HUD desliza para fora da área coberta — quem mexe em knobs
       // de custo é exatamente quem quer ver o fps
@@ -323,7 +397,7 @@ export function createPanel(ctx){
       btn.style.right = open ? edge : '14px';
       hudEl.style.right = open ? 'calc(min(330px, 86vw) + 18px)' : '10px';
     });
-    btn.style.transition += ', right .55s cubic-bezier(.22,1,.36,1)';
+    btn.style.transition = 'transform .5s cubic-bezier(.22,1,.36,1), background .3s, right .55s cubic-bezier(.22,1,.36,1)';
     hudEl.style.transition = 'right .55s cubic-bezier(.22,1,.36,1)';
     document.body.appendChild(btn);
   })();

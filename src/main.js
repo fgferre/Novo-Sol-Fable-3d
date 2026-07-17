@@ -383,7 +383,9 @@ function init(){
     // FASE 5 — modo diretor: coreografa câmera/eventos/knobs por cima
     // do estado (uma comparação sem ?director=1). ctx.dirT=-1 é "ainda não
     // começou" (o tick inicia); -999 é "usuário assumiu" (permanente).
-    if (ctx.DIRECTOR_ON && ctx.dirT > -900) directorTick(delta, rawDelta);
+    // O diretor inteiro usa o relógio simulado: beats e aproximações mantêm
+    // a mesma trajetória quando `speed` comprime ou expande a sequência.
+    if (ctx.DIRECTOR_ON && ctx.dirT > -900) directorTick(delta);
 
     simAccum += delta;
     if (subToggle.sim){

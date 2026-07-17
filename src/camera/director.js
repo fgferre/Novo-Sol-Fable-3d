@@ -36,6 +36,7 @@ export function createDirector(ctx){
     // devolve os knobs que o diretor emprestou para a vitrine
     if (dirSavedCme >= 0){ ctx.CME_K = dirSavedCme; dirSavedCme = -1; }
     if (dirSavedDof >= 0){ ctx.DOF_K = dirSavedDof; dirSavedDof = -1; }
+    if (ctx.syncControlUI) ctx.syncControlUI(['cme', 'dof', 'lapse']);
   }
   ctx.directorUserExit = directorUserExit;
   // início pelo PAINEL (a sequência não pode depender de URL): liga o
@@ -43,11 +44,14 @@ export function createDirector(ctx){
   // raso no valor do preset se estiverem abaixo dele (restaurados na
   // saída). Quem já tem os knobs altos não é tocado.
   function directorStart(){
+    if (directorActive()) directorUserExit();
     ctx.DIRECTOR_ON = true;
-    ctx.dirT = -1;
+    ctx.dirT = 0;
+    dirSavedLapse = ctx.LAPSE_K;
     ctx.dirFlareFired = false; ctx.dirCmeFired = false;
     if (CME_STEPS > 0 && ctx.CME_K < 0.85){ dirSavedCme = ctx.CME_K; ctx.CME_K = 0.9; }
     if (ctx.DOF_K < 0.5){ dirSavedDof = ctx.DOF_K; ctx.DOF_K = 0.5; }
+    if (ctx.syncControlUI) ctx.syncControlUI(['cme', 'dof', 'lapse']);
   }
   function dirEase(x){ x = Math.max(0, Math.min(1, x)); return x*x*(3 - 2*x); }
   function dirAimAt(w){
@@ -80,8 +84,7 @@ export function createDirector(ctx){
     while (d < -Math.PI) d += Math.PI*2;
     return a + d*k;
   }
-  function directorTick(delta, rawDelta){
-    if (ctx.dirT < 0){ ctx.dirT = 0; dirSavedLapse = ctx.LAPSE_K; }
+  function directorTick(delta){
     ctx.dirT += delta;
     var t = ctx.dirT;
     ctx.thetaVel = 0; ctx.phiVel = 0;
@@ -90,7 +93,7 @@ export function createDirector(ctx){
     if (t < 10){
       // B0 — plano geral: o Sol inteiro, respiração lenta para dentro
       w = dirRegionWorld(ctx.dirPair); dirAimAt(w);
-      k = 1 - Math.exp(-rawDelta/6.0);
+      k = 1 - Math.exp(-delta/6.0);
       ctx.theta = dirLerpAngle(ctx.theta, dirAng.th - 0.9, k);
       ctx.phi += (Math.PI*0.46 - ctx.phi)*k;
       ctx.targetCamDist = ctx.fitDist*(1.28 - 0.018*Math.min(t, 10));
@@ -99,19 +102,19 @@ export function createDirector(ctx){
       // B1 — push-in: tracking da região protagonista (ela gira com o
       // Sol e a câmera a persegue), foco raso no centro do quadro
       w = dirRegionWorld(ctx.dirPair); dirAimAt(w);
-      k = 1 - Math.exp(-rawDelta/2.2);
+      k = 1 - Math.exp(-delta/2.2);
       ctx.theta = dirLerpAngle(ctx.theta, dirAng.th, k);
       ctx.phi += (dirAng.ph - ctx.phi)*k;
-      ctx.targetCamDist += (minDist*1.30 - ctx.targetCamDist)*(1 - Math.exp(-rawDelta/3.0));
+      ctx.targetCamDist += (minDist*1.30 - ctx.targetCamDist)*(1 - Math.exp(-delta/3.0));
       ctx.dofFocusOverride = 0.0;
     } else if (t < 30){
       // B2 — reposição ao limbo: a região desliza para a borda (o
       // palco do Thomson) e o foco puxa ao horizonte
       w = dirRegionWorld(ctx.dirPair); dirAimAt(w);
-      k = 1 - Math.exp(-rawDelta/2.6);
+      k = 1 - Math.exp(-delta/2.6);
       ctx.theta = dirLerpAngle(ctx.theta, dirAng.th + horizon*0.94, k);
       ctx.phi += (dirAng.ph*0.5 + Math.PI*0.25 - ctx.phi)*k;
-      ctx.targetCamDist += (ctx.fitDist*0.78 - ctx.targetCamDist)*(1 - Math.exp(-rawDelta/3.0));
+      ctx.targetCamDist += (ctx.fitDist*0.78 - ctx.targetCamDist)*(1 - Math.exp(-delta/3.0));
       ctx.dofFocusOverride = 1.0;
     } else if (t < 48){
       // B3 — a erupção: flare X no limbo; a casca desprende ~1s depois
@@ -121,26 +124,28 @@ export function createDirector(ctx){
         ctx.dirCmeFired = true; launchCME(1.35);
       }
       w = dirRegionWorld(ctx.dirPair); dirAimAt(w);
-      k = 1 - Math.exp(-rawDelta/4.5);
+      k = 1 - Math.exp(-delta/4.5);
       ctx.theta = dirLerpAngle(ctx.theta, dirAng.th + horizon*0.94, k*0.4);
-      ctx.targetCamDist += (ctx.fitDist*0.92 - ctx.targetCamDist)*(1 - Math.exp(-rawDelta/8.0));
+      ctx.targetCamDist += (ctx.fitDist*0.92 - ctx.targetCamDist)*(1 - Math.exp(-delta/8.0));
       ctx.dofFocusOverride = 1.0;
     } else if (t < 64){
       // B4 — retirada: a casca cruza a coroa, a arcada escura fica
       ctx.dofFocusOverride = -1;
-      ctx.targetCamDist += (ctx.fitDist*1.30 - ctx.targetCamDist)*(1 - Math.exp(-rawDelta/6.0));
-      ctx.theta += 0.012*rawDelta;
+      ctx.targetCamDist += (ctx.fitDist*1.30 - ctx.targetCamDist)*(1 - Math.exp(-delta/6.0));
+      ctx.theta += 0.012*delta;
     } else if (t < 78){
       // B5 — time-lapse documental: só a maquinaria de manchas corre
       var up = dirEase((t - 64)/3.0);
       var down = 1 - dirEase((t - 75)/3.0);
       ctx.LAPSE_K = Math.max(dirSavedLapse, 0.85*up*down);
-      ctx.theta += 0.010*rawDelta;
+      if (ctx.syncControlUI) ctx.syncControlUI(['lapse']);
+      ctx.theta += 0.010*delta;
     } else if (t < 84){
       // B6 — assentar de volta ao plano geral
       ctx.LAPSE_K = dirSavedLapse;
-      ctx.targetCamDist += (ctx.fitDist*1.28 - ctx.targetCamDist)*(1 - Math.exp(-rawDelta/3.0));
-      ctx.theta += 0.010*rawDelta;
+      if (ctx.syncControlUI) ctx.syncControlUI(['lapse']);
+      ctx.targetCamDist += (ctx.fitDist*1.28 - ctx.targetCamDist)*(1 - Math.exp(-delta/3.0));
+      ctx.theta += 0.010*delta;
     } else {
       // loop: próxima volta com outra região protagonista
       ctx.dirT = 0; ctx.dirPair = (ctx.dirPair + 1) % pairStates.length;
@@ -150,4 +155,7 @@ export function createDirector(ctx){
   }
   ctx.directorActive = directorActive; ctx.directorStart = directorStart;
   ctx.directorTick = directorTick;
+  // URL e botão percorrem exatamente a mesma inicialização, inclusive os
+  // mínimos temporários de CME/DOF e a captura dos valores a restaurar.
+  if (ctx.DIRECTOR_ON) directorStart();
 }

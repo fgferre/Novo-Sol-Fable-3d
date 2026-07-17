@@ -108,7 +108,7 @@ function init(){
   var charges = ctx.act.charges, pairStates = ctx.act.pairStates,
       updateCycleState = ctx.act.updateCycleState, placePair = ctx.act.placePair,
       updateActiveRegions = ctx.act.updateActiveRegions, cycleDepth = ctx.act.cycleDepth,
-      cycleMultiplier = ctx.act.cycleMultiplier,
+      cycleMultiplier = ctx.act.cycleMultiplier, tickCycleEvent = ctx.act.tickCycleEvent,
       lifeEnvelope = ctx.act.lifeEnvelope, bFieldJS = ctx.act.bFieldJS,
       flicker1f = ctx.act.flicker1f, cyclePolarN = ctx.act.cyclePolarN,
       CYCLE_PERIOD = ctx.act.CYCLE_PERIOD, CYCLE_PHASE0 = ctx.act.CYCLE_PHASE0;
@@ -462,12 +462,19 @@ function init(){
     // lapse (time-lapse documental) multiplica o relógio do ciclo e regiões
     // (cycleWarp), sem tocar rotação/sim/proeminências. Default 0:
     // warp fica 0.0 e elapsed+0.0 é bit-exato — baseline intocado.
+    // EVENTO máximo/mínimo solar: boost temporário do multiplicador do
+    // relógio do ciclo (prévia do painel/hook de QA). Sem evento é um
+    // return imediato — caminho default/det intocado.
+    tickCycleEvent(delta);
     if (cycleDepth() > 0.001){
       var cycMul = cycleMultiplier();
       ctx.cycleTime += delta * cycMul;
       if (cycMul > 1.0) ctx.cycleWarp += delta * (cycMul - 1.0);
       updateCycleState();
-    }
+    } else if (ctx.solarMaxK !== 0) ctx.solarMaxK = 0;
+    // escalar de apresentação do máximo (uniform do disco); com ciclo
+    // desligado/det é 0.0 — os termos do shader colapsam bit-exatos
+    sunUniforms.uMaxK.value = ctx.solarMaxK;
     // ciclo de vida das regiões ativas (o bake absorve as mudanças a ~8Hz)
     updateActiveRegions(ctx.elapsed + ctx.cycleWarp);
     // flare de superfície: ataque rápido, decaimento lento

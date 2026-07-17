@@ -120,10 +120,25 @@ export function createSolInfo(ctx){
       window.__solInfo.previewAvailability = function(key){
         if(key==='burst')return ctx.canPreviewBurst();
         if(key==='cme')return ctx.canPreviewCME();
+        if(key==='solarmax')return ctx.canPreviewSolarMax();
+        if(key==='solarmin')return ctx.canPreviewSolarMin();
         return {ok:false,reason:'source-empty'};
       };
       window.__solInfo.previewBurst = function(){ return ctx.previewBurst(); };
       window.__solInfo.previewCME = function(){ return ctx.previewCME(); };
+      // EVENTO máximo/mínimo solar (QA): força o evento mesmo com o
+      // ciclo desligado (liga cycle=1 sem persistir) — o mesmo caminho
+      // físico da prévia do painel, nenhum uniform setado na mão.
+      window.__solInfo.forceSolarMax = function(){
+        if (cycleDepth() <= 0.001) ctx.setControl('cycle',1,{source:'qa',persist:false});
+        ctx.act.startCycleEvent(0.5, 20);
+        return window.__solInfo.cycleInfo();
+      };
+      window.__solInfo.forceSolarMin = function(){
+        if (cycleDepth() <= 0.001) ctx.setControl('cycle',1,{source:'qa',persist:false});
+        ctx.act.startCycleEvent(1.0, 20);
+        return window.__solInfo.cycleInfo();
+      };
       window.__solInfo.perfReset = function(){
         ctx.perfN = 0; ctx.perfIdx = 0; ctx.perfLastT = 0;
         ctx.perfBakeN = 0; ctx.perfBakeIdx = 0;
@@ -248,6 +263,9 @@ export function createSolInfo(ctx){
                  phase: ctx.cyclePhase01, n: ctx.cycleN, hale: ctx.cycleHale,
                  amp: ctx.cycleAmpK, pol: ctx.cyclePolF, polNorth: cyclePolarN.w,
                  warp: ctx.cycleWarp,
+                 // evento de máximo: escalar de apresentação + estado do
+                 // boost temporário (campos ADITIVOS — contrato estável)
+                 maxK: ctx.solarMaxK, event: ctx.act.cycleEventInfo(),
                  latC: 35 - 30*ctx.cyclePhase01, latW: 8 - 4*ctx.cyclePhase01 };
       };
       // ...e salto determinístico de fase (sob ?det&hold o tempo congela;

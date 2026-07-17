@@ -28,6 +28,7 @@ import { createSolInfo } from './debug/solinfo.js';
 import { createGpuProfile } from './debug/gpuprofile.js';
 import { createDiag } from './debug/diag.js';
 import { createRenderer, createRenderInfra, createRTType } from './core/renderer.js';
+import { createEdu } from './edu/edu.js';
 
 THREE.ColorManagement.enabled = false;
 
@@ -357,6 +358,10 @@ function init(){
       : 'arraste para girar · scroll aproxima · duplo clique enquadra';
   }
   setTimeout(function(){ if(hintEl) hintEl.style.opacity='0'; }, 6000);
+
+  // Camada educativa opt-in. Sob ?det=1 a fábrica retorna antes de criar
+  // DOM, textura, listener ou tick; ?edu=1 habilita a primeira fatia.
+  createEdu(ctx);
 
   createDirector(ctx);
   var directorTick = ctx.directorTick, directorActive = ctx.directorActive,
@@ -689,6 +694,7 @@ function init(){
       }
     }
     updateCamera();
+    if (ctx.eduTick) ctx.eduTick(rawDelta);
 
     renderer.setRenderTarget(sceneRT);
     renderer.render(scene, camera);

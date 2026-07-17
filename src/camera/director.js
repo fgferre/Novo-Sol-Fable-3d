@@ -70,6 +70,7 @@ export function createDirector(ctx){
     setFlareFrame(surfFlareDir);
     scheduleFlareArcade();
     agitateNearestProm(surfFlareDir);
+    if (ctx.notifyFlareEvent) ctx.notifyFlareEvent();
   }
   function dirLerpAngle(a, b, k){
     var d = b - a;

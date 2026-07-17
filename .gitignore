@@ -4,6 +4,9 @@ dist-single/
 dist/
 node_modules/
 out/
+output/
+.playwright-cli/
+qa-subtle/
 qa-ab-branch/
 qa-ab-main/
 qa-out/

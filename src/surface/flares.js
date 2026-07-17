@@ -62,6 +62,11 @@ export function createFlares(ctx){
     if (bestPs) bestPs.agitT = 0;
     return bestPs;
   }
+  // Emissor canônico do evento educativo. Passa apenas primitivos para que
+  // o caminho desligado continue sem alocação; natural, preview e QA usam-no.
+  function notifyFlareEvent(){
+    return ctx.eduEvent('flare',surfFlareDir.x,surfFlareDir.y,surfFlareDir.z,ctx.surfFlareAmp);
+  }
   function triggerSurfaceFlare(){
     var live = pairStates.filter(function(ps){ return Math.abs(ps.lead.w) > Math.abs(ps.baseQ)*0.6; });
     if (!live.length) return false;
@@ -77,6 +82,7 @@ export function createFlares(ctx){
     setFlareFrame(surfFlareDir);   // moldura das fitas na PIL local
     scheduleFlareArcade();         // arcada re-semeada para ESTE evento
     agitateNearestProm(surfFlareDir);
+    notifyFlareEvent();
     return true;
   }
   // Previews de UI usam exatamente a moldura física do flare/CME, mas a
@@ -106,6 +112,7 @@ export function createFlares(ctx){
     surfFlareDir.set((ps.lead.x+ps.foll.x)*0.5,(ps.lead.y+ps.foll.y)*0.5,(ps.lead.z+ps.foll.z)*0.5).normalize();
     ctx.surfFlareT=0;ctx.surfFlareAmp=amp;
     setFlareFrame(surfFlareDir);scheduleFlareArcade();agitateNearestProm(surfFlareDir);
+    notifyFlareEvent();
     ctx.surfFlareCooldown=Math.max(ctx.surfFlareCooldown,8);
   }
   function canPreviewBurst(){
@@ -144,6 +151,7 @@ export function createFlares(ctx){
   }
   ctx.flareEnvImp = flareEnvImp; ctx.setFlareFrame = setFlareFrame;
   ctx.agitateNearestProm = agitateNearestProm;
+  ctx.notifyFlareEvent = notifyFlareEvent;
   ctx.triggerSurfaceFlare = triggerSurfaceFlare;
   ctx.canPreviewBurst=canPreviewBurst;ctx.previewBurst=previewBurst;
   ctx.canPreviewCME=canPreviewCME;ctx.previewCME=previewCME;

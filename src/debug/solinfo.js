@@ -366,6 +366,7 @@ export function createSolInfo(ctx){
         ctx.surfFlareAmp = 1.2;   // QA: o gatilho natural seta via |w|; o forçado usa amp fixa
         ctx.setFlareFrame(ctx.surfFlareDir);
         scheduleFlareArcade();
+        if (ctx.notifyFlareEvent) ctx.notifyFlareEvent();
         return !!ctx.agitateNearestProm(ctx.surfFlareDir);
       };
       // QA FASE 1: flare no ponto MÉDIO do par i — o mesmo alvo do
@@ -382,6 +383,7 @@ export function createSolInfo(ctx){
         ctx.setFlareFrame(ctx.surfFlareDir);
         scheduleFlareArcade();
         ctx.agitateNearestProm(ctx.surfFlareDir);
+        if (ctx.notifyFlareEvent) ctx.notifyFlareEvent();
         return [ctx.surfFlareDir.x, ctx.surfFlareDir.y, ctx.surfFlareDir.z];
       };
       // QA FASE 1: sob ?det&hold o tempo congela (delta=0) e ctx.surfFlareT
@@ -509,6 +511,7 @@ export function createSolInfo(ctx){
         ctx.setFlareFrame(ctx.surfFlareDir);
         scheduleFlareArcade();
         ctx.agitateNearestProm(ctx.surfFlareDir);
+        if (ctx.notifyFlareEvent) ctx.notifyFlareEvent();
         if (CME_STEPS <= 0) return false;
         launchCME(1.35);
         return [cmeDir.x, cmeDir.y, cmeDir.z];
@@ -556,6 +559,18 @@ export function createSolInfo(ctx){
                  dir: [cmeDir.x, cmeDir.y, cmeDir.z],
                  pts: { on: cmePts.on, n: CME_PTS_N,
                         visible: cmePts.on ? (cmePts.meshes[0].visible || cmePts.meshes[1].visible) : false } };
+      };
+      // Camada educativa: os hooks existem também sob ?det para o teste
+      // afirmar explicitamente que a fábrica permaneceu inerte.
+      window.__solInfo.eduInfo = function(){
+        return ctx.eduInfo ? ctx.eduInfo() : { available:false, enabled:false,
+          lang:ctx.eduLang || 'pt', reducedMotion:false, active:[] };
+      };
+      window.__solInfo.eduEmit = function(name,opts){
+        return ctx.eduEmit ? ctx.eduEmit(name,opts) : false;
+      };
+      window.__solInfo.setLang = function(lang){
+        return ctx.setEduLang ? ctx.setEduLang(lang) : false;
       };
       // FASE 5 — QA do foco raso: override do plano de foco (0 centro,
       // 1 limbo; -1 volta ao automático) + estado corrente

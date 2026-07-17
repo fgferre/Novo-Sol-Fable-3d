@@ -84,6 +84,14 @@ export function createConfig(ctx){
   // botão "look Sunshine" que os aplica ao vivo, sem URL)
   var lk = ctx.lk;
   ctx.IDLE_CINE = urlQ.idle === '1' || (urlQ.idle === undefined && ctx.savedKnobs.idle == 1);
+  ctx.EDU_K = knob('edu');
+  var requestedLang = urlQ.lang || ctx.savedKnobs.lang || '';
+  if (requestedLang !== 'pt' && requestedLang !== 'en'){
+    var browserLang = '';
+    try { browserLang = String(document.documentElement.lang || navigator.language || '').toLowerCase(); } catch(e){}
+    requestedLang = browserLang.indexOf('en') === 0 ? 'en' : 'pt';
+  }
+  ctx.eduLang = requestedLang;
   // FASE 3 — o tempo da estrela: cycle liga o ciclo de 11 anos (0 = o
   // sol "de meio de ciclo" eterno de sempre; frame default intocado;
   // 0..1 define a profundidade). lapse é o time-lapse documental da
@@ -183,6 +191,9 @@ export function createConfig(ctx){
   // pontos de evento chamam ctx.diagEvent('nome', primitivos) direto —
   // sem if, sem concat, sem alocação no modo normal.
   ctx.diagEvent = function(){};
+  // A camada educativa segue o mesmo contrato: eventos passam apenas
+  // primitivos; fora de ?edu=1 esta chamada permanece vazia e barata.
+  ctx.eduEvent = function(){};
 
   // superfície do domínio (imutáveis pós-init; mutáveis já escritos como ctx.*)
   ctx.urlQ = urlQ; ctx.DET = DET; ctx.DET_HOLD = DET_HOLD; ctx.srand = srand;

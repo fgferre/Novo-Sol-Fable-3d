@@ -178,6 +178,9 @@ function timeMetrics(ctx, runtime){
 }
 
 export const CONTROL_SCHEMA = [
+  // Camada educativa espacial. Fica fora do drawer de sliders e ganha um
+  // switch próprio; default 0 preserva a experiência anterior até o go-live.
+  def('experiência','edu','Descobertas educativas',0,1,1,0,setCtx('EDU_K'),{hidden:true}),
   def('tempo','speed','Ritmo do tempo',0.05,3,0.05,1,setCtx('TIME_SCALE')),
   def('tempo','pmode','Oscilações (p-modes)',0,1,0.025,0,setUniform('sunUniforms','uPmode'),{
     metrics:function(ctx, v){ return { runtime:ctx.sunUniforms ? ctx.sunUniforms.uPmode.value : 0,

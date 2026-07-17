@@ -52,6 +52,11 @@ export function createPanel(ctx){
     'input[type=range].kn::-moz-range-thumb{width:15px;height:15px;border-radius:50%;border:none;',
     ' background:radial-gradient(circle at 35% 35%,#ffdcae,#ff8a2a);box-shadow:0 0 10px rgba(255,140,50,.55)}',
     '#knobPanel .switch{display:flex;justify-content:space-between;align-items:center;margin:12px 0;font-size:12px}',
+    '#knobPanel .choice{display:flex;justify-content:space-between;align-items:center;margin:12px 0;font-size:12px}',
+    '#knobPanel .choiceBtns{display:flex;gap:4px;padding:2px;border-radius:9px;background:rgba(255,255,255,.07)}',
+    '#knobPanel .choiceBtns button{min-width:42px;padding:5px 8px;border:0;border-radius:7px;cursor:pointer;',
+    ' background:transparent;color:rgba(233,228,218,.62);font:600 10px/1 inherit;letter-spacing:.08em;transition:background .25s,color .25s}',
+    '#knobPanel .choiceBtns button.cur{background:rgba(255,140,50,.30);color:#ffd9a8}',
     '#knobPanel .sw{position:relative;width:40px;height:22px;border:0;padding:0;border-radius:12px;cursor:pointer;',
     ' background:rgba(255,255,255,.14);transition:background .25s}',
     '#knobPanel .sw.on{background:rgba(255,140,50,.75)}',
@@ -87,6 +92,41 @@ export function createPanel(ctx){
   var sub = document.createElement('p'); sub.className = 'sub';
   sub.textContent = 'cena, luz e câmera · salvo neste aparelho';
   panel.appendChild(head); panel.appendChild(sub);
+
+  if(!ctx.DET){
+    var eduSec=document.createElement('div'); eduSec.className='sec'; eduSec.textContent='experiência'; panel.appendChild(eduSec);
+    var eduRow=document.createElement('div'); eduRow.className='switch'; eduRow.id='eduSwitchRow';
+    var eduLabel=document.createElement('span'); eduLabel.textContent='Descobertas educativas';
+    var eduSwitch=document.createElement('button'); eduSwitch.className='sw'; eduSwitch.type='button';
+    eduSwitch.setAttribute('role','switch'); eduSwitch.setAttribute('aria-label','Descobertas educativas');
+    function syncEdu(on){ eduSwitch.classList.toggle('on',!!on); eduSwitch.setAttribute('aria-checked',String(!!on)); }
+    syncEdu(ctx.getControl('edu')>.5);
+    eduSwitch.addEventListener('click',function(){ ctx.setControl('edu',ctx.getControl('edu')>.5?0:1); });
+    ctx.subscribeControls(function(key,info){ if(key==='edu')syncEdu(info.applied>.5); });
+    eduRow.appendChild(eduLabel);eduRow.appendChild(eduSwitch);panel.appendChild(eduRow);
+
+    var langRow=document.createElement('div'); langRow.className='choice'; langRow.id='eduLangRow';
+    var langLabel=document.createElement('span'); langLabel.textContent='Idioma / Language';
+    var langChoices=document.createElement('div'); langChoices.className='choiceBtns';
+    langChoices.setAttribute('role','group');langChoices.setAttribute('aria-label','Idioma da experiência educativa');
+    var langButtons={};
+    ['pt','en'].forEach(function(code){
+      var button=document.createElement('button');button.type='button';button.dataset.lang=code;
+      button.id='edu-lang-'+code;button.textContent=code.toUpperCase();
+      button.setAttribute('aria-label',code==='pt'?'usar português':'use English');
+      button.addEventListener('click',function(){if(ctx.setEduLang)ctx.setEduLang(code);});
+      langChoices.appendChild(button);langButtons[code]=button;
+    });
+    function syncLanguage(code){
+      Object.keys(langButtons).forEach(function(key){
+        var current=key===code;langButtons[key].classList.toggle('cur',current);
+        langButtons[key].setAttribute('aria-pressed',String(current));
+      });
+    }
+    syncLanguage(ctx.eduLang==='en'?'en':'pt');
+    ctx.onEduLanguageChange=syncLanguage;
+    langRow.appendChild(langLabel);langRow.appendChild(langChoices);panel.appendChild(langRow);
+  }
 
   var entries = Object.create(null), lastSection = '';
   defs.forEach(function(d){

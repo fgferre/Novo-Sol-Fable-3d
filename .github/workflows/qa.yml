@@ -41,6 +41,8 @@ jobs:
         run: node tools/qa-event-controls.js dist-single/index.html
       - name: QA temporal dos efeitos sutis
         run: node tools/qa-subtle-controls.js dist-single/index.html qa-subtle
+      - name: QA da camada educativa
+        run: node tools/qa-edu.js dist-single/index.html
       - name: Paridade visual vs baselines
         run: |
           node tools/parity.js qa-out --file dist-single/index.html

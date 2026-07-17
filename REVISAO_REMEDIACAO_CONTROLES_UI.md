@@ -161,3 +161,31 @@ Regras simples:
 2. **Teste a parte visual por comportamento, não por número exato**: "mais knob → mais efeito", "extremo ≠ default", "evento dispara e aparece". Números como `===40` ou `0.55` são escolhas de hoje e vão mudar.
 3. **Não copie fórmulas/constantes do código dentro do teste** — leia do schema/`ctx`. Casos a corrigir: `tools/qa-time-controls.js:42-48`, `tools/qa-phase3.js:141`, `tools/qa-event-controls.js:57`.
 4. **Melhoria visual intencional que quebra baseline de imagem**: mostrar antes/depois, usuário aprova, atualizar o baseline. Nunca desistir da melhoria por causa do teste.
+
+## 8. Mapa dos testes existentes (inventário verificado) e hierarquia de verdade
+
+Varredura completa dos testes atuais (202 checks + 5 baselines de imagem), com contra-verificação item a item:
+
+- **Proteção boa (manter como está)**: 92 invariantes + 29 propriedades.
+- **Números estéticos de hoje virados lei**: 51 checks pinam durações, ganhos, contagens e envelopes que são escolhas atuais, não contratos.
+- **Fórmulas/constantes copiadas do código dentro do teste**: 11 casos — o teste valida a cópia e congela o original.
+- **Circulares**: 9.
+
+Onde a lei pesa:
+
+- **CI (bloqueia merge)**: 79 checks + 5 baselines. Os congelamentos mais fortes estão nas suítes novas: textos de UI em regex ("40×", "45 s", "3,2 níveis", rótulo "Micro-movimento de câmera" — `tools/qa-time-controls.js:48`, `tools/qa-subtle-controls.js:59-60`), curvas com valor exato e tolerância 1e-12 (grão `qa-subtle-controls.js:53-55`, p-modes `:67`), fórmula do close-up duplicada (`tools/qa-event-controls.js:57`), heurística de origem da CME (`:33`), cooldown copiado (`:43`).
+- **Suítes manuais (phase1/3/4/5/6, motion2 — lei de ritual, não de merge)**: os pinos mais pesados de física/estética: timing do flare (`qa-phase1.js:117,122`), "arcada ≥4 laços" (`:126`), orçamentos de tier copiados (`qa-phase4.js:99,202`, `qa-phase5.js:75`), cinemática da CME (`qa-phase5.js:96`), magnitudes de plumas/cusp/estrias/cavidade (`qa-phase6.js:384,441-445,751-764`), roteiro do diretor (`qa-phase5.js:236`), raio/FOV duplicados no medidor (`qa-motion2.js:66-67`).
+- **Gate de pixel**: folga ~80× para ruído, folga zero para melhoria intencional; os limiares das suítes manuais são acoplados aos mesmos baselines — o custo real de uma melhoria visual é re-baseline + recalibração em até 6 suítes. O rito de re-baseline com aprovação do usuário já existe e funcionou (PR de sRGB); o motion2 já tem válvula oficial (`--calibrate`, limiares em JSON).
+
+O que fazer quando tocar nesses testes (sem mutirão — corrigir ao passar):
+
+1. Texto de UI sai do assert (testar que a linha de estado existe e reflete o estado, não a string exata).
+2. Curvas/fórmulas: o teste lê do schema/`ctx`, não repete o número.
+3. Pinos de magnitude viram propriedade (direção, monotonia, extremo≠default) ou vão para arquivo de calibração versionado (padrão `motion2-thresholds.json`).
+4. Falha de threshold após mudança artística deliberada = gatilho de recalibração aprovada, não bug.
+
+**Hierarquia de verdade do projeto** (ordem de quem manda quando há conflito):
+
+1. **Fotos reais do Sol** (`reference/images/`, catalogadas com instrumento/linha/data). Elas julgam se uma mudança é melhoria. Comparação sempre **apple-to-apple**: mesma camada (proeminência com foto de proeminência), mesmo estado do Sol (máximo com máximo, calmo com calmo), mesmo enquadramento (full-disk com full-disk), e cada foto julga só a dimensão que documenta (cor falsa/invertida julga forma, não cor). As referências são revisáveis: buscar fotos que documentem melhor cada evento/feature é bem-vindo, sempre registrando o tipo de visão da foto e como traduzi-la para o nosso render.
+2. **Invariantes de máquina** (determinismo, sem NaN, controle chega ao consumidor, UI≡estado): exatos e inegociáveis.
+3. **Números estéticos de ontem**: sem poder de veto. Se a mudança aproxima o render das referências e o usuário aprova, quem se adapta é o teste/baseline.

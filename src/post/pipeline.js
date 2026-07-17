@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 import { quadVertex } from '../glsl/common.js';
-import { bloomGain } from '../core/controls.js';
+import { bloomGain, grainGain } from '../core/controls.js';
 
 export function createPipeline(ctx){
   var renderer = ctx.renderer, isHDR = ctx.isHDR, rtType = ctx.rtType,
@@ -380,7 +380,7 @@ export function createPipeline(ctx){
     // (Δsat ≤ ±0.04 nas 7 vistas do gate vs |−0.18| sem recalibrar).
     uSat:{value: knob('sat')},
     uVig:{value: knob('vig')},
-    uGrain:{value: knob('grain')},
+    uGrain:{value: grainGain(knob('grain'))},
     uVeil:{value: 0.0},
     // FASE 2 — halação com peso de temperatura (0 = ramo desligado)
     uHal:{value: 0.0},

@@ -86,6 +86,18 @@ export function createPerf(ctx){
   function notifyPerformanceState(){
     if (ctx.onPerformanceStateChange) ctx.onPerformanceStateChange();
   }
+  function setPerformanceKill(key, on, opts){
+    opts = opts || {};
+    var prop = key === 'cme' ? 'cmeKilled' : key === 'cvol' ? 'cvolKilled' : '';
+    if (!prop) return false;
+    on = !!on;
+    if (ctx[prop] === on) return true;
+    ctx[prop] = on;
+    if (opts.source === 'autotune') ctx.tuneEvents++;
+    if (ctx.diagEvent) ctx.diagEvent('performance-kill', key + ':' + (on ? 'on' : 'off'));
+    if (opts.notify !== false) notifyPerformanceState();
+    return true;
+  }
   function recommendTier(t){
     if (TIER_ORDER.indexOf(t) < 0 || t === TIER) return false;
     ctx.recommendedTier = t;
@@ -126,8 +138,7 @@ export function createPerf(ctx){
         // menor escala segura o frame durante uma erupção, a erupção
         // não pode afundar o tier inteiro.
         if (CME_STEPS > 0 && !ctx.cmeKilled && ctx.CME_K > 0.001){
-          ctx.cmeKilled = true; ctx.tuneEvents++;
-          notifyPerformanceState();
+          setPerformanceKill('cme', true, { source:'autotune' });
           tuneCooldown = 4; tuneWin.length = 0;
         } else
         // FASE 4: antes de rebaixar o tier persistido, derruba a coroa
@@ -136,8 +147,7 @@ export function createPerf(ctx){
         // (fallback) e o resto do tier sobrevive. É o gate de código do
         // piso de 24fps: nenhuma medição é pedida ao dono.
         if (CVOL_STEPS > 0 && !ctx.cvolKilled && ctx.CVOL_K > 0.001){
-          ctx.cvolKilled = true; ctx.tuneEvents++;
-          notifyPerformanceState();
+          setPerformanceKill('cvol', true, { source:'autotune' });
           tuneCooldown = 4; tuneWin.length = 0;
         } else {
           var k = TIER_ORDER.indexOf(TIER);
@@ -161,6 +171,7 @@ export function createPerf(ctx){
   }
   ctx.hudEl = hudEl; ctx.setHudState = setHudState; ctx.hudToggle = hudToggle;
   ctx.persistTier = persistTier; ctx.applyRecommendedTier = applyRecommendedTier;
+  ctx.setPerformanceKill = setPerformanceKill;
   ctx.autoTune = autoTune; ctx.autoTuneOn = autoTuneOn;
   ctx.SCALE_STEPS = SCALE_STEPS; ctx.TIER_ORDER = TIER_ORDER;
   ctx.perfFrameMs = perfFrameMs; ctx.perfBusyMs = perfBusyMs; ctx.perfBakes = perfBakes;

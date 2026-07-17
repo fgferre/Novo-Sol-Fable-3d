@@ -3,6 +3,7 @@
 // buildCharges/seedSimulation rodam NA CHAMADA da factory (posição do init).
 
 import * as THREE from 'three';
+import { cycleDepthFor, cycleEasingFor, cycleMultiplierFor } from '../core/controls.js';
 
 export function createActivity(ctx){
   var srand = ctx.srand, simUniforms = ctx.simUniforms,
@@ -53,12 +54,11 @@ export function createActivity(ctx){
   ctx.cyclePolF = 1;          // fator do dipolo polar (1 = default)
   var cyclePolarN = null, cyclePolarS = null;
   function cycleMultiplier(){
-    if (ctx.LAPSE_K <= 0.001) return 1.0;
-    return 1.0 + 39.0*Math.sqrt(Math.min(1,Math.max(0,ctx.LAPSE_K)));
+    return cycleMultiplierFor(ctx.LAPSE_K);
   }
   function cycleDepth(){
     // lapse sozinho liga o ciclo (modo documental de um toque)
-    return ctx.LAPSE_K > 0.001 ? 1.0 : Math.min(1.0, ctx.CYCLE_K);
+    return cycleDepthFor(ctx.CYCLE_K, ctx.LAPSE_K);
   }
   function updateCycleState(){
     var d = cycleDepth();
@@ -188,8 +188,8 @@ export function createActivity(ctx){
   // sempre.
   function lifeEnvelopeEased(x){
     var e = lifeEnvelope(x);
-    if (ctx.LAPSE_K > 0.001){
-      var easeK=Math.min(1,(cycleMultiplier()-1)/8);
+    if (ctx.LAPSE_K > 0){
+      var easeK=cycleEasingFor(cycleMultiplier());
       e += (lifeEnvelopeLapse(x) - e)*easeK;
     }
     return e;

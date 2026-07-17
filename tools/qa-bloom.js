@@ -2,12 +2,28 @@
 // cobertura do bright-pass, energia composta e raio do espalhamento.
 const path = require('path');
 const { chromium } = require('playwright');
+const { PNG } = require('pngjs');
 const htmlFile = process.argv[2] || 'dist-single/index.html';
 const base = 'file://' + path.resolve(htmlFile);
 let fails = 0, browser;
 function check(name, ok, detail){
   if (!ok) fails++;
   console.log((ok ? 'PASS  ' : 'FAIL  ') + name + (detail ? '  (' + detail + ')' : ''));
+}
+function imageLuma(buffer){
+  const png=PNG.sync.read(buffer),out=new Float32Array(png.width*png.height);
+  for(let i=0,j=0;i<png.data.length;i+=4,j++)
+    out[j]=0.2126*png.data[i]+0.7152*png.data[i+1]+0.0722*png.data[i+2];
+  return out;
+}
+function imageDelta(before,after){
+  let sumBefore=0,sumAfter=0,sumAbs=0,changed=0;
+  for(let i=0;i<before.length;i++){
+    const delta=after[i]-before[i];sumBefore+=before[i];sumAfter+=after[i];sumAbs+=Math.abs(delta);
+    if(Math.abs(delta)>1)changed++;
+  }
+  return {meanBefore:sumBefore/before.length,meanAfter:sumAfter/after.length,
+    meanAbs:sumAbs/before.length,changedFraction:changed/before.length};
 }
 
 (async () => {
@@ -39,12 +55,35 @@ function check(name, ok, detail){
     defaults.controls[2].min===0&&defaults.controls[2].max===0.6&&defaults.controls[2].default===0.3&&
     defaults.controls[3].min===0.5&&defaults.controls[3].max===2.5&&defaults.controls[3].default===1);
 
+  await page.evaluate(()=>{
+    ['grain','veil','streak','hal','burst','disp'].forEach((key)=>window.__solInfo.setControl(key,0));
+    window.__solInfo.setControl('bloomth',0.2);window.__solInfo.setControl('bloomknee',0.3);
+  });
   const intensity=[];
-  for(const v of [0,1,3])intensity.push(await setAndMeasure('bloom',v));
-  check('intensidade preserva 1× e ganha autoridade 5× no topo',
+  const finalFrames=[];
+  for(const v of [0,1,3]){
+    intensity.push(await setAndMeasure('bloom',v));
+    finalFrames.push(imageLuma(await page.locator('canvas').first().screenshot({type:'png'})));
+  }
+  check('ganho interno preserva 1× e chega a 5× no topo',
     intensity[0].energy===0&&intensity[1].energy>0&&intensity[2].gain===5&&
     intensity[2].energy>intensity[1].energy*4.9,
     intensity.map((x)=>x.energy).join(' → '));
+  const final01=imageDelta(finalFrames[0],finalFrames[1]);
+  const final13=imageDelta(finalFrames[1],finalFrames[2]);
+  check('intensidade altera monotonicamente o framebuffer final pós-ACES',
+    final01.meanAfter>final01.meanBefore&&final13.meanAfter>final13.meanBefore&&
+    final01.changedFraction>0.001&&final13.changedFraction>0.001,
+    JSON.stringify({zeroToOne:final01,oneToThree:final13}));
+  await page.evaluate(()=>window.__solInfo.toggle('bloom',false));
+  await setAndMeasure('bloom',0);
+  const disabled0=imageLuma(await page.locator('canvas').first().screenshot({type:'png'}));
+  await setAndMeasure('bloom',3);
+  const disabled3=imageLuma(await page.locator('canvas').first().screenshot({type:'png'}));
+  const disabledDelta=imageDelta(disabled0,disabled3);
+  check('controle negativo elimina a resposta final com o subsistema desligado',
+    disabledDelta.changedFraction<0.0001&&disabledDelta.meanAbs<0.01,JSON.stringify(disabledDelta));
+  await page.evaluate(()=>window.__solInfo.toggle('bloom',true));
 
   await setAndMeasure('bloom',1);
   await setAndMeasure('bloomknee',0.3);
@@ -69,6 +108,20 @@ function check(name, ok, detail){
     spread[2].radius>spread[1].radius&&spread[1].radius>spread[0].radius&&
     spread[0].coverage===spread[1].coverage&&spread[1].coverage===spread[2].coverage,
     spread.map((x)=>x.radius).join(' → '));
+
+  async function captureSpread(disp,spreadValue){
+    await page.evaluate(([d,s])=>{window.__solInfo.setControl('disp',d);window.__solInfo.setControl('bloomspread',s);},[disp,spreadValue]);
+    const f=await page.evaluate(()=>window.__solInfo.frame);
+    await page.waitForFunction((frame)=>window.__solInfo.frame>frame+2,f);
+    return imageLuma(await page.locator('canvas').first().screenshot({type:'png'}));
+  }
+  await setAndMeasure('bloom',1);await setAndMeasure('bloomth',0.2);await setAndMeasure('bloomknee',0.3);
+  const spreadPlain=imageDelta(await captureSpread(0,0.5),await captureSpread(0,2.5));
+  const spreadDispersed=imageDelta(await captureSpread(0.4,0.5),await captureSpread(0.4,2.5));
+  check('matriz spread × dispersão alcança o framebuffer nos dois modos',
+    spreadPlain.changedFraction>0.001&&spreadDispersed.changedFraction>0.001&&
+    spreadPlain.meanAbs>0.01&&spreadDispersed.meanAbs>0.01,
+    JSON.stringify({plain:spreadPlain,dispersed:spreadDispersed}));
 
   check('métricas são finitas e sob demanda',
     [...intensity,...threshold,...knee,...spread].every((m)=>

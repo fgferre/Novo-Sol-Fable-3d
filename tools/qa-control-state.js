@@ -10,6 +10,11 @@ function check(name, ok, detail){
   if (!ok) fails++;
   console.log((ok ? 'PASS  ' : 'FAIL  ') + name + (detail ? '  (' + detail + ')' : ''));
 }
+function stable(value){
+  if(Array.isArray(value))return value.map(stable);
+  if(value&&typeof value==='object')return Object.keys(value).sort().reduce((out,key)=>{out[key]=stable(value[key]);return out;},{});
+  return value;
+}
 
 (async () => {
   browser = await chromium.launch({
@@ -30,6 +35,47 @@ function check(name, ok, detail){
   await open('');
   await page.evaluate(() => localStorage.clear());
 
+  await page.evaluate(() => localStorage.setItem('solKnobs', JSON.stringify({
+    bloom:1.15, pmode:0.8, hand:1, grain:0.5, cycle:0.5, lapse:0.25, idle:1,
+  })));
+  await page.reload();
+  await page.waitForFunction(() => window.__solInfo && window.__solInfo.frame > 4);
+  const migrated = await page.evaluate(() => ({
+    stored:JSON.parse(localStorage.getItem('solKnobs')),
+    bloom:__solInfo.controls('bloom'), pmode:__solInfo.controls('pmode'),
+    hand:__solInfo.controls('hand'), grain:__solInfo.controls('grain'),
+    cycle:__solInfo.controls('cycle'), lapse:__solInfo.controls('lapse'),
+  }));
+  const migratedLapse = Math.pow((Math.max(1, 0.5) + 26*0.25 - 1)/39, 2);
+  check('storage legado v2 mapeia ganhos e relógio representáveis',
+    migrated.stored.__schemaVersion === 2 &&
+    Math.abs(migrated.bloom.nominal-1.075)<1e-8 && Math.abs(migrated.pmode.nominal-0.4)<1e-8 &&
+    Math.abs(migrated.hand.nominal-0.5)<1e-8 && Math.abs(migrated.grain.nominal-0.25)<1e-8 &&
+    migrated.cycle.nominal===0.5 && Math.abs(migrated.lapse.nominal-migratedLapse)<1e-8 &&
+    Math.abs(migrated.bloom.metrics.gain-1.15)<1e-8 && migrated.pmode.metrics.runtime===0.4 &&
+    migrated.hand.metrics.runtime===0.5 && migrated.grain.metrics.runtime===0.5 &&
+    Math.abs(migrated.lapse.metrics.multiplier-7.5)<1e-8);
+  const once = migrated.stored;
+  await page.reload();
+  await page.waitForFunction(() => window.__solInfo && window.__solInfo.frame > 4);
+  const twice = await page.evaluate(() => JSON.parse(localStorage.getItem('solKnobs')));
+  check('migração versionada é idempotente',JSON.stringify(stable(twice))===JSON.stringify(stable(once)));
+
+  await page.evaluate(() => localStorage.setItem('solKnobs',JSON.stringify({cycle:1.5,lapse:0})));
+  await page.reload();await page.waitForFunction(() => window.__solInfo && window.__solInfo.frame > 4);
+  const cycleSpeed=await page.evaluate(()=>({stored:JSON.parse(localStorage.getItem('solKnobs')),info:__solInfo.cycleInfo(),
+    display:document.querySelector('[data-control="lapse"] .val').textContent}));
+  check('migração transfere a velocidade legada de cycle > 1 para lapse',
+    cycleSpeed.stored.cycle===1&&cycleSpeed.stored.lapse>0&&cycleSpeed.stored.lapse<0.001&&
+    Math.abs(cycleSpeed.info.multiplier-1.5)<1e-8&&/^0\.000\d+/.test(cycleSpeed.display),cycleSpeed.display);
+  await page.evaluate(() => localStorage.setItem('solKnobs',JSON.stringify({cycle:1.5,lapse:1.5})));
+  await page.reload();await page.waitForFunction(() => window.__solInfo && window.__solInfo.frame > 4);
+  const cycleLimit=await page.evaluate(()=>({stored:JSON.parse(localStorage.getItem('solKnobs')),info:__solInfo.cycleInfo()}));
+  check('migração limita o extremo legado ao teto canônico de 40×',
+    cycleLimit.stored.cycle===1&&cycleLimit.stored.lapse===1&&cycleLimit.info.multiplier===40);
+  await page.evaluate(() => localStorage.clear());
+  await open('');
+
   const sweep = await page.evaluate(() => {
     const all = window.__solInfo.controls();
     const result = [];
@@ -37,12 +83,12 @@ function check(name, ok, detail){
       const seed = all[key];
       const values = [seed.min, seed.default, seed.max];
       const samples = values.map((value) => {
-        window.__solInfo.setControl(key, value);
+        window.__solInfo.setControl(key, value, {persist:false});
         const info = window.__solInfo.controls(key);
         const input = document.querySelector('#control-' + key);
         return { requested:value, info, dom:input ? +input.value : null };
       });
-      window.__solInfo.setControl(key, seed.default);
+      window.__solInfo.setControl(key, seed.default, {persist:false});
       result.push({ key, samples });
     });
     return result;
@@ -59,7 +105,7 @@ function check(name, ok, detail){
     const b = JSON.stringify(samples[2].info.metrics);
     if (a === b && !samples[2].info.reason) sweepBad.push(key + ':metric-flat');
   });
-  check('mínimo/default/máximo atualizam store, consumidor e DOM', sweepBad.length === 0,
+  check('mínimo/default/máximo atualizam store, target runtime e DOM', sweepBad.length === 0,
     sweepBad.slice(0, 8).join(', '));
 
   const deadZones = await page.evaluate(() => {
@@ -70,17 +116,17 @@ function check(name, ok, detail){
       const count = Math.round((d.max - d.min) / d.step);
       for (let i = 0; i <= count; i++) {
         const value = i === count ? d.max : d.min + i*d.step;
-        window.__solInfo.setControl(key, value);
+        window.__solInfo.setControl(key, value, {persist:false});
         const info = window.__solInfo.controls(key);
         const metric = JSON.stringify(info.metrics);
         if (previous !== null && metric === previous && !info.reason) flat.push(key + '@' + value.toFixed(4));
         previous = metric;
       }
-      window.__solInfo.setControl(key, d.default);
+      window.__solInfo.setControl(key, d.default, {persist:false});
     });
     return flat;
   });
-  check('sweep por step não contém faixa plana silenciosa', deadZones.length === 0,
+  check('sweep estrutural não encontra métrica declarada plana sem gate', deadZones.length === 0,
     deadZones.slice(0, 8).join(', '));
 
   const persisted = await page.evaluate(() => {
@@ -153,6 +199,28 @@ function check(name, ok, detail){
   check('kill-switch preserva nominal e expõe motivo estável',
     killed.cme.nominal === 1 && killed.cme.effective === 0 && killed.cme.reason === 'autotune-disabled' &&
     killed.cvol.nominal === 1 && killed.cvol.effective === 0 && killed.cvol.reason === 'autotune-disabled');
+  const attentionClosed = await page.evaluate(() => ({
+    dot:document.querySelector('#knobBtn').classList.contains('attention'),
+    label:document.querySelector('#knobBtn').getAttribute('aria-label'),
+    expanded:document.querySelector('#knobBtn').getAttribute('aria-expanded'),
+  }));
+  await page.click('#knobBtn');
+  const recoveryActions = await page.evaluate(() => ({
+    cmeAction:document.querySelector('[data-control="cme"] .rowAction').textContent,
+    cvolAction:document.querySelector('[data-control="cvol"] .rowAction').textContent,
+  }));
+  check('kill-switch fica visível fora do drawer e oferece recuperação pública',
+    attentionClosed.expanded==='false'&&attentionClosed.dot&&/atenção/.test(attentionClosed.label)&&
+    recoveryActions.cmeAction==='reativar'&&recoveryActions.cvolAction==='reativar');
+  await page.click('[data-control="cme"] .rowAction');
+  await page.click('[data-control="cvol"] .rowAction');
+  const reactivated = await page.evaluate(() => ({
+    cme:__solInfo.controls('cme'),cvol:__solInfo.controls('cvol'),
+    dot:document.querySelector('#knobBtn').classList.contains('attention'),
+  }));
+  check('usuário reativa CME/CVOL sem alterar os valores nominais',
+    reactivated.cme.nominal===1&&reactivated.cvol.nominal===1&&
+    reactivated.cme.reason!=='autotune-disabled'&&reactivated.cvol.reason!=='autotune-disabled'&&!reactivated.dot);
   await open('tier=low&cme=1&cvol=1');
   await page.click('#knobBtn');
   const low = await page.evaluate(() => ({
@@ -166,6 +234,26 @@ function check(name, ok, detail){
     low.cmeDisabled && low.cvolDisabled);
 
   await open('');
+  await page.evaluate(()=>__solInfo.directorStart());
+  await page.click('#knobBtn');
+  await page.waitForFunction(()=>document.activeElement.id==='knobPanel');
+  const drawer = await page.evaluate(() => ({
+    role:document.querySelector('#knobPanel').getAttribute('role'),
+    labelled:document.querySelector('#knobPanel').getAttribute('aria-labelledby'),
+    focus:document.activeElement.id,
+  }));
+  await page.keyboard.press('Tab');
+  const tabbed=await page.evaluate(()=>({director:__solInfo.directorInfo(),expanded:document.querySelector('#knobBtn').getAttribute('aria-expanded')}));
+  await page.keyboard.press('Escape');
+  const escaped = await page.evaluate(() => ({
+    director:__solInfo.directorInfo(),expanded:document.querySelector('#knobBtn').getAttribute('aria-expanded'),
+    hidden:document.querySelector('#knobPanel').getAttribute('aria-hidden'),focus:document.activeElement.id,
+  }));
+  check('drawer modeless tem nome e Tab/Escape não encerram o diretor',
+    drawer.role==='dialog'&&drawer.labelled==='knobPanelTitle'&&drawer.focus==='knobPanel'&&
+    tabbed.director.active&&tabbed.expanded==='true'&&escaped.director.active&&
+    escaped.expanded==='false'&&escaped.hidden==='true'&&escaped.focus==='knobBtn');
+  await page.evaluate(()=>__solInfo.setControl('speed',1,{persist:false}));
   await page.click('#knobBtn');
   await page.getByRole('switch', { name:'HUD de FPS' }).click();
   const hudSwitch = await page.evaluate(() => ({

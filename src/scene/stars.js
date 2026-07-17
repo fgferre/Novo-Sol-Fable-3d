@@ -3,6 +3,7 @@
 // buildStars é o 3º consumidor de srand do init — posição preservada.
 
 import * as THREE from 'three';
+import { starOpacities } from '../core/controls.js';
 
 export function createStars(ctx){
   var scene = ctx.scene, srand = ctx.srand, kelvinToRGB = ctx.kelvinToRGB,
@@ -89,15 +90,9 @@ export function createStars(ctx){
   milkyWay.material.size = 1.7;
   milkyWay.material.opacity = knob('mw');
   var STARS_OP0 = stars.material.opacity, BRIGHT_OP0 = brightStars.material.opacity;
-  var starK = knob('stars');
-  if (starK <= 1){
-    stars.material.opacity = STARS_OP0*starK;
-    brightStars.material.opacity = BRIGHT_OP0*starK;
-  } else {
-    var starT = Math.min(1, starK - 1);
-    stars.material.opacity = STARS_OP0 + (1-STARS_OP0)*starT;
-    brightStars.material.opacity = BRIGHT_OP0 + (1-BRIGHT_OP0)*starT;
-  }
+  var starOpacity = starOpacities(knob('stars'), STARS_OP0, BRIGHT_OP0);
+  stars.material.opacity = starOpacity.normal;
+  brightStars.material.opacity = starOpacity.bright;
   scene.add(milkyWay);
   // twinkle SUTIL (backlog M2 nº4: estrelas eram a única camada 100%
   // morta). Cada estrela pisca com fase e cadência próprias (hash da

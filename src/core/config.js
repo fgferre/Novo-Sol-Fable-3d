@@ -3,7 +3,7 @@
 // Corpo movido verbatim de src/main.js; escalares mutáveis compartilhados
 // (knobs etc.) vivem como ctx.* — nunca copiados para locais.
 
-import { createControlState, getControlPreset } from './controls.js';
+import { createControlState, getControlPreset, migrateSavedControls } from './controls.js';
 
 export function createConfig(ctx){
 
@@ -57,6 +57,11 @@ export function createConfig(ctx){
   }
   ctx.savedKnobs = {};
   try { ctx.savedKnobs = JSON.parse(localStorage.getItem('solKnobs') || '{}') || {}; } catch(e){}
+  var savedMigration = migrateSavedControls(ctx.savedKnobs);
+  ctx.savedKnobs = savedMigration.values;
+  if (savedMigration.changed){
+    try { localStorage.setItem('solKnobs', JSON.stringify(ctx.savedKnobs)); } catch(e){}
+  }
   var LOOK_SUNSHINE = getControlPreset();
   var LOOK = (urlQ.look === 'sunshine') ? LOOK_SUNSHINE : null;
   createControlState(ctx, { urlQ:urlQ, savedKnobs:ctx.savedKnobs,

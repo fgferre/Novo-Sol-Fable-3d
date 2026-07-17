@@ -34,6 +34,18 @@ function check(name,ok,detail){if(!ok)fails++;console.log((ok?'PASS  ':'FAIL  ')
     first.depth===1&&first.multiplier>9&&first.multiplier<10&&first.duration>120&&first.duration<240&&first.easing===1,
     first.multiplier.toFixed(2)+'× · '+first.duration.toFixed(1)+'s');
 
+  const combined=await page.evaluate(()=>{
+    __solInfo.setControl('lapse',0.4);
+    return [0,0.25,0.75,1].map((cycle)=>{
+      __solInfo.setControl('cycle',cycle);
+      const state=__solInfo.controls('cycle'),info=__solInfo.cycleInfo();
+      return {cycle,depth:info.depth,effective:state.effective,reason:state.reason};
+    });
+  });
+  check('cycle positivo conserva autoridade mesmo com lapse ativo',
+    combined[0].depth===1&&combined[0].reason==='lapse-fallback'&&
+    combined.slice(1).every((x)=>x.depth===x.cycle&&x.effective===x.cycle),JSON.stringify(combined));
+
   const fastStart=await page.evaluate(()=>{__solInfo.setControl('lapse',1);__solInfo.setCyclePhase(0.35);return {f:__solInfo.frame,t:__solInfo.cycleInfo().time};});
   await page.waitForFunction((f)=>__solInfo.frame>f+5,fastStart.f);
   const fastEnd=await page.evaluate(()=>({f:__solInfo.frame,info:__solInfo.cycleInfo()}));
@@ -46,6 +58,10 @@ function check(name,ok,detail){if(!ok)fails++;console.log((ok?'PASS  ':'FAIL  ')
   await page.waitForTimeout(450);
   const ui=await page.textContent('#state-lapse');
   check('painel mostra multiplicador e duração estimada',/40×/.test(ui)&&/45 s/.test(ui),ui);
+  await page.evaluate(()=>__solInfo.setControl('cycle',0));
+  const cycleUi=await page.evaluate(()=>({text:document.querySelector('#state-cycle').textContent,state:__solInfo.controls('cycle')}));
+  check('fallback de lapse é explícito no estado efetivo',
+    cycleUi.state.reason==='lapse-fallback'&&cycleUi.state.effective===1&&/100%/.test(cycleUi.text),cycleUi.text);
 
   const beat=await page.evaluate(()=>{
     __solInfo.setControl('lapse',0.2);__solInfo.directorStart();__solInfo.directorSkip(68);

@@ -15,6 +15,8 @@ export function createPanel(ctx){
     ' transition:transform .5s cubic-bezier(.22,1,.36,1),background .3s,right .55s cubic-bezier(.22,1,.36,1);',
     ' user-select:none;-webkit-user-select:none}',
     '#knobBtn:hover{background:rgba(40,28,16,.72)}#knobBtn.open{transform:rotate(120deg)}',
+    '#knobBtn.attention::after{content:"";position:absolute;top:4px;right:4px;width:7px;height:7px;',
+    ' border-radius:50%;background:#ff9a3c;box-shadow:0 0 8px rgba(255,154,60,.9)}',
     '#hint{margin-right:64px}',
     '#knobPanel{position:fixed;top:0;right:0;height:100%;width:min(330px,86vw);z-index:44;',
     ' background:linear-gradient(165deg,rgba(15,18,28,.82),rgba(7,9,15,.90));',
@@ -75,10 +77,12 @@ export function createPanel(ctx){
   ].join('\n');
   document.head.appendChild(css);
 
-  var panel = document.createElement('div'); panel.id = 'knobPanel';
-  panel.setAttribute('aria-label','Ajustes da cena'); panel.setAttribute('aria-hidden','true');
+  var panel = document.createElement('aside'); panel.id = 'knobPanel';
+  panel.setAttribute('role','dialog'); panel.setAttribute('aria-modal','false');
+  panel.setAttribute('aria-hidden','true'); panel.tabIndex=-1;
   panel.inert = true;
-  var head = document.createElement('h2'); head.textContent = 'Ajustes';
+  var head = document.createElement('h2'); head.id='knobPanelTitle';head.textContent = 'Ajustes';
+  panel.setAttribute('aria-labelledby',head.id);
   var sub = document.createElement('p'); sub.className = 'sub';
   sub.textContent = 'cena, luz e câmera · salvo neste aparelho';
   panel.appendChild(head); panel.appendChild(sub);
@@ -100,25 +104,36 @@ export function createPanel(ctx){
     input.min = d.min; input.max = d.max; input.step = d.step;
     var state = document.createElement('div'); state.className = 'state'; state.id = 'state-' + d.key;
     input.setAttribute('aria-describedby', state.id);
+    var decimals=Math.abs(d.step*100-Math.round(d.step*100))>1e-6?3:2;
     function paint(v){
-      val.textContent = (+v).toFixed(2);
+      v=+v;
+      var shownDecimals=decimals;
+      if(v!==0&&Math.abs(v)<Math.pow(10,-decimals))
+        shownDecimals=Math.min(5,Math.max(decimals,Math.ceil(-Math.log10(Math.abs(v)))+1));
+      val.textContent = v.toFixed(shownDecimals);
+      input.setAttribute('aria-valuetext',val.textContent);
       input.style.setProperty('--f', (100*(v-d.min)/(d.max-d.min)) + '%');
     }
     var initial = ctx.getControl(d.key); input.value = initial; paint(initial);
     input.addEventListener('input', function(){
       var v = parseFloat(input.value);
-      if (ctx.directorUserExit) ctx.directorUserExit();
       ctx.setControl(d.key, v, { source:'user', persist:true });
     });
     row.appendChild(lab); row.appendChild(input); row.appendChild(state);
     var action=null;
-    if(d.key==='burst'||d.key==='cme'||d.key==='dof'){
+    if(d.key==='burst'||d.key==='cme'||d.key==='cvol'||d.key==='dof'){
       action=document.createElement('button');action.type='button';action.className='rowAction';
-      action.textContent=d.key==='dof'?'aproximar':'prévia';
-      action.setAttribute('aria-label',d.key==='dof'?'aproximar para ativar foco raso':'prévia de '+d.label);
+      action.textContent=d.key==='dof'?'aproximar':d.key==='burst'?'disparar flare':d.key==='cme'?'ejetar CME':'reativar';
+      action.setAttribute('aria-label',d.key==='dof'?'aproximar para ativar foco raso':
+        d.key==='burst'?'disparar flare de prévia':d.key==='cme'?'ejetar CME de prévia':'reativar '+d.label);
       action.addEventListener('click',function(){
-        if(ctx.directorUserExit)ctx.directorUserExit();
-        if(d.key==='dof')ctx.toggleFrame();
+        var info=ctx.getControlInfo(d.key);
+        if((d.key==='cme'||d.key==='cvol')&&info.reason==='autotune-disabled'){
+          if(ctx.directorUserExit)ctx.directorUserExit();
+          ctx.setPerformanceKill(d.key,false,{source:'user'});
+        } else if(d.key==='dof'){
+          if(ctx.directorUserExit)ctx.directorUserExit();ctx.toggleFrame();
+        }
         else if(d.key==='burst'&&ctx.previewBurst)ctx.previewBurst();
         else if(d.key==='cme'&&ctx.previewCME)ctx.previewCME();
         refreshAvailability();
@@ -136,7 +151,9 @@ export function createPanel(ctx){
     if (info.reason === 'autotune-disabled') return 'desativado pelo ajuste automático';
     if (info.reason === 'preparing') return 'preparando volume';
     if (info.reason === 'waiting-flare') return 'aguardando flare';
+    if (info.reason === 'cooldown') return 'aguarde o rescaldo';
     if (info.reason === 'fit-framing') return 'sem efeito no enquadramento geral';
+    if (info.reason === 'lapse-fallback') return 'profundidade automática: 100% pelo time-lapse';
     if ((info.key === 'cycle' || info.key === 'lapse') && info.metrics.cycleOn){
       var seconds=info.metrics.duration, duration=seconds<90?Math.round(seconds)+' s':Math.round(seconds/60)+' min';
       return info.metrics.multiplier.toFixed(info.metrics.multiplier<10?1:0)+'× · ciclo em ~'+duration;
@@ -159,6 +176,13 @@ export function createPanel(ctx){
     if(key==='dof'){
       var fit=info.reason==='fit-framing';e.action.hidden=!fit;e.action.disabled=!fit;return;
     }
+    if((key==='cme'||key==='cvol')&&info.reason==='autotune-disabled'){
+      e.action.hidden=false;e.action.disabled=false;e.action.textContent='reativar';
+      e.action.setAttribute('aria-label','reativar '+e.def.label);return;
+    }
+    if(key==='cvol'){e.action.hidden=true;e.action.disabled=true;return;}
+    e.action.textContent=key==='burst'?'disparar flare':'ejetar CME';
+    e.action.setAttribute('aria-label',key==='burst'?'disparar flare de prévia':'ejetar CME de prévia');
     var state=key==='burst'?(ctx.canPreviewBurst&&ctx.canPreviewBurst()):(ctx.canPreviewCME&&ctx.canPreviewCME());
     if(!state){e.action.disabled=true;return;}
     e.action.hidden=false;e.action.disabled=!state.ok;
@@ -180,24 +204,24 @@ export function createPanel(ctx){
       syncAction(key,e,info);
     }
   }
-  function syncControlUI(keys){ (keys || Object.keys(entries)).forEach(function(k){ syncEntry(k); }); }
   function refreshAvailability(){
     if (!panel.classList.contains('open')) return;
     Object.keys(entries).forEach(function(key){ syncEntry(key,ctx.getControlInfo(key)); });
     refreshTierRecommendation();
   }
-  ctx.syncControlUI = syncControlUI;
-  ctx.subscribeControls(function(key, info){ syncEntry(key, info); });
-  ctx.onPerformanceStateChange = function(){ if(panel.classList.contains('open'))refreshAvailability(); };
+  ctx.subscribeControls(function(key, info){
+    if(!panel.classList.contains('open')&&info.reason==='director-override')return;
+    syncEntry(key, info);
+  });
 
   function saveIdle(){
     try { ctx.savedKnobs.idle = ctx.IDLE_CINE ? 1 : 0;
       localStorage.setItem('solKnobs', JSON.stringify(ctx.savedKnobs)); } catch(e){}
   }
   var idleRow=document.createElement('div'); idleRow.className='switch';
-  var idleLabel=document.createElement('span'); idleLabel.textContent='Câmera contemplativa';
+  var idleLabel=document.createElement('span'); idleLabel.textContent='Respiração contemplativa';
   var idleSwitch=document.createElement('button'); idleSwitch.className='sw'+(ctx.IDLE_CINE?' on':'');
-  idleSwitch.type='button'; idleSwitch.setAttribute('role','switch'); idleSwitch.setAttribute('aria-label','Câmera contemplativa');
+  idleSwitch.type='button'; idleSwitch.setAttribute('role','switch'); idleSwitch.setAttribute('aria-label','Respiração contemplativa');
   function syncIdle(){ idleSwitch.classList.toggle('on',ctx.IDLE_CINE); idleSwitch.setAttribute('aria-checked',String(!!ctx.IDLE_CINE)); }
   syncIdle();
   idleSwitch.addEventListener('click',function(){ if(ctx.directorUserExit)ctx.directorUserExit(); ctx.IDLE_CINE=!ctx.IDLE_CINE; syncIdle(); saveIdle(); });
@@ -231,7 +255,7 @@ export function createPanel(ctx){
     tierRow.appendChild(b);
   });
   panel.appendChild(tierRow);
-  var tierNote=document.createElement('p'); tierNote.id='tierNote'; panel.appendChild(tierNote);
+  var tierNote=document.createElement('p'); tierNote.id='tierNote';tierNote.setAttribute('aria-live','polite');panel.appendChild(tierNote);
   var tierApply=document.createElement('button'); tierApply.id='tierApply';
   tierApply.addEventListener('click',function(){ if(ctx.applyRecommendedTier())reloadWithoutTier(); }); panel.appendChild(tierApply);
   function refreshTierRecommendation(){
@@ -244,7 +268,8 @@ export function createPanel(ctx){
   reset.addEventListener('click',function(){
     if(!window.confirm('Restaurar toda a sessão e recarregar a cena?'))return;
     if(ctx.directorUserExit)ctx.directorUserExit(); ctx.setHudState(false);
-    ctx.cmeKilled=false;ctx.cvolKilled=false;ctx.recommendedTier=null;
+    if(ctx.setPerformanceKill){ctx.setPerformanceKill('cme',false,{source:'reset',notify:false});ctx.setPerformanceKill('cvol',false,{source:'reset',notify:false});}
+    ctx.recommendedTier=null;
     try{localStorage.removeItem('solKnobs');localStorage.removeItem('solTier');}catch(e){}
     var keys=ctx.CONTROL_SCHEMA.map(function(d){return d.key;}).concat(['look','idle','director','hud','tier','tune','scale']);
     try{var target=new URL(location.href);keys.forEach(function(k){target.searchParams.delete(k);});location.replace(target.href);}catch(e){location.reload();}
@@ -254,18 +279,42 @@ export function createPanel(ctx){
   var gear=document.createElement('button'); gear.id='knobBtn'; gear.type='button'; gear.title='ajustes';
   gear.setAttribute('aria-label','abrir ajustes'); gear.setAttribute('aria-controls',panel.id); gear.setAttribute('aria-expanded','false'); gear.textContent='⚙';
   var stateTimer=0;
+  function performanceAttention(){
+    var states=[];
+    if(ctx.cmeKilled)states.push('CME desativada');
+    if(ctx.cvolKilled)states.push('coroa volumétrica desativada');
+    if(ctx.recommendedTier)states.push('qualidade '+ctx.recommendedTier+' recomendada');
+    return states.join(', ');
+  }
+  function refreshPerformanceAttention(){
+    if(!gear)return;
+    var attention=performanceAttention(),open=panel.classList.contains('open');
+    gear.classList.toggle('attention',!!attention);
+    gear.title=attention?'ajustes — '+attention:'ajustes';
+    gear.setAttribute('aria-label',(open?'fechar ajustes':'abrir ajustes')+(attention?' — atenção: '+attention:''));
+  }
   function setPanelOpen(open){
+    if(!open&&panel.contains(document.activeElement))gear.focus();
     panel.classList.toggle('open',open);gear.classList.toggle('open',open);gear.setAttribute('aria-expanded',String(open));
     panel.setAttribute('aria-hidden',String(!open)); panel.inert=!open;
-    gear.setAttribute('aria-label',open?'fechar ajustes':'abrir ajustes');
     gear.style.right=open?'calc(min(330px, 86vw) + 14px)':'14px';
     hudEl.style.right=open?'calc(min(330px, 86vw) + 18px)':'10px';
     clearInterval(stateTimer); stateTimer=0;
-    if(open){ refreshAvailability(); stateTimer=setInterval(refreshAvailability,400); }
+    if(open){ refreshAvailability(); stateTimer=setInterval(refreshAvailability,400);requestAnimationFrame(function(){panel.focus();}); }
+    refreshPerformanceAttention();
   }
   gear.addEventListener('click',function(){setPanelOpen(!panel.classList.contains('open'));});
+  window.addEventListener('keydown',function(event){
+    if(event.key==='Escape'&&panel.classList.contains('open')){
+      event.preventDefault();setPanelOpen(false);
+    }
+  });
   hudEl.style.transition='right .55s cubic-bezier(.22,1,.36,1)'; document.body.appendChild(gear);
 
+  ctx.onPerformanceStateChange=function(){
+    refreshPerformanceAttention();
+    if(panel.classList.contains('open'))refreshAvailability();
+  };
   refreshTierRecommendation();
-  ctx.controlPanel={ element:panel, gear:gear, entries:entries, refresh:refreshAvailability, setOpen:setPanelOpen };
+  refreshPerformanceAttention();
 }

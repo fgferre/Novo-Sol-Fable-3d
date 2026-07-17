@@ -214,9 +214,14 @@ export function createControls(ctx){
     var el = e.target;
     if (el && el.matches &&
         el.matches('input, select, textarea, button, [contenteditable="true"]')) return;
-    ctx.directorUserExit();   // FASE 5: input devolve a câmera ao usuário
     var k = e.key;
-    var handled = true;
+    var handled = k === 'ArrowLeft' || k === 'ArrowRight' || k === 'ArrowUp' ||
+      k === 'ArrowDown' || k === '+' || k === '=' || k === '-' || k === '_' ||
+      k === 'r' || k === 'R';
+    // Tab, Escape e qualquer tecla alheia à câmera não são edição da cena.
+    // A guarda vem antes de devolver o controle do diretor ao usuário.
+    if (!handled) return;
+    ctx.directorUserExit();   // FASE 5: input de câmera devolve o controle
     // passo imediato + impulso de inércia: responde já no keydown mesmo
     // se o próximo frame demorar (máquinas lentas), sem mudar o "feel"
     if (k === 'ArrowLeft')       { ctx.thetaVel += 2.0; ctx.theta += 0.08; }
@@ -226,11 +231,8 @@ export function createControls(ctx){
     else if (k === '+' || k === '=') ctx.targetCamDist = Math.max(minDist, ctx.targetCamDist*0.82);
     else if (k === '-' || k === '_') ctx.targetCamDist = Math.min(maxDist, ctx.targetCamDist*1.22);
     else if (k === 'r' || k === 'R') ctx.targetCamDist = ctx.fitDist;
-    else handled = false;
-    if (handled){
-      e.preventDefault();
-      ctx.markInteraction();
-    }
+    e.preventDefault();
+    ctx.markInteraction();
   }
 
   renderer.domElement.style.touchAction = 'none';

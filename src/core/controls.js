@@ -22,6 +22,49 @@ function setUniform(group, name){
   fn.read=function(ctx){ return ctx[group] && ctx[group][name] ? ctx[group][name].value : undefined; };
   return fn;
 }
+export const CONTROL_SCHEMA_VERSION = 2;
+
+function finiteNumber(value){
+  value = Number(value);
+  return Number.isFinite(value) ? value : null;
+}
+
+// solKnobs existia antes de o contrato dos controles ganhar versão. A
+// migração preserva ganhos e o relógio anterior onde o range novo permite,
+// não apenas o número salvo. O easing temporal segue deliberadamente a lei
+// nova derivada do multiplicador e, portanto, não é bit-idêntico ao legado.
+// Objetos vazios recebem o marcador em memória, mas só serão persistidos
+// quando o usuário realmente mudar algum ajuste.
+export function migrateSavedControls(input){
+  var saved = {};
+  if (input && typeof input === 'object' && !Array.isArray(input))
+    Object.keys(input).forEach(function(key){ saved[key] = input[key]; });
+  var fromVersion = Math.max(0, parseInt(saved.__schemaVersion, 10) || 0);
+  if (fromVersion >= CONTROL_SCHEMA_VERSION)
+    return { values:saved, changed:false, fromVersion:fromVersion };
+
+  var hadState = Object.keys(saved).some(function(key){ return key !== '__schemaVersion'; });
+  var value = finiteNumber(saved.bloom);
+  if (value !== null && value > 1) saved.bloom = 1 + (value - 1)/2;
+  value = finiteNumber(saved.pmode);
+  if (value !== null) saved.pmode = value/2;
+  value = finiteNumber(saved.hand);
+  if (value !== null) saved.hand = value/2;
+  value = finiteNumber(saved.grain);
+  if (value !== null && value > 0 && value < 1) saved.grain = value*value;
+
+  var oldCycle = finiteNumber(saved.cycle), oldLapse = finiteNumber(saved.lapse);
+  if (oldCycle !== null || oldLapse !== null){
+    oldCycle = Math.max(0, oldCycle === null ? 0 : oldCycle);
+    oldLapse = Math.max(0, oldLapse === null ? 0 : oldLapse);
+    var oldMultiplier = Math.max(1, oldCycle) + 26*oldLapse;
+    saved.cycle = Math.min(1, oldCycle);
+    saved.lapse = oldMultiplier > 1 ? Math.min(1, Math.pow((oldMultiplier - 1)/39, 2)) : 0;
+  }
+  saved.__schemaVersion = CONTROL_SCHEMA_VERSION;
+  return { values:saved, changed:hadState, fromVersion:fromVersion };
+}
+
 export function bloomGain(v){ return v <= 1 ? v : 1 + 2*(v - 1); }
 function bloomStrength(ctx, v){
   if (ctx.BLOOM_BASE0 !== undefined) ctx.BLOOM_STRENGTH_BASE = ctx.BLOOM_BASE0 * bloomGain(v);
@@ -42,19 +85,23 @@ function bloomSpread(ctx, v){
   if (ctx.downsampleUniforms) ctx.downsampleUniforms.uSpread.value = v;
   if (ctx.upsampleUniforms) ctx.upsampleUniforms.uSpread.value = v;
 }
-function stars(ctx, v){
-  if (!ctx.stars || !ctx.brightStars) return;
+export function starOpacities(v, normalBase, brightBase){
   var normal, bright;
   if (v <= 1){
-    normal = ctx.STARS_OP0 * v;
-    bright = ctx.BRIGHT_OP0 * v;
+    normal = normalBase * v;
+    bright = brightBase * v;
   } else {
     var t = Math.min(1, v - 1);
-    normal = ctx.STARS_OP0 + (1 - ctx.STARS_OP0) * t;
-    bright = ctx.BRIGHT_OP0 + (1 - ctx.BRIGHT_OP0) * t;
+    normal = normalBase + (1 - normalBase) * t;
+    bright = brightBase + (1 - brightBase) * t;
   }
-  ctx.stars.material.opacity = normal;
-  ctx.brightStars.material.opacity = bright;
+  return { normal:normal, bright:bright };
+}
+function stars(ctx, v){
+  if (!ctx.stars || !ctx.brightStars) return;
+  var opacity = starOpacities(v, ctx.STARS_OP0, ctx.BRIGHT_OP0);
+  ctx.stars.material.opacity = opacity.normal;
+  ctx.brightStars.material.opacity = opacity.bright;
 }
 function milkyWay(ctx, v){
   if (ctx.milkyWay) ctx.milkyWay.material.opacity = v;
@@ -87,8 +134,9 @@ function cmeCondition(ctx, v){
   if (ctx.CME_STEPS <= 0) return { effective:0, active:false, reason:'tier-unavailable' };
   if (ctx.cmeKilled) return { effective:0, active:false, reason:'autotune-disabled' };
   if (v <= 0.001) return { effective:0, active:false, reason:'source-empty' };
-  if (ctx.cmeT >= 900) return { effective:0, active:false, reason:'waiting-flare' };
-  return { effective:v, active:true, reason:'' };
+  if (ctx.cmeT < 900) return { effective:v, active:true, reason:'' };
+  if (ctx.cmeCooldown > 0) return { effective:0, active:false, reason:'cooldown' };
+  return { effective:0, active:false, reason:'waiting-flare' };
 }
 function burstCondition(ctx, v){
   if (v <= 0.001) return { effective:0, active:false, reason:'source-empty' };
@@ -101,28 +149,37 @@ function dofCondition(ctx, v){
     return { effective:0, active:false, reason:'fit-framing' };
   return { effective:v, active:true, reason:'' };
 }
-function timeMultiplier(ctx){
-  return ctx.LAPSE_K > 0.001 ? 1+39*Math.sqrt(Math.min(1,Math.max(0,ctx.LAPSE_K))) : 1;
+export function cycleMultiplierFor(lapse){
+  return lapse > 0 ? 1+39*Math.sqrt(Math.min(1,Math.max(0,lapse))) : 1;
+}
+export function cycleEasingFor(multiplier){
+  return Math.min(1, Math.max(0, (multiplier - 1)/8));
+}
+export function cycleDepthFor(cycle, lapse){
+  if (cycle > 0.001) return Math.min(1, Math.max(0, cycle));
+  return lapse > 0 ? 1 : 0;
 }
 function cycleCondition(ctx, v){
-  if (ctx.LAPSE_K > 0.001) return { effective:1, active:true, reason:'' };
+  if (v <= 0.001 && ctx.LAPSE_K > 0)
+    return { effective:1, active:true, reason:'lapse-fallback' };
   return v > 0.001 ? { effective:v, active:true, reason:'' }
                    : { effective:0, active:false, reason:'source-empty' };
 }
 function lapseCondition(ctx, v){
-  return v > 0.001 ? { effective:v, active:true, reason:'' }
+  return v > 0 ? { effective:v, active:true, reason:'' }
                    : { effective:0, active:false, reason:'source-empty' };
 }
 function timeMetrics(ctx, runtime){
-  var mul=timeMultiplier(ctx),period=ctx.act ? ctx.act.CYCLE_PERIOD : 1800;
+  var mul=cycleMultiplierFor(ctx.LAPSE_K),period=ctx.act ? ctx.act.CYCLE_PERIOD : 1800;
   return { runtime:runtime, multiplier:mul,
     duration:period/(mul*Math.max(0.05,ctx.TIME_SCALE || 1)),
-    easing:Math.min(1,(mul-1)/8), cycleOn:ctx.CYCLE_K>0.001||ctx.LAPSE_K>0.001 };
+    easing:cycleEasingFor(mul), depth:cycleDepthFor(ctx.CYCLE_K,ctx.LAPSE_K),
+    cycleOn:ctx.CYCLE_K>0.001||ctx.LAPSE_K>0 };
 }
 
 export const CONTROL_SCHEMA = [
   def('tempo','speed','Ritmo do tempo',0.05,3,0.05,1,setCtx('TIME_SCALE')),
-  def('tempo','pmode','Oscilações (p-modes)',0,1,0.05,0,setUniform('sunUniforms','uPmode'),{
+  def('tempo','pmode','Oscilações (p-modes)',0,1,0.025,0,setUniform('sunUniforms','uPmode'),{
     metrics:function(ctx, v){ return { runtime:ctx.sunUniforms ? ctx.sunUniforms.uPmode.value : 0,
       displacementLimit:0.0088*v, brightnessLimit:0.11*v }; }}),
   def('tempo','cycle','Profundidade do ciclo',0,1,0.05,0,setCtx('CYCLE_K'),{condition:cycleCondition,
@@ -131,7 +188,7 @@ export const CONTROL_SCHEMA = [
     metrics:function(ctx){ return timeMetrics(ctx,ctx.LAPSE_K); }}),
   def('tempo','spots','Manchas solares (grupos)',0,1.5,0.05,0,setCtx('SPOTS_K'),{preset:1}),
 
-  def('luz & cor','bloom','Bloom',0,3,0.05,1,bloomStrength,{preset:1.15,
+  def('luz & cor','bloom','Bloom',0,3,0.025,1,bloomStrength,{preset:1.075,
     metrics:function(ctx){ return { runtime:ctx.BLOOM_STRENGTH_BASE, gain:bloomGain(ctx.getAppliedControl('bloom')) }; }}),
   def('luz & cor','bloomth','Threshold do Bloom',0.2,2,0.02,
     function(ctx){ return ctx.isHDR ? 0.72 : 0.82; },bloomThreshold),
@@ -141,7 +198,7 @@ export const CONTROL_SCHEMA = [
   def('luz & cor','plageglow','Brilho das plages',0,1.5,0.05,0.35,setUniform('sunUniforms','uPlageEm')),
   def('luz & cor','sat','Saturação',0,2,0.02,1.08,setUniform('compUniforms','uSat')),
   def('luz & cor','vig','Vinheta',0,1.5,0.05,0.55,setUniform('compUniforms','uVig'),{preset:0.85}),
-  def('luz & cor','grain','Grão de filme',0,5,0.1,1,grain,{preset:1.7,
+  def('luz & cor','grain','Grão de filme',0,5,0.01,1,grain,{preset:1.7,
     metrics:function(ctx, v){ var gain=grainGain(v); return {
       runtime:ctx.compUniforms ? ctx.compUniforms.uGrain.value : gain,
       gain:gain, amplitude8bit:0.8*gain }; }}),
@@ -156,7 +213,7 @@ export const CONTROL_SCHEMA = [
   def('cinema','shimmer','Calor no limbo',0,1.5,0.05,0,setUniform('compUniforms','uShimmer'),{preset:0.45}),
   def('cinema','tone','Grade Sunshine',0,1.2,0.05,0,setUniform('compUniforms','uTone'),{preset:0.65}),
   def('cinema','film','Filme (ACES→AgX)',0,1,0.05,0,setUniform('compUniforms','uFilm')),
-  def('cinema','hand','Micro-movimento de câmera',0,1.5,0.05,0,setCtx('HAND_K'),{
+  def('cinema','hand','Micro-movimento de câmera',0,1.5,0.025,0,setCtx('HAND_K'),{
     metrics:function(ctx, v){ return { runtime:ctx.HAND_K,
       thetaOffset:ctx.handThetaOffset || 0, phiOffset:ctx.handPhiOffset || 0,
       maxTheta:0.0146*v, maxPhi:0.011*v }; }}),
@@ -282,7 +339,10 @@ export function createControlState(ctx, options){
   function setOverride(owner, key, value){
     var d = BY_KEY[key]; if (!d) return false;
     var r = ensure(key);
-    r.override = { owner:owner, value:clamp(d, value) };
+    var next = clamp(d, value);
+    if (r.override && r.override.owner === owner && r.override.value === next)
+      return r.applied;
+    r.override = { owner:owner, value:next };
     return apply(key);
   }
   function clearOverrides(owner){

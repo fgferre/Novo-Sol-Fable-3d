@@ -3,6 +3,8 @@
 // módulo); refs de flares/director (factories posteriores no init) são
 // adiadas via ctx.*. Corpo verbatim.
 
+import { cycleEasingFor } from '../core/controls.js';
+
 export function createSolInfo(ctx){
   var renderer = ctx.renderer, camera = ctx.camera, TIER = ctx.TIER,
       RENDER_SCALE = ctx.RENDER_SCALE, SCALE_STEPS = ctx.SCALE_STEPS,
@@ -33,7 +35,7 @@ export function createSolInfo(ctx){
       refreshPILBuffer = ctx.pil.refreshPILBuffer, pilBrAt = ctx.pil.pilBrAt,
       PIL_W = ctx.PIL_W, PIL_H = ctx.PIL_H,
       scheduleFlareArcade = ctx.scheduleFlareArcade, CME_STEPS = ctx.CME_STEPS,
-      CME_PTS_N = ctx.CME_PTS_N, cmeGeomAt = ctx.cmeGeomAt,
+      CME_PTS_N = ctx.CME_PTS_N, cmeGeomAt = ctx.cmeGeomAt, cmeUniforms = ctx.cmeUniforms,
       launchCME = ctx.launchCME, cmeDir = ctx.cmeDir, cmePts = ctx.cmePts,
       updateCamera = ctx.updateCamera, DET_HOLD = ctx.DET_HOLD;
   // estado exposto para QA automatizado (leitura + posicionamento de câmera)
@@ -106,15 +108,12 @@ export function createSolInfo(ctx){
       window.__solInfo.controls = function(key){
         return key ? ctx.getControlInfo(key) : ctx.getControlsInfo();
       };
-      window.__solInfo.setControl = function(key, value){
-        if (ctx.directorUserExit) ctx.directorUserExit();
-        return ctx.setControl(key, value, { source:'qa', persist:true });
+      window.__solInfo.setControl = function(key, value, opts){
+        opts=opts||{};
+        return ctx.setControl(key, value, { source:'qa', persist:opts.persist!==false });
       };
       window.__solInfo.setAutoTuneKill = function(key, on){
-        if (key === 'cme') ctx.cmeKilled=!!on;
-        else if (key === 'cvol') ctx.cvolKilled=!!on;
-        else return false;
-        if (ctx.onPerformanceStateChange) ctx.onPerformanceStateChange();
+        if (!ctx.setPerformanceKill(key, on, { source:'qa' })) return false;
         return ctx.getControlInfo(key);
       };
       window.__solInfo.bloomInfo = function(){ return ctx.measureBloom(); };
@@ -245,7 +244,7 @@ export function createSolInfo(ctx){
         var mul=cycleMultiplier();
         return { cycle: ctx.CYCLE_K, lapse: ctx.LAPSE_K, depth: cycleDepth(),
                  multiplier:mul, duration:CYCLE_PERIOD/(mul*Math.max(0.05,ctx.TIME_SCALE)),
-                 easing:Math.min(1,(mul-1)/8), time:ctx.cycleTime,
+                 easing:cycleEasingFor(mul), time:ctx.cycleTime,
                  phase: ctx.cyclePhase01, n: ctx.cycleN, hale: ctx.cycleHale,
                  amp: ctx.cycleAmpK, pol: ctx.cyclePolF, polNorth: cyclePolarN.w,
                  warp: ctx.cycleWarp,
@@ -526,12 +525,15 @@ export function createSolInfo(ctx){
       };
       window.__solInfo.cmeInfo = function(){
         var g = cmeGeomAt(ctx.cmeT < 900 ? ctx.cmeT : 0);
+        var materialAmp=cmeUniforms ? cmeUniforms.uCmeKin.value.w : 0;
         return { on: ctx.cmeT < 900, t: ctx.cmeT < 900 ? ctx.cmeT : -1, amp: ctx.cmeAmp,
                  count: ctx.cmeCount, steps: CME_STEPS, killed: ctx.cmeKilled,
                  knob: ctx.CME_K, stria: ctx.cmeStriaK, cav: ctx.cmeCavK,
                  cooldown: +ctx.cmeCooldown.toFixed(2),
-                 front: +g.front.toFixed(3), rho: +g.rho.toFixed(3),
-                 cx: +g.cx.toFixed(3), env: +g.env.toFixed(3),
+                  front: +g.front.toFixed(3), rho: +g.rho.toFixed(3),
+                  cx: +g.cx.toFixed(3), env: +g.env.toFixed(3),
+                  materialAmp:materialAmp,
+                  materialGain:g.env>0&&ctx.cmeAmp>0?materialAmp/(g.env*ctx.cmeAmp):0,
                  hdr: +ctx.lastCmeHDR.toFixed(3),
                  dir: [cmeDir.x, cmeDir.y, cmeDir.z],
                  pts: { on: cmePts.on, n: CME_PTS_N,

@@ -220,9 +220,9 @@ function ringStats(file, r0, r1){
     await pm.close();
   }
 
-  // --- J: arcada escura pós-esfriamento (débito F1, sem knob) -----------
+  // --- J: arcada escura pós-esfriamento (master loops ligado) -----------
   {
-    const page = await open('');
+    const page = await open('loops=1');
     await page.evaluate(() => { window.__solInfo.forceFlarePair(0); window.__solInfo.setFlareClock(1.5); });
     await frames(page, 3);
     const liHot = await page.evaluate(() => window.__solInfo.loopInfo());

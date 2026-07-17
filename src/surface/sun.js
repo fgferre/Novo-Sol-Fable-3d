@@ -394,14 +394,14 @@ export function createSunUniforms(ctx){
     uFlareGeo: { value: new THREE.Vector4(1, 0, 0, 0.02) },
     uFlarePerp: { value: new THREE.Vector4(0, 0, 1, 0.06) },
     uFlareRib: { value: new THREE.Vector4(0, 0.010, 0, 1) },
-    uPlageEm: { value: knob('plageglow', 0.35, 0.0, 1.5) },
+    uPlageEm: { value: knob('plageglow') },
     // Oscilações p-mode (heliosismologia): o Sol "toca" em modos acústicos
     // de ~5 minutos (harmônicos esféricos de baixo grau, Leighton 1962).
     // Aqui: 3 modos (l=2 m=0, l=2 m=2, l=3 m=1) com períodos comprimidos
     // (~21-34s de parede; os reais são 296-317s) e amplitude exagerada
     // ~10^4x (Δr/R real ≈ 10^-7 seria invisível) — mesma honestidade de
     // VFX da convecção. Default 0 = desligado, frame idêntico ao baseline.
-    uPmode: { value: knob('pmode', 0.0, 0.0, 1.0) },
+    uPmode: { value: knob('pmode') },
     uSimTex: { value: simRTs[0].texture },
     uSimTexel: { value: simUniforms.uTexel.value },
     // FASE 6 (B1) — manchas virtuais: array VIVO de 10 Vector4

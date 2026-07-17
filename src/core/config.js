@@ -3,6 +3,8 @@
 // Corpo movido verbatim de src/main.js; escalares mutáveis compartilhados
 // (knobs etc.) vivem como ctx.* — nunca copiados para locais.
 
+import { createControlState, getControlPreset } from './controls.js';
+
 export function createConfig(ctx){
 
   // Overrides de QA/perf via URL: ?tier=low|mid|high força o tier de
@@ -55,59 +57,22 @@ export function createConfig(ctx){
   }
   ctx.savedKnobs = {};
   try { ctx.savedKnobs = JSON.parse(localStorage.getItem('solKnobs') || '{}') || {}; } catch(e){}
-  function knob(name, dflt, lo, hi){
-    var v = parseFloat(urlQ[name]);
-    if (v !== v && ctx.savedKnobs[name] !== undefined) v = parseFloat(ctx.savedKnobs[name]);
-    return (v === v) ? Math.min(hi, Math.max(lo, v)) : dflt;
-  }
+  var LOOK_SUNSHINE = getControlPreset();
+  var LOOK = (urlQ.look === 'sunshine') ? LOOK_SUNSHINE : null;
+  createControlState(ctx, { urlQ:urlQ, savedKnobs:ctx.savedKnobs,
+    look:LOOK ? 'sunshine' : '' });
+  var knob = ctx.knob;
   // Knobs cinematográficos (defaults = visual calibrado do LOOP-5; sem
   // query string NADA muda). speed comprime/expande o tempo SIMULADO de
   // forma coerente (rotação, deriva, ciclos, flares, sim) sem tocar na
   // resposta dos controles de câmera.
-  ctx.TIME_SCALE = knob('speed', 1.0, 0.05, 3.0);
+  ctx.TIME_SCALE = knob('speed');
   // ?look=sunshine: preset da camada cinematográfica (Sunshine 2007 —
   // halação, íris, lente); semeia DEFAULTS, então knob individual na
   // URL/painel continua tendo precedência. Sem o preset, tudo em 0.
   // valores do preset SEMPRE disponíveis (o painel da engrenagem tem um
   // botão "look Sunshine" que os aplica ao vivo, sem URL)
-  var LOOK_SUNSHINE = {
-    // calibrado por sweep de 7 variantes + juiz visual (h2, 8.5/10;
-    // fringe>=0.5 gera rebordo verde no limbo — manter <=0.35)
-    veil:0.85, adapt:0.55, fringe:0.35, shimmer:0.45, tone:0.65,
-    streak:0.65, bloom:1.15, grain:1.7, vig:0.85, exposure:1.08,
-    // FASE 2: loops/burst (dívida da F1) + disp/hal calibrados por
-    // sweep de 6 variantes × 2 vistas com painel de 3 juízes (cinema/
-    // realismo/legibilidade) — v1-sutil venceu unânime (8.5/10 nas 3
-    // lentes); valores = mediana das 3 recomendações. Acima disso:
-    // loops>=0.8 vira "mola de neon", burst>=1.0 vira cunha dura,
-    // disp>=0.7 lava o disco p/ ouro, hal>=0.9 véu leitoso.
-    loops:0.55, burst:0.55, disp:0.40, hal:0.45,
-    // FASE 3: filamentos escuros como âncora de escala (painel de 3
-    // juízes: mediana 0.55, mesmo patamar dos loops; >=0.9 vira
-    // caricato — núcleo preto). cycle/lapse ficam FORA do preset: são
-    // comportamento no tempo, não look.
-    fprom:0.55,
-    // FASE 4: coroa volumétrica raymarched (mediana do painel: 0.5 —
-    // "somar textura, não luminância"; bloom espectral e halação já
-    // carregam o brilho; >=1.0 lava o céu na vista fit). Nos tiers sem
-    // raymarch (low) é no-op e o plano de raias segue como fallback.
-    cvol:0.5,
-    // FASE 5: CME + foco raso, painel de 3 juízes (sweep 6×2 + 4 doses
-    // de dof, sem rebuild). cme = mediana 0.9 (0.6 cinema / 0.9 físico
-    // / 1.2 artefatos — cada lente puxou p/ um lado; 0.9 mantém o
-    // evento como pulso raro sem afogar o rim no céu). dof = 0.5
-    // UNÂNIME (falloff contido e fílmico; 0.8-1.2 e o focus pull ao
-    // limbo ficam para o modo diretor). Em tiers sem CME (low) o cme
-    // é no-op, como o cvol.
-    cme:0.9, dof:0.5,
-    // FASE 6: manchas de verdade (grupos GONG). Mediana do RE-painel de
-    // 3 juízes (1.0/1.0/1.5 → 1.0) sobre o sweep2 pós-correção da lei
-    // de crescimento — o painel 1 (mediana 0.5) tinha 2 flags ALTAS de
-    // fusão líder+seguidor, resolvidas no B1-fix e re-julgadas.
-    spots:1.0
-  };
-  var LOOK = (urlQ.look === 'sunshine') ? LOOK_SUNSHINE : null;
-  function lk(n, base){ return (LOOK && LOOK[n] !== undefined) ? LOOK[n] : base; }
+  var lk = ctx.lk;
   ctx.IDLE_CINE = urlQ.idle === '1' || (urlQ.idle === undefined && ctx.savedKnobs.idle == 1);
   // FASE 3 — o tempo da estrela: cycle liga o ciclo de 11 anos (0 = o
   // sol "de meio de ciclo" eterno de sempre; frame default intocado;
@@ -117,20 +82,20 @@ export function createConfig(ctx){
   // rotação, granulação e proeminências seguem no tempo normal, a
   // mesma honestidade de VFX de p-modes/convecção). lapse>0 com
   // cycle=0 liga o ciclo sozinho (modo documental de um toque).
-  ctx.CYCLE_K = knob('cycle', lk('cycle', 0), 0.0, 1.5);
-  ctx.LAPSE_K = knob('lapse', lk('lapse', 0), 0.0, 1.5);
+  ctx.CYCLE_K = knob('cycle');
+  ctx.LAPSE_K = knob('lapse');
   // FASE 3 — continuidade filamento↔proeminência: a MESMA estrutura
   // escura contra o disco (filamento, absorção) e vermelha além do
   // limbo (proeminência, emissão). Default 0 = gêmeos de absorção
   // invisíveis, frame e custo idênticos ao baseline.
-  ctx.FPROM_K = knob('fprom', lk('fprom', 0), 0.0, 1.5);
+  ctx.FPROM_K = knob('fprom');
   // FASE 4 — a coroa de verdade: coroa volumétrica raymarched (helmet
   // streamers emergindo da topologia aberta/fechada do MESMO campo de
   // cargas, densidade bakeada em sampler3D 64³). Default 0 = mesh
   // invisível, frame e custo idênticos ao baseline. Tier-gated: em
   // tiers sem passos de raymarch (low) o knob é no-op e o plano de
   // raias segue sozinho como fallback.
-  ctx.CVOL_K = knob('cvol', lk('cvol', 0), 0.0, 1.5);
+  ctx.CVOL_K = knob('cvol');
   // FASE 5 — "Erupção": CME de flux-rope. Em flare GRANDE a casca do
   // rope sobre a PIL perde equilíbrio e escapa: frente brilhante,
   // cavidade rarefeita e núcleo denso (a "CME de três partes" do LASCO,
@@ -139,20 +104,20 @@ export function createConfig(ctx){
   // sin² da física. Default 0 = nenhum evento dispara, meshes
   // invisíveis, frame e custo idênticos ao baseline. Tier-gated
   // (cmestep=0 no low => knob no-op, como o cvol).
-  ctx.CME_K = knob('cme', lk('cme', 0), 0.0, 1.5);
+  ctx.CME_K = knob('cme');
   // FASE 5 — profundidade de campo em close-up: bokeh da MESMA íris de
   // 6 lâminas do starburst da F1. CoC ANALÍTICO da geometria esfera/
   // câmera (sem readback de Z — convenção da íris analítica); em
   // enquadramento fit a abertura é ~0 e nada muda mesmo com knob alto.
   // Default 0 = ramo morto no composite, frame idêntico.
-  ctx.DOF_K = knob('dof', lk('dof', 0), 0.0, 1.5);
+  ctx.DOF_K = knob('dof');
   // FASE 6 — manchas de verdade: multiplicidade e proporção GONG via
   // manchas VIRTUAIS num uniform array SÓ do shader do disco (uSpots,
   // zero custo no bake) + recalibração dos raios das manchas reais.
   // Default 0 = loop pulado por gate uniforme e recalibração ×1.0 —
   // frame e custo idênticos ao baseline. No preset sunshine entra com
   // 1.0 (mediana do re-painel de juízes do B1-fix).
-  ctx.SPOTS_K = knob('spots', lk('spots', 0), 0.0, 1.5);
+  ctx.SPOTS_K = knob('spots');
   // FASE 5 — modo diretor (?director=1): sequência-atração
   // determinística coreografada POR CIMA dos hooks/knobs existentes
   // (ciclo, flare grande + CME, close-ups com foco raso, retirada

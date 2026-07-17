@@ -145,8 +145,7 @@ export function createSolInfo(ctx){
                  cusp: ctx.cvolWCusp };
       };
       window.__solInfo.setCvol = function(v){
-        ctx.CVOL_K = Math.min(1.5, Math.max(0, +v || 0));
-        return ctx.CVOL_K;
+        return ctx.setControl('cvol',v,{source:'qa',persist:false});
       };
       // PR2 — re-bake ASSÍNCRONO do volume: agenda um ciclo FORÇADO
       // (snapshot novo no próximo frame; reinicia staging em voo; anda
@@ -243,8 +242,7 @@ export function createSolInfo(ctx){
       // ÚLTIMO frame renderizado — avance >=1 frame após um hook antes
       // de ler.
       window.__solInfo.setSpots = function(v){
-        ctx.SPOTS_K = Math.min(1.5, Math.max(0, +v || 0));
-        return ctx.SPOTS_K;
+        return ctx.setControl('spots',v,{source:'qa',persist:false});
       };
       window.__solInfo.reseedSpots = function(){
         if (ctx.spotsReseed) ctx.spotsReseed();
@@ -387,8 +385,7 @@ export function createSolInfo(ctx){
       // builds e o campo é estático — o retraço então converge para a MESMA
       // geometria seja síncrono (base) ou fatiado por frame (head).
       window.__solInfo.setLoops = function(v){
-        ctx.LOOP_K = Math.min(1.5, Math.max(0, +v || 0));
-        return ctx.LOOP_K;
+        return ctx.setControl('loops',v,{source:'qa',persist:false});
       };
       // PR5 — dump determinístico da geometria PUBLICADA dos loops (o
       // "golden"): buffers position/aTan dos slots + estado por slot (RNG-
@@ -474,8 +471,7 @@ export function createSolInfo(ctx){
       // eixos do sweep de calibração (painel de juízes) sem rebuild:
       // knob ao vivo + ganho do núcleo denso da casca
       window.__solInfo.setCme = function(v){
-        ctx.CME_K = Math.min(1.5, Math.max(0, +v || 0));
-        return ctx.CME_K;
+        return ctx.setControl('cme',v,{source:'qa',persist:false});
       };
       window.__solInfo.setCmeCore = function(x){
         ctx.cmeCoreGain = Math.min(2.5, Math.max(0, +x || 0));

@@ -37,7 +37,7 @@ export function createPipeline(ctx){
   // ΔL médio ≤ +6, resíduo = o lift físico das sombras que a OETF revela).
   // O preset Sunshine (exposure 1.08 relativo) cavalga o mesmo fator.
   var EXP0 = isHDR ? 0.418 : 0.435;
-  var BLOOM_THRESHOLD = knob('bloomth', isHDR ? 0.72 : 0.82, 0.2, 2.0);
+  var BLOOM_THRESHOLD = knob('bloomth');
 
   // Achado 8: a cena 3D (esfera do Sol, estrelas) É rasterizada AQUI, então
   // o depth DESTE alvo é obrigatório para a oclusão 3D — NÃO desligar. Só o
@@ -261,27 +261,27 @@ export function createPipeline(ctx){
   }
 
   var BLOOM_BASE0 = isHDR ? 0.62 : 0.55;
-  ctx.BLOOM_STRENGTH_BASE = BLOOM_BASE0 * knob('bloom', lk('bloom', 1.0), 0.0, 3.0);
+  ctx.BLOOM_STRENGTH_BASE = BLOOM_BASE0 * knob('bloom');
   // camada cinema (ver docs/cinema-sunshine.md): defaults 0 = frame
   // pixel-idêntico ao calibrado; valores em JS p/ gating por toggle
-  ctx.VEIL_BASE = knob('veil', lk('veil', 0), 0.0, 1.5);
-  ctx.STREAK_K = knob('streak', lk('streak', 0), 0.0, 1.5);
-  ctx.ADAPT_K = knob('adapt', lk('adapt', 0), 0.0, 1.0);
+  ctx.VEIL_BASE = knob('veil');
+  ctx.STREAK_K = knob('streak');
+  ctx.ADAPT_K = knob('adapt');
   // FASE 1 — starburst de difração no ponto do flare, dirigido pelo
   // brilho HDR REAL que chega à lente (envelope × visibilidade do
   // ponto no hemisfério voltado à câmera). Default 0 = sem efeito.
-  ctx.BURST_K = knob('burst', lk('burst', 0), 0.0, 1.5);
+  ctx.BURST_K = knob('burst');
   // FASE 2 — a luz como matéria: dispersão espectral do bloom (raios de
   // blur por canal no dual-Kawase, ver downsampleFragment) e halação com
   // peso de temperatura (só as altas QUENTES sangram para o vermelho,
   // ver branch uHal no compFragment). Defaults 0 = frame pixel-idêntico.
-  ctx.DISP_K = knob('disp', lk('disp', 0), 0.0, 1.5);
-  ctx.HAL_K = knob('hal', lk('hal', 0), 0.0, 1.5);
+  ctx.DISP_K = knob('disp');
+  ctx.HAL_K = knob('hal');
   // hand: linguagem de câmera do Sunshine — o Sol é filmado em lente
   // longa com deriva lenta e micro-tremor de operador (0.1-0.3 Hz + um
   // harmônico rápido fraco). Soma de senos incomensuráveis = pseudo-
   // perlin sem alocação; média zero, NÃO acumula no estado da câmera.
-  ctx.HAND_K = knob('hand', lk('hand', 0), 0.0, 1.5);
+  ctx.HAND_K = knob('hand');
   ctx.adaptCur = 1.0;
   // FASE 5 — foco raso: plano de foco corrente (lerp curto = focus
   // pull de maquinista) e override do modo diretor/QA (-1 = automático,
@@ -298,25 +298,25 @@ export function createPipeline(ctx){
     tScene:{value:null}, tBloom:{value:null}, tVeil:{value:null}, tStreak:{value:null},
     uStreak:{value: 0.0},
     uBloomStrength:{value: ctx.BLOOM_STRENGTH_BASE},
-    uExposure:{value: EXP0 * knob('exposure', lk('exposure', 1.0), 0.3, 2.5)},
+    uExposure:{value: EXP0 * knob('exposure')},
     // Achado 4 — recalibração: a saturação agora é misturada em LINEAR
     // (antes, em display); 1.08 devolve a saturação média aprovada
     // (Δsat ≤ ±0.04 nas 7 vistas do gate vs |−0.18| sem recalibrar).
-    uSat:{value: knob('sat', 1.08, 0.0, 2.0)},
-    uVig:{value: knob('vig', lk('vig', 0.55), 0.0, 1.5)},
-    uGrain:{value: knob('grain', lk('grain', 1.0), 0.0, 5.0)},
+    uSat:{value: knob('sat')},
+    uVig:{value: knob('vig')},
+    uGrain:{value: knob('grain')},
     uVeil:{value: 0.0},
     // FASE 2 — halação com peso de temperatura (0 = ramo desligado)
     uHal:{value: 0.0},
     uAdapt:{value: 1.0},
-    uFringe:{value: knob('fringe', lk('fringe', 0), 0.0, 1.5)},
-    uShimmer:{value: knob('shimmer', lk('shimmer', 0), 0.0, 1.5)},
-    uTone:{value: knob('tone', lk('tone', 0), 0.0, 1.2)},
+    uFringe:{value: knob('fringe')},
+    uShimmer:{value: knob('shimmer')},
+    uTone:{value: knob('tone')},
     // film: mistura ACES (0) -> AgX (1). AgX desatura as altas de forma
     // gradual — o centro do disco para de "clipar nuclear" e resolve a
     // pendência de recalibração pós-ACES do audit-loop6. Default 0 =
     // pixel-idêntico ao baseline.
-    uFilm:{value: knob('film', lk('film', 0), 0.0, 1.0)},
+    uFilm:{value: knob('film')},
     uCTime:{value: 0.0},
     uSunC:{value: new THREE.Vector2(0.5, 0.5)},
     uSunR:{value: 0.33},
@@ -599,6 +599,7 @@ export function createPipeline(ctx){
     streakRTb.setSize(streakW, streakH);
   }
   ctx.EXP0 = EXP0; ctx.BLOOM_BASE0 = BLOOM_BASE0; ctx.BLOOM_THRESHOLD = BLOOM_THRESHOLD;
+  ctx.thresholdUniforms = thresholdUniforms;
   // Achado 13: após o 3º passe (B→A) o streak final está em A; o composite
   // lê streakOut (= streakRTa)
   ctx.sceneRT = sceneRT; ctx.bloomMips = bloomMips; ctx.streakOut = streakRTa;

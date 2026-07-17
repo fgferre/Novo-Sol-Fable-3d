@@ -80,6 +80,9 @@ function diffPx(fileA, fileB){
   // --- A: loops coronais (knob loops>0) --------------------------------
   {
     const page = await open('loops=1.2');
+    // O traçador é deliberadamente fatiado (uma operação por frame); não
+    // associe o aceite ao desempenho da máquina que executa o SwiftShader.
+    await page.waitForFunction(() => window.__solInfo.loopInfo().amb >= 12, null, { timeout: 420000 });
     const li0 = await page.evaluate(() => window.__solInfo.loopInfo());
     check('A1 loops ambientes traçados (>=12 no high)', li0.amb >= 12, JSON.stringify(li0));
     // maturidade forçada (sob hold o tempo congela e o envelope ficaria em 0)
@@ -101,9 +104,9 @@ function diffPx(fileA, fileB){
     await page.close();
   }
 
-  // --- B: flare two-ribbon + arcada (default, sem knobs) ---------------
+  // --- B: flare two-ribbon + arcada (loops controla toda a estrutura) --
   {
-    const page = await open('');
+    const page = await open('loops=1');
     await page.evaluate(() => { window.__solInfo.forceFlarePair(0); window.__solInfo.setFlareClock(0.30); });
     const aim = await aimAtFlare(page);
     check('B1 brilho HDR varia com a visada (acoplamento físico→lente)',
@@ -120,15 +123,21 @@ function diffPx(fileA, fileB){
       fiGrad.grad > 0.5 && fiGrad.imp < 0.1 && fiGrad.sep > 0.045,
       'grad ' + fiGrad.grad.toFixed(2) + ' sep ' + fiGrad.sep.toFixed(3));
     const liArc = await page.evaluate(() => window.__solInfo.loopInfo());
-    check('B4 arcada pós-flare acesa (>=4 laços) mesmo com loops=0',
+    check('B4 arcada pós-flare acesa (>=4 laços) com loops=1',
       liArc.arc >= 4 && liArc.visible === true, JSON.stringify(liArc));
     await page.screenshot({ path: path.join(outDir, 'flare-gradual-arcada.png') });
+    await page.evaluate(() => window.__solInfo.setLoops(0));
+    await frames(page, 2);
+    const liOff = await page.evaluate(() => window.__solInfo.loopInfo());
+    check('B5 loops=0 cancela arcadas, filas e visibilidade',
+      liOff.arc === 0 && liOff.queue === 0 && liOff.visible === false && liOff.absVisible === false,
+      JSON.stringify(liOff));
     // flare escondido atrás do Sol: a lente não pode reagir
     await page.evaluate(([t, p, d]) => window.__solInfo.setView(t, p, d),
       [aim.th + Math.PI, Math.PI - aim.ph, aim.dist]);
     await frames(page, 2);
     const fiHid = await page.evaluate(() => window.__solInfo.flareInfo());
-    check('B5 flare atrás do limbo => hdr ~0', fiHid.hdr < 0.05, fiHid.hdr.toFixed(3));
+    check('B6 flare atrás do limbo => hdr ~0', fiHid.hdr < 0.05, fiHid.hdr.toFixed(3));
     await page.close();
   }
 

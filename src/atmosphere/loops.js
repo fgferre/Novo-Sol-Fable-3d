@@ -19,10 +19,10 @@ export function createLoops(ctx){
   // faz o glow) e envelope por loop via uniform array — zero alocações
   // por frame. Knob `loops` default 0 = frame idêntico ao baseline
   // (convenção LOOP-5); os slots de ARCADA PÓS-FLARE são reusados pelo
-  // flare two-ribbon e acendem em qualquer default DURANTE um flare
-  // (pendência do audit-loop6 — flares já eram um evento default).
+  // flare two-ribbon; `loops` é o master tanto dos loops ambientes quanto
+  // das arcadas pós-flare, portanto zero não agenda rescaldo invisível.
   // ---------------------------------------------------------------
-  ctx.LOOP_K = knob('loops', lk('loops', 0), 0.0, 1.5);
+  ctx.LOOP_K = knob('loops');
   var LOOP_AMB = TP.loops, LOOP_ARC = TP.larc, LOOP_N = LOOP_AMB + LOOP_ARC;
   var LOOP_SEG = TP.lseg;
   // FASE 2 (débito LOD da Fase 1): fitas orientadas à câmera no lugar de
@@ -552,11 +552,23 @@ export function createLoops(ctx){
   ctx.lastArcAbsMax = 0;   // FASE 4: pico corrente da arcada escura (QA)
   ctx.arcQueueN = 0;
   var arcAtt = 0;          // PR5: tentativa corrente da arcada em voo (0..2)
+  var arcLive = false;
   var arcSeedBase = new THREE.Vector3();
   var arcSeedTan = new THREE.Vector3();
   var arcSeedPerp = new THREE.Vector3();
   var arcSeedOut = new THREE.Vector3();
+  function clearArcades(){
+    ctx.arcQueueN = 0; arcAtt = 0; arcLive = false;
+    for (var i=0;i<LOOP_ARC;i++){
+      arcStates[i].ok=false;
+      loopEnvArr[LOOP_AMB+i]=0; loopCoolArr[LOOP_AMB+i]=0; loopHotArr[LOOP_AMB+i]=0;
+    }
+    ctx.lastArcAbsMax=0;
+  }
   function scheduleFlareArcade(){
+    // `loops` é o master de TODAS as estruturas: com zero não agenda nem
+    // deixa rescaldo oculto pronto para reaparecer mais tarde.
+    if (!ctx.subToggle || !ctx.subToggle.loops || ctx.LOOP_K <= 0.001){ clearArcades(); return false; }
     // congela a moldura da PIL do EVENTO (o Sol gira; a arcada não
     // pode escorregar para outra moldura no meio do rescaldo)
     arcSeedBase.copy(ctx.surfFlareDir);
@@ -576,7 +588,8 @@ export function createLoops(ctx){
       loopCoolArr[LOOP_AMB + i] = 0;
     }
     ctx.arcQueueN = LOOP_ARC;
-    arcAtt = 0;
+    arcAtt = 0; arcLive = true;
+    return true;
   }
   // uma linha só é ARCADA se pousar PERTO do flare (≤ ~23°): a PIL de
   // sol calmo pode conectar o ponto a outra região/polo — laço gigante
@@ -628,7 +641,8 @@ export function createLoops(ctx){
     var act = coronaRaysUniforms.uActivity.value;
     var i, st;
     var didProbe = 0, didTrace = 0;
-    if (ctx.arcQueueN > 0){
+    if (!loopsOn && (ctx.arcQueueN > 0 || arcLive)) clearArcades();
+    if (loopsOn && ctx.arcQueueN > 0){
       stepArcadeJob();                    // 1 RK4 (arcada tem prioridade)
       didTrace = 1;
     } else if (loopsOn){
@@ -668,14 +682,14 @@ export function createLoops(ctx){
           // presente até no controle sem knobs). Gate 0.55→1.05 no
           // relógio do evento; em t>=2.5 (check B4) já vale 1.
           var arcGate = Math.min(1, Math.max(0, (ctx.surfFlareT - 0.55)/0.5));
-          envA = ctx.flareEnvGrad(ta) * 1.25 * ctx.surfFlareAmp * arcGate;
+          envA = ctx.flareEnvGrad(ta) * 1.25 * ctx.surfFlareAmp * arcGate * ctx.LOOP_K;
           var hotK = Math.exp(-ta*0.30);
           loopHotArr[LOOP_AMB + i] = hotK;
           // FASE 4 (débito F1): o laço que ESFRIA troca emissão por
           // ABSORÇÃO — o envelope escuro cresce com (1-hot) e decai
           // no dobro do fôlego do gradual (a arcada fria demora a
           // drenar; em H-alfa ela persiste escura sobre o disco)
-          envAbs = ctx.flareEnvGrad(ta*0.5) * (1.0 - hotK) * ctx.surfFlareAmp * arcGate;
+          envAbs = ctx.flareEnvGrad(ta*0.5) * (1.0 - hotK) * ctx.surfFlareAmp * arcGate * ctx.LOOP_K;
         }
       }
       if (envA < 0.004) envA = 0;
@@ -696,15 +710,16 @@ export function createLoops(ctx){
     }
     loopUniforms.uTime.value = ctx.elapsed;
     loopUniforms.uRes.value.set(renderer.domElement.width, renderer.domElement.height);
-    loopMesh.visible = ctx.subToggle.loops && (loopsOn || arcMax > 0 || ctx.arcQueueN > 0);
+    loopMesh.visible = loopsOn;
     // arcada escura: só entra no draw quando algum slot esfriou de fato
     loopAbsUniforms.uTime.value = ctx.elapsed;
     ctx.lastArcAbsMax = arcAbsMax;
-    loopAbsMesh.visible = ctx.subToggle.loops && arcAbsMax > 0;
+    loopAbsMesh.visible = loopsOn && arcAbsMax > 0;
   }
   ctx.loopGroup = loopGroup; ctx.loopMesh = loopMesh; ctx.loopAbsMesh = loopAbsMesh;
   ctx.loopUniforms = loopUniforms; ctx.loopStatesA = loopStatesA;
   ctx.arcStates = arcStates; ctx.loopStats = loopStats;
   ctx.loopEnvArr = loopEnvArr; ctx.LOOP_AMB = LOOP_AMB; ctx.LOOP_ARC = LOOP_ARC;
   ctx.updateLoops = updateLoops; ctx.scheduleFlareArcade = scheduleFlareArcade;
+  ctx.clearArcades = clearArcades;
 }

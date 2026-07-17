@@ -87,11 +87,17 @@ export function createStars(ctx){
     pos.needsUpdate = true;
   })();
   milkyWay.material.size = 1.7;
-  milkyWay.material.opacity = knob('mw', 0.62, 0.0, 1.0);
+  milkyWay.material.opacity = knob('mw');
   var STARS_OP0 = stars.material.opacity, BRIGHT_OP0 = brightStars.material.opacity;
-  var starK = knob('stars', 1.0, 0.0, 3.0);
-  stars.material.opacity = Math.min(1, STARS_OP0*starK);
-  brightStars.material.opacity = Math.min(1, BRIGHT_OP0*starK);
+  var starK = knob('stars');
+  if (starK <= 1){
+    stars.material.opacity = STARS_OP0*starK;
+    brightStars.material.opacity = BRIGHT_OP0*starK;
+  } else {
+    var starT = Math.min(1, starK - 1);
+    stars.material.opacity = STARS_OP0 + (1-STARS_OP0)*starT;
+    brightStars.material.opacity = BRIGHT_OP0 + (1-BRIGHT_OP0)*starT;
+  }
   scene.add(milkyWay);
   // twinkle SUTIL (backlog M2 nº4: estrelas eram a única camada 100%
   // morta). Cada estrela pisca com fase e cadência próprias (hash da

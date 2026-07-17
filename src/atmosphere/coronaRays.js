@@ -60,9 +60,9 @@ export function createCoronaRays(ctx){
     uSunInvRot: { value: ctx.sunInvRot },
     uCharges: { value: charges },
     uActivity: { value: 0.5 },
-    uHalo: { value: knob('halo', 0.55, 0.0, 2.0) },
-    uActGain: { value: knob('cact', 0.50, 0.0, 2.0) },
-    uRayBoost: { value: knob('ray', 0.90, 0.0, 3.0) },
+    uHalo: { value: knob('halo') },
+    uActGain: { value: knob('cact') },
+    uRayBoost: { value: knob('ray') },
     // FASE 4: com a coroa volumétrica ligada o plano de raias cede o
     // protagonismo (fica como base suave de halo). 0.0 default =
     // multiplicação por 1.0 no shader, bit-exata — baseline intocado.

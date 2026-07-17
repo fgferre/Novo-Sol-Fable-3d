@@ -209,6 +209,9 @@ function init(){
   // tocar em nada e ctx.diagEvent segue o no-op do createConfig.
   createDiag(ctx);
 
+  // Todos os targets existem neste ponto; o store central assume a autoria
+  // do runtime antes de o painel se inscrever ou o primeiro frame rodar.
+  ctx.activateControlTargets();
   createPanel(ctx);
 
   // ---------------------------------------------------------------

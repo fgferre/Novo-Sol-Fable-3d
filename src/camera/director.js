@@ -1,6 +1,6 @@
 // camera/director.js — modo diretor: sequência-atração determinística por
-// cima dos hooks/knobs. Corpo verbatim; empresta/restaura ctx.CME_K/DOF_K/
-// LAPSE_K; estado dirT/dirPair/dir*Fired em ctx.* (solinfo lê/escreve).
+// cima dos hooks/knobs. Overrides transitórios vivem no store central;
+// valores nominais/persistidos nunca são sobrescritos pela sequência.
 
 import * as THREE from 'three';
 
@@ -23,20 +23,14 @@ export function createDirector(ctx){
   ctx.dirT = -1;
   ctx.dirPair = 0;
   ctx.dirFlareFired = false, ctx.dirCmeFired = false;
-  var dirSavedLapse = 0;
-  var dirSavedCme = -1, dirSavedDof = -1;   // -1 = nada a restaurar
   var dirWorldTmp = new THREE.Vector3();
   var dirAng = { th: 0, ph: 0 };
   function directorActive(){ return ctx.DIRECTOR_ON && ctx.dirT >= 0; }
   function directorUserExit(){
     if (!directorActive()) return;
     ctx.dirT = -999;   // permanente: o usuário assumiu a câmera
-    ctx.LAPSE_K = dirSavedLapse;
     ctx.dofFocusOverride = -1;
-    // devolve os knobs que o diretor emprestou para a vitrine
-    if (dirSavedCme >= 0){ ctx.CME_K = dirSavedCme; dirSavedCme = -1; }
-    if (dirSavedDof >= 0){ ctx.DOF_K = dirSavedDof; dirSavedDof = -1; }
-    if (ctx.syncControlUI) ctx.syncControlUI(['cme', 'dof', 'lapse']);
+    ctx.clearControlOverrides('director');
   }
   ctx.directorUserExit = directorUserExit;
   // início pelo PAINEL (a sequência não pode depender de URL): liga o
@@ -47,11 +41,10 @@ export function createDirector(ctx){
     if (directorActive()) directorUserExit();
     ctx.DIRECTOR_ON = true;
     ctx.dirT = 0;
-    dirSavedLapse = ctx.LAPSE_K;
     ctx.dirFlareFired = false; ctx.dirCmeFired = false;
-    if (CME_STEPS > 0 && ctx.CME_K < 0.85){ dirSavedCme = ctx.CME_K; ctx.CME_K = 0.9; }
-    if (ctx.DOF_K < 0.5){ dirSavedDof = ctx.DOF_K; ctx.DOF_K = 0.5; }
-    if (ctx.syncControlUI) ctx.syncControlUI(['cme', 'dof', 'lapse']);
+    ctx.clearControlOverrides('director');
+    if (CME_STEPS > 0) ctx.setControlOverride('director','cme',Math.max(ctx.getControl('cme'),0.9));
+    ctx.setControlOverride('director','dof',Math.max(ctx.getControl('dof'),0.5));
   }
   function dirEase(x){ x = Math.max(0, Math.min(1, x)); return x*x*(3 - 2*x); }
   function dirAimAt(w){
@@ -137,13 +130,11 @@ export function createDirector(ctx){
       // B5 — time-lapse documental: só a maquinaria de manchas corre
       var up = dirEase((t - 64)/3.0);
       var down = 1 - dirEase((t - 75)/3.0);
-      ctx.LAPSE_K = Math.max(dirSavedLapse, 0.85*up*down);
-      if (ctx.syncControlUI) ctx.syncControlUI(['lapse']);
+      ctx.setControlOverride('director','lapse',Math.max(ctx.getControl('lapse'),0.85*up*down));
       ctx.theta += 0.010*delta;
     } else if (t < 84){
       // B6 — assentar de volta ao plano geral
-      ctx.LAPSE_K = dirSavedLapse;
-      if (ctx.syncControlUI) ctx.syncControlUI(['lapse']);
+      ctx.clearControlOverride('director','lapse');
       ctx.targetCamDist += (ctx.fitDist*1.28 - ctx.targetCamDist)*(1 - Math.exp(-delta/3.0));
       ctx.theta += 0.010*delta;
     } else {

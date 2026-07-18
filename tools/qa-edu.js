@@ -142,12 +142,16 @@ async function forceCycleDiscovery(page,kind){
     return {cycle:cycle,info:window.__solInfo.eduInfo()};
   },kind);
   await frame(page);await frame(page);
+  // A intro do go-live esvai por idade simulada; no ritmo do SwiftShader
+  // isso leva vários segundos de relógio — esperamos ela sumir AQUI (com
+  // folga) em vez de deixar a corrida chegar ao check de layout.
   await page.waitForFunction((kind)=>{
     const cycle=window.__solInfo.cycleInfo();
     const atTarget=kind==='maximum' ? Math.abs(cycle.phase-.5)<.04 : cycle.phase<.04||cycle.phase>.96;
     const item=window.__solInfo.eduInfo().active[0];
-    return !cycle.event.on&&atTarget&&item&&item.type===(kind==='maximum'?'cycleMaximum':'cycleMinimum')&&item.global&&item.visible;
-  },kind,{timeout:30000});
+    const introGone=!document.querySelector('#edu .edu-intro.visible');
+    return !cycle.event.on&&atTarget&&item&&item.type===(kind==='maximum'?'cycleMaximum':'cycleMinimum')&&item.global&&item.visible&&introGone;
+  },kind,{timeout:60000});
   // A semântica já existe no frame anterior; aguarda apenas a transição de
   // entrada acabar antes de medir a posição editorial na tela.
   await page.waitForTimeout(700);
@@ -432,7 +436,19 @@ async function layoutState(page){
   const maxLayout=await layoutState(maxPage);
   const maxInside=maxLayout.label&&maxLayout.label.x>=12&&maxLayout.label.y>=12&&maxLayout.label.x+maxLayout.label.width<=maxLayout.viewport.width-12&&maxLayout.label.y+maxLayout.label.height<=maxLayout.viewport.height-12;
   const maxChromeClear=maxLayout.label&&[maxLayout.title,maxLayout.gear,maxLayout.hint].filter(Boolean).every((x)=>!overlap(maxLayout.label,x));
-  check('máximo solar nasce também do ciclo natural',!!maximum&&!maximum.prepared.info.active.some((x)=>x.type==='cycleMaximum'||x.type==='cycleMinimum')&&!maximum.prepared.cycle.event.on&&!maximum.cycle.event.on&&Math.abs(maximum.cycle.phase-.5)<.04&&maximum.cycle.amp>1.12&&!!maxItem&&maxItem.global&&maxItem.anchor===null&&maxItem.lineEnd===null&&!maxItem.connectorVisible&&!maxItem.haloVisible&&!maxLayout.introVisible&&!maximum.info.queued.some((x)=>x.global)&&/Máximo solar/.test(maximum.text)&&maxInside&&maxChromeClear,maximum?JSON.stringify({phase:maximum.cycle.phase,amp:maximum.cycle.amp,global:maxItem&&maxItem.global,event:maximum.cycle.event.on}):'não chegou ao máximo');
+  // Cada condição nomeada no detail: um flake aqui precisa ser legível no
+  // log do CI sem reproduzir localmente (lição do run 29663240288).
+  const maxConds=maximum?{
+    natural:!maximum.prepared.info.active.some((x)=>x.type==='cycleMaximum'||x.type==='cycleMinimum'),
+    semEvento:!maximum.prepared.cycle.event.on&&!maximum.cycle.event.on,
+    fase:Math.abs(maximum.cycle.phase-.5)<.04,amp:maximum.cycle.amp>1.12,
+    global:!!maxItem&&maxItem.global&&maxItem.anchor===null&&maxItem.lineEnd===null,
+    semConector:!!maxItem&&!maxItem.connectorVisible&&!maxItem.haloVisible,
+    introSumiu:!maxLayout.introVisible,filaSemGlobal:!maximum.info.queued.some((x)=>x.global),
+    texto:/Máximo solar/.test(maximum.text),dentro:maxInside,cromoLivre:maxChromeClear
+  }:null;
+  check('máximo solar nasce também do ciclo natural',!!maxConds&&Object.values(maxConds).every(Boolean),
+    maxConds?JSON.stringify({falhas:Object.keys(maxConds).filter((k)=>!maxConds[k]),phase:maximum.cycle.phase,amp:maximum.cycle.amp}):'não chegou ao máximo');
   const maxCollection=await maxPage.evaluate(()=>__solInfo.eduCollectionInfo());
   check('coleção registra o máximo solar alcançado',maxCollection.items.cycle.views.cycleMaximum);
   const maxEnglish=await maxPage.evaluate(()=>{window.__solInfo.setLang('en');return document.querySelector('.edu-label').textContent;});

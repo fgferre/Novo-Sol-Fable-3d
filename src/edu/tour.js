@@ -71,7 +71,20 @@ export function createEduTour(ctx){
     '#eduTour button.quiet{background:transparent;color:rgba(255,235,212,.72)}#eduTour button[hidden],#eduTour .tour-body[hidden]{display:none}',
     '#eduTour button:disabled{opacity:.48;cursor:default}#eduTour button:focus-visible{outline:2px solid #ffe0ad;outline-offset:3px}',
     '@media(min-width:720px){#eduTour .tour-card{left:22px;right:auto;bottom:28px;width:330px}}',
-    '@media(prefers-reduced-motion:reduce){#eduTour .tour-card{backdrop-filter:none;-webkit-backdrop-filter:none}}'
+    '@media(prefers-reduced-motion:reduce){#eduTour .tour-card{backdrop-filter:none;-webkit-backdrop-filter:none}}',
+    // Chip de palco: o convite à visita mora no palco, não na engrenagem.
+    '#eduTourChip{position:fixed;left:50%;bottom:max(16px,calc(env(safe-area-inset-bottom) + 10px));transform:translate3d(-50%,0,0);',
+    ' z-index:41;pointer-events:auto;min-height:44px;padding:10px 20px;border-radius:999px;cursor:pointer;',
+    ' border:1px solid rgba(255,183,104,.5);background:linear-gradient(128deg,rgba(8,11,18,.9),rgba(17,15,18,.78));',
+    ' color:#ffe0b9;font:600 13px/1.1 inherit;letter-spacing:.02em;box-shadow:0 10px 26px rgba(0,0,0,.45);',
+    ' backdrop-filter:blur(12px) saturate(1.15);-webkit-backdrop-filter:blur(12px) saturate(1.15)}',
+    '#eduTourChip[hidden]{display:none}',
+    '#eduTourChip:hover{background:linear-gradient(128deg,rgba(20,16,14,.94),rgba(30,22,16,.84));border-color:rgba(255,198,137,.8)}',
+    '#eduTourChip:focus-visible{outline:2px solid #ffe0ad;outline-offset:3px}',
+    // O hint sobe enquanto o chip está no palco, para não disputarem a base.
+    // 42px encaixa o hint na folga entre o cartão de descoberta (base em
+    // innerHeight-92, ver placeLabel do edu.js) e o topo do chip (44px+16).
+    '#ui:has(#eduTourChip:not([hidden])) #hint{margin-bottom:42px}'
   ].join('');
   document.head.appendChild(style);
 
@@ -92,6 +105,33 @@ export function createEduTour(ctx){
   actions.appendChild(expand);actions.appendChild(next);actions.appendChild(resume);actions.appendChild(exit);
   card.appendChild(kicker);card.appendChild(progress);card.appendChild(term);card.appendChild(headline);card.appendChild(status);card.appendChild(body);card.appendChild(actions);root.appendChild(card);ui.appendChild(root);
 
+  // Chip de palco: o convite à visita fica visível no palco, fora da
+  // engrenagem. Persistência honesta em solKnobs: some para sempre depois de
+  // 2 sessões ignoradas ou da primeira visita iniciada — a engrenagem
+  // continua oferecendo a visita para sempre.
+  var chipState={seen:0,engaged:false};
+  try{
+    var savedChip=ctx.savedKnobs&&ctx.savedKnobs.tourChip;
+    if(savedChip&&typeof savedChip==='object')chipState={seen:savedChip.seen>>>0,engaged:!!savedChip.engaged};
+  }catch(e){}
+  chipState.seen++;
+  function persistChip(){
+    try{ctx.savedKnobs.tourChip={seen:chipState.seen,engaged:chipState.engaged};
+      localStorage.setItem('solKnobs',JSON.stringify(ctx.savedKnobs));}catch(e){}
+  }
+  persistChip();
+  var chip=document.createElement('button');chip.type='button';chip.id='eduTourChip';
+  ui.appendChild(chip);
+  function chipCopy(){var t=copy();chip.textContent=t.chip;chip.setAttribute('aria-label',t.chipAria);}
+  function syncChip(){
+    chip.hidden=state.active||chipState.engaged||chipState.seen>2||!!(ctx.directorActive&&ctx.directorActive());
+  }
+  chipCopy();syncChip();
+  chip.addEventListener('click',function(){start();});
+  // O diretor liga/desliga fora do nosso fluxo; um relógio lento basta para
+  // o chip ceder o palco à sessão de cinema e voltar depois.
+  setInterval(syncChip,700);
+
   function current(){return STEPS[state.index];}
   function lang(){return ctx.eduLang==='en'?'en':'pt';}
   function copy(){return EDU_CONTENT[lang()].tour;}
@@ -107,6 +147,7 @@ export function createEduTour(ctx){
         visible:state.source.visible,unavailable:state.source.unavailable},
       cardRect:cardRect,diskRect:{x:w*.5-radius,y:h*.5-radius,width:radius*2,height:radius*2},
       safeRect:{x:14,y:70,width:w-28,height:Math.max(0,cardRect.y-86)},
+      chip:{visible:!!(chip&&!chip.hidden),rect:rectOf(chip)},
       settled:state.ready&&(!state.assist||cameraSettled())
     };
   }
@@ -314,7 +355,9 @@ export function createEduTour(ctx){
     if(state.active)end('restart');
     state.active=true;state.index=0;state.assist=true;state.manualReason='';state.panelOpen=false;
     state.previous={theta:ctx.theta,phi:ctx.phi,targetCamDist:ctx.targetCamDist};
-    ctx.eduTourActive=true;configure();
+    ctx.eduTourActive=true;
+    if(!chipState.engaged){chipState.engaged=true;persistChip();}
+    syncChip();configure();
     return stateSnapshot();
   }
   function end(reason){
@@ -322,7 +365,7 @@ export function createEduTour(ctx){
     clearOverrides();if(ctx.cancelCycleEvent)ctx.cancelCycleEvent();
     if(state.previous){ctx.targetCamDist=state.previous.targetCamDist;}
     state.active=false;state.phase='free';state.expanded=false;state.ready=false;state.timeFactor=1;state.panelOpen=false;
-    ctx.eduTourActive=false;ctx.eduTourTimeFactor=1;root.hidden=true;notify();
+    ctx.eduTourActive=false;ctx.eduTourTimeFactor=1;root.hidden=true;syncChip();notify();
     return reason||true;
   }
   function nextStep(){
@@ -376,5 +419,5 @@ export function createEduTour(ctx){
   next.addEventListener('click',nextStep);exit.addEventListener('click',function(){end('user');});resume.addEventListener('click',resumeFrame);
   ctx.eduTourStart=start;ctx.eduTourNext=nextStep;ctx.eduTourExit=end;ctx.eduTourExpand=setExpanded;ctx.eduTourUserExit=userExit;
   ctx.eduTourResumeFrame=resumeFrame;ctx.eduTourPanelChanged=panelChanged;ctx.eduTourCameraTick=cameraTick;ctx.eduTourTick=tick;ctx.eduTourInfo=stateSnapshot;
-  ctx.onEduTourLanguageChange=function(){render();notify();};ctx.eduTourTimeFactor=1;ctx.eduTourActive=false;
+  ctx.onEduTourLanguageChange=function(){chipCopy();render();notify();};ctx.eduTourTimeFactor=1;ctx.eduTourActive=false;
 }

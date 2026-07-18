@@ -3,11 +3,11 @@
 export const EDU_CONTENT = {
   pt: {
     brand: 'SOL',
-    brandTag: 'uma estrela viva',
+    brandTag: 'uma estrela viva · simulação em tempo real',
     intro: 'Esta é a nossa estrela. Gire para explorar.',
     switchLanguage: 'Mudar para inglês',
-    desktopHint: 'arraste para girar · role para aproximar',
-    touchHint: 'arraste para girar · pince para aproximar',
+    desktopHint: 'arraste para girar · scroll aproxima · duplo clique enquadra',
+    touchHint: 'arraste para girar · pince aproxima · toque duplo enquadra',
     flare: {
       headline: 'UMA EXPLOSÃO MAGNÉTICA',
       term: 'Flare solar',
@@ -55,6 +55,8 @@ export const EDU_CONTENT = {
     },
     tour: {
       label: 'VISITA GUIADA',
+      chip: '▶ Visita guiada',
+      chipAria: 'Começar a visita guiada pelo Sol',
       of: 'de',
       read: 'Ler',
       hide: 'Recolher',
@@ -119,11 +121,11 @@ export const EDU_CONTENT = {
   },
   en: {
     brand: 'SOL',
-    brandTag: 'a living star',
+    brandTag: 'a living star · real-time simulation',
     intro: 'This is our star. Turn it to explore.',
     switchLanguage: 'Mudar para português',
-    desktopHint: 'drag to rotate · scroll to zoom',
-    touchHint: 'drag to rotate · pinch to zoom',
+    desktopHint: 'drag to rotate · scroll zooms · double-click frames',
+    touchHint: 'drag to rotate · pinch zooms · double-tap frames',
     flare: {
       headline: 'A MAGNETIC ERUPTION',
       term: 'Solar flare',
@@ -171,6 +173,8 @@ export const EDU_CONTENT = {
     },
     tour: {
       label: 'GUIDED VISIT',
+      chip: '▶ Guided visit',
+      chipAria: 'Start the guided visit of the Sun',
       of: 'of',
       read: 'Read',
       hide: 'Collapse',

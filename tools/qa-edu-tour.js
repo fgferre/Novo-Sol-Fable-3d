@@ -36,6 +36,26 @@ async function cardState(page){
   // os emissores físicos de produção e o cartão reduz/pausa esse ritmo.
   await page.goto(base+'?edu=1&lang=pt&tier=high&scale=0.25&speed=3&cycle=1');
   await page.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduTourInfo);
+
+  // PR-1 — porta e placa: a marca é única e o convite à visita vive no
+  // palco. O chip precisa ser visível, tocável (≥44px), não cobrir o disco,
+  // iniciar a visita, ceder o palco e não insistir depois da 1ª visita.
+  const chrome=await page.evaluate(()=>({title:document.querySelector('#title-block h1').textContent,
+    subtitle:document.querySelector('#title-block p').textContent,
+    tour:window.__solInfo.eduTourInfo()}));
+  check('marca única "SOL — uma estrela viva" no palco',/SOL/.test(chrome.title)&&/estrela viva/.test(chrome.subtitle),
+    JSON.stringify({title:chrome.title,subtitle:chrome.subtitle}));
+  check('chip da visita é visível, tocável e não cobre o disco',
+    chrome.tour.chip.visible&&chrome.tour.chip.rect.height>=44&&chrome.tour.chip.rect.width>=44&&!overlap(chrome.tour.chip.rect,chrome.tour.diskRect),
+    JSON.stringify(chrome.tour.chip));
+  await page.click('#eduTourChip');
+  await page.waitForFunction(()=>window.__solInfo.eduTourInfo().active);
+  const chipStart=await page.evaluate(()=>window.__solInfo.eduTourInfo().chip);
+  check('chip inicia a visita e cede o palco',!chipStart.visible,JSON.stringify(chipStart));
+  await page.click('#eduTourExit');await page.waitForFunction(()=>!window.__solInfo.eduTourInfo().active);
+  const chipAfter=await page.evaluate(()=>window.__solInfo.eduTourInfo().chip);
+  check('depois da primeira visita o chip não volta a insistir',!chipAfter.visible,JSON.stringify(chipAfter));
+
   await page.click('#knobBtn');await page.click('#eduTourBtn');
   await page.waitForFunction(()=>window.__solInfo.eduTourInfo().active);
 

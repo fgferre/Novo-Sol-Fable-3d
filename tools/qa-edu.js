@@ -210,6 +210,43 @@ async function layoutState(page){
   check('desligar continua possível e imediato',optOut===false);
   await fresh.close();
 
+  // GO-LIVE (PR-4) — chegada fresca: sem query de knobs e sem storage, o
+  // visitante recebe o Sol COMPLETO (física + cinema acoplado a eventos) e a
+  // estilização estática continua opt-in. ?scale=0.25 só reduz a resolução
+  // do SwiftShader — não muda tier (high), defaults, draw calls nem o
+  // orçamento dos loops.
+  const museu=await browser.newPage({viewport:{width:960,height:600},deviceScaleFactor:1});
+  museu.setDefaultTimeout(300000);
+  museu.on('pageerror',(e)=>errors.push('[museu] '+e.message));
+  museu.on('console',(m)=>{if(m.type()==='error')errors.push('[museu] '+m.text());});
+  await museu.goto(base+'?scale=0.25');
+  await museu.waitForFunction(()=>window.__solInfo&&window.__solInfo.perf&&window.__solInfo.perf().frames>2);
+  const freshDefaults=await museu.evaluate(()=>{
+    const on={spots:1,loops:0.55,fprom:0.55,cme:0.9,cvol:0.5,burst:0.55,adapt:0.55,disp:0.4,hal:0.45,shimmer:0.45};
+    const off=['veil','streak','fringe','tone','film','hand','dof'];
+    const bad=[];
+    Object.keys(on).forEach((k)=>{const c=__solInfo.controls(k);
+      if(Math.abs(c.nominal-on[k])>1e-9||c.source!=='default')bad.push(k+'='+c.nominal+'('+c.source+')');});
+    off.forEach((k)=>{const c=__solInfo.controls(k);if(c.nominal!==0)bad.push(k+'='+c.nominal);});
+    return {bad,tier:__solInfo.perf().tier};
+  });
+  check('museu: chegada fresca liga física e cinema de eventos, estilo segue opt-in',
+    freshDefaults.bad.length===0,freshDefaults.bad.join(', ')||freshDefaults.tier);
+  // A coroa volumétrica precisa DE FATO ficar pronta na chegada (bake real,
+  // não só o knob) antes de medirmos o regime cheio de trabalho por frame.
+  await museu.waitForFunction(()=>__solInfo.controls('cvol').metrics.ready===true,null,{timeout:300000});
+  // Proxies de perf no CI (nada de FPS — SwiftShader não presta para isso):
+  // draw calls por frame são função da ESTRUTURA da cena, não da máquina.
+  // Medido no PR-4 (tier high, defaults museu, cvol pronto): 25–30 calls por
+  // frame, pico 30 com flare+CME ativos → teto fixado em 38 (30 × 1,25).
+  const freshPerf=[];
+  for(let i=0;i<12;i++)freshPerf.push(await museu.evaluate(()=>new Promise((res)=>requestAnimationFrame(()=>res(window.__solInfo.perf().calls)))));
+  const freshLoops=await museu.evaluate(()=>{const l=__solInfo.loopInfo();return {maxProbe:l.maxProbe,maxTrace:l.maxTrace,maxOps:l.maxOps};});
+  check('museu: draw calls da chegada ficam sob o teto medido',Math.max(...freshPerf)<=38,freshPerf.join(','));
+  check('museu: scheduler dos loops respeita o orçamento por frame',
+    freshLoops.maxProbe<=1&&freshLoops.maxTrace<=1&&freshLoops.maxOps<=1,JSON.stringify(freshLoops));
+  await museu.close();
+
   // Coleção: memória separada de solKnobs, gravada apenas após uma
   // descoberta física visível. O contexto isolado impede que itens de
   // cenários anteriores escondam uma regressão de persistência.
@@ -332,7 +369,11 @@ async function layoutState(page){
   await page.evaluate(()=>window.__solInfo.setFlareClock(20));
   await frame(page);
   const ended=await page.evaluate(()=>window.__solInfo.eduInfo());
-  check('descoberta encerra junto do evento',ended.active.length===0);
+  // PR-4: com os defaults do museu (spots/fprom ligados) o palco fica vivo —
+  // outra descoberta física pode assumir o slot no mesmo frame. A prova
+  // continua a mesma: o cartão do FLARE termina junto do evento físico.
+  check('descoberta do flare encerra junto do evento',!ended.active.some((x)=>x.type==='flare'),
+    JSON.stringify(ended.active.map((x)=>x.type)));
   await page.close();
 
   // CME vive em tier alto: deve nascer da mesma fonte física que o flare,

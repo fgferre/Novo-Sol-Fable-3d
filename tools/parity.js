@@ -22,7 +22,13 @@ const seed = argOf('--seed', '7');
 const hold = parseInt(argOf('--hold', '48'), 10);
 const extraQ = argOf('--query', '');
 const base = urlArg || 'file://' + path.resolve(htmlFile);
-const q = `det=1&seed=${seed}&hold=${hold}&tier=high&scale=1` + (extraQ ? '&' + extraQ : '');
+// Museu (PR-4) — pinagem da fotografia det: os knobs com default det-aware
+// já nascem 0 sob ?det=1, mas o pin explícito blinda as baselines HISTÓRICAS
+// contra qualquer mudança futura de default (cinto e suspensório documentado).
+// `--query` vem DEPOIS e vence os pins (o parse de URL fica com a última
+// ocorrência) — é assim que a família "museu" religa os knobs.
+const detPins = 'spots=0&loops=0&fprom=0&cme=0&cvol=0&burst=0&adapt=0&disp=0&hal=0&shimmer=0';
+const q = `det=1&seed=${seed}&hold=${hold}&tier=high&scale=1&` + detPins + (extraQ ? '&' + extraQ : '');
 
 (async () => {
   fs.mkdirSync(outDir, { recursive: true });

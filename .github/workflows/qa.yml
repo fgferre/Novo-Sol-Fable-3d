@@ -52,6 +52,15 @@ jobs:
         run: |
           node tools/parity.js qa-out --file dist-single/index.html
           node tools/imgdiff.js qa/baselines qa-out --max-frac 0.001 --out qa-diff --mask 0,0,620,130 --mask 0,-90,9999,90
+      # Museu (PR-4): segunda família de baselines com os knobs do museu
+      # LIGADOS por cima do det (a query vence os pins do parity). Protege a
+      # cena que o visitante realmente vê — a paridade histórica acima só
+      # cobre o Sol "cru". Baselines canônicas = capturas deste gate via
+      # workflow regen-baselines (input `query`); ver qa/baselines-museu/BASELINE.md.
+      - name: Paridade museu (defaults ligados sob det)
+        run: |
+          node tools/parity.js qa-out-museu --file dist-single/index.html --query "spots=1&loops=0.55&fprom=0.55&cme=0.9&cvol=0.5&burst=0.55&adapt=0.55&disp=0.4&hal=0.45&shimmer=0.45"
+          node tools/imgdiff.js qa/baselines-museu qa-out-museu --max-frac 0.001 --out qa-diff-museu --mask 0,0,620,130 --mask 0,-90,9999,90
       - name: Anexar diffs em caso de falha
         if: failure()
         uses: actions/upload-artifact@v4
@@ -60,6 +69,8 @@ jobs:
           path: |
             qa-out/
             qa-diff/
+            qa-out-museu/
+            qa-diff-museu/
             qa-subtle/
           if-no-files-found: ignore
       # PR0: builds TESTADOS viram artifact (só chega aqui com o QA verde;

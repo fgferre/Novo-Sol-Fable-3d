@@ -47,6 +47,33 @@ async function forceVisibleCme(page){
   }
   return null;
 }
+async function forceProminenceView(page,view){
+  const count=await page.evaluate(()=>window.__solInfo.promLife().length);
+  for(let i=0;i<count;i++){
+    await page.evaluate(({i,view})=>{
+      // Isola uma única estrutura física madura; não usamos eduEmit aqui.
+      // A descoberta tem de nascer do ciclo real da proeminência/filamento.
+      window.__solInfo.setControl('edu',0,{persist:false});
+      const total=window.__solInfo.promLife().length;
+      for(let j=0;j<total;j++)window.__solInfo.setPromLife(j,.01);
+      window.__solInfo.setPromLife(i,.30);
+      const dir=window.__solInfo.promLife()[i].dir,state=window.__solInfo.state();
+      let theta=Math.atan2(dir[2],dir[0]),phi=Math.acos(Math.max(-1,Math.min(1,dir[1])));
+      if(view==='prominence'){theta+=Math.PI/2;phi=Math.PI*.5;}
+      window.__solInfo.setView(theta,phi,state.fitDist*1.3);
+      window.__solInfo.setControl('edu',1,{persist:false});
+    },{i,view});
+    await frame(page);await frame(page);
+    const state=await page.evaluate((i)=>{
+      const info=window.__solInfo.eduInfo(),item=info.active[0];
+      return {info,item,text:document.querySelector('.edu-label').textContent,
+        physical:window.__solInfo.fpromInfo()[i],projection:window.__solInfo.projectProm(i)};
+    },i);
+    if(state.item&&state.item.type==='prominence'&&state.item.sourceId===i&&state.item.visible&&
+      (view==='filament'?state.item.contentKey==='filament':state.item.contentKey==='prominence'))return {index:i,...state};
+  }
+  return null;
+}
 async function layoutState(page){
   return page.evaluate(()=>{
     const info=window.__solInfo.eduInfo(),a=info.active[0];
@@ -54,6 +81,7 @@ async function layoutState(page){
     const line=document.querySelector('#edu .edu-line');
     return {info,label:a&&a.labelRect,anchor:a&&a.anchor,title:rect('#title-block'),gear:rect('#knobBtn'),hint:rect('#hint'),
       line:line?{x1:+line.getAttribute('x1'),y1:+line.getAttribute('y1')}:null,
+      intro:rect('#edu .edu-intro'),introVisible:!!document.querySelector('#edu .edu-intro.visible'),
       viewport:{width:innerWidth,height:innerHeight},lang:document.querySelector('#edu')&&document.querySelector('#edu').lang};
   });
 }
@@ -127,7 +155,8 @@ async function layoutState(page){
   const m=state.label,mv=state.viewport,ma=state.anchor;
   const mobileInside=m&&m.x>=12&&m.y>=12&&m.x+m.width<=mv.width-12&&m.y+m.height<=mv.height-12;
   const mobileClear=m&&ma&&!(ma.x>m.x-20&&ma.x<m.x+m.width+20&&ma.y>m.y-20&&ma.y<m.y+m.height+20)&&
-    ![state.title,state.gear,state.hint].filter(Boolean).some((x)=>overlap(m,x));
+    ![state.title,state.gear,state.hint].filter(Boolean).some((x)=>overlap(m,x))&&
+    (!state.introVisible||!state.intro||!overlap(m,state.intro));
   check('layout portrait permanece legível e livre',mobileInside&&mobileClear,JSON.stringify({m,ma}));
 
   await page.evaluate(()=>window.__solInfo.setFlareClock(20));
@@ -168,6 +197,35 @@ async function layoutState(page){
   const cmeEnded=await cmePage.evaluate(()=>window.__solInfo.eduInfo());
   check('narrativa da CME encerra com a ejeção física',!cmeEnded.active.some((x)=>x.type==='cme'));
   await cmePage.close();
+
+  // A mesma estrutura física recebe nomes diferentes conforme o fundo: o
+  // filamento absorve sobre o disco; a proeminência emite além do limbo.
+  const promPage=await browser.newPage({viewport:{width:960,height:600},deviceScaleFactor:1});
+  promPage.setDefaultTimeout(240000);
+  promPage.on('pageerror',(e)=>errors.push('[prom] '+e.message));
+  promPage.on('console',(m)=>{if(m.type()==='error')errors.push('[prom] '+m.text());});
+  await promPage.goto(base+'?edu=1&lang=pt&tier=high&scale=0.25&speed=0.05&cycle=0&fprom=1');
+  await promPage.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduInfo);
+  await promPage.evaluate(()=>window.__solInfo.setRotSpeed(0));
+  const filament=await forceProminenceView(promPage,'filament');
+  const filamentLineClear=filament&&!filament.item.connectorVisible||!!(filament&&segmentDistance(filament.item.disk.x,filament.item.disk.y,filament.item.anchor.x,filament.item.anchor.y,filament.item.lineEnd.x,filament.item.lineEnd.y)>filament.item.disk.r+6);
+  check('filamento usa absorção física e uma única narrativa no disco',!!filament&&filament.info.limit===1&&filament.info.active.length===1&&filament.physical.absorb>=.055&&/Filamento solar/.test(filament.text)&&filamentLineClear,filament?JSON.stringify({slot:filament.index,absorb:filament.physical.absorb,key:filament.item.contentKey,line:filament.item.connectorVisible}):'nenhum filamento elegível');
+  const prominence=await forceProminenceView(promPage,'prominence');
+  const prominenceLineClear=prominence&&!prominence.item.connectorVisible||!!(prominence&&segmentDistance(prominence.item.disk.x,prominence.item.disk.y,prominence.item.anchor.x,prominence.item.anchor.y,prominence.item.lineEnd.x,prominence.item.lineEnd.y)>prominence.item.disk.r+6);
+  check('proeminência usa emissão no limbo sem duplicar o filamento',!!prominence&&Math.max(...prominence.projection.uInt)>=.34&&/Proeminência solar/.test(prominence.text)&&prominenceLineClear,prominence?JSON.stringify({slot:prominence.index,uInt:prominence.projection.uInt,key:prominence.item.contentKey,line:prominence.item.connectorVisible}):'nenhuma proeminência elegível');
+  const promEnglish=await promPage.evaluate(()=>{window.__solInfo.setLang('en');return{info:window.__solInfo.eduInfo(),text:document.querySelector('.edu-label').textContent};});
+  check('a mesma estrutura troca corretamente para inglês',!!prominence&&promEnglish.info.active.length===1&&promEnglish.info.active[0].contentKey==='prominence'&&/Solar prominence/.test(promEnglish.text));
+  if(prominence){
+    await promPage.evaluate((i)=>{
+      window.__solInfo.setLang('pt');
+      const dir=window.__solInfo.promLife()[i].dir,state=window.__solInfo.state();
+      window.__solInfo.setView(Math.atan2(dir[2],dir[0]),Math.acos(Math.max(-1,Math.min(1,dir[1]))),state.fitDist*1.3);
+    },prominence.index);
+    await frame(promPage);await frame(promPage);
+  }
+  const sameStructure=prominence?await promPage.evaluate((i)=>({info:window.__solInfo.eduInfo(),text:document.querySelector('.edu-label').textContent,physical:window.__solInfo.fpromInfo()[i]}),prominence.index):null;
+  check('a câmera renomeia a mesma estrutura sem criar outro cartão',!!sameStructure&&sameStructure.info.active.length===1&&sameStructure.info.active[0].sourceId===prominence.index&&sameStructure.info.active[0].contentKey==='filament'&&sameStructure.physical.absorb>=.055&&/Filamento solar/.test(sameStructure.text));
+  await promPage.close();
 
   const reducedContext=await browser.newContext({viewport:{width:640,height:420},deviceScaleFactor:1,reducedMotion:'reduce'});
   const reduced=await reducedContext.newPage();

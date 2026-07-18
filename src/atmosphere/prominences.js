@@ -514,7 +514,12 @@ export function createProminences(ctx){
       // ciclo de vida como o das regiões ativas: períodos individuais e
       // fases ESCALONADAS (o limbo nunca fica vazio nem lotado de uma vez)
       var ps = { meshes: [mesh, mesh2], period: 70 + srand()*50,
-                 phase: 0, reborn: false };
+                 phase: 0, reborn: false,
+                 // Identidade educativa da estrutura física. O índice do
+                 // promStates é estável; a geração muda apenas quando este
+                 // slot renasce naturalmente em outra linha neutra.
+                 eduGeneration: 0, eduAnnouncedGeneration: -1,
+                 eduHeight: h };
       ps.phase = (i/PROMINENCE_COUNT + srand()*0.08) * ps.period;
       var slot = typeSlot[promType];   // par de slots consecutivos p/ os gêmeos
       [mesh, mesh2].forEach(function(mm, k){

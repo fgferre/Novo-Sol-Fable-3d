@@ -535,7 +535,14 @@ function init(){
       var lx = ((ctx.elapsed + ps.phase) % ps.period) / ps.period;
       ps.env = lifeEnvelope(lx);
       if (lx >= 0.90){
-        if (!ps.reborn){ placeProminence(ps, sampleProminenceAnchor()); ps.reborn = true; }
+        if (!ps.reborn){
+          placeProminence(ps, sampleProminenceAnchor());
+          ps.reborn = true;
+          // A slot agora representa outra estrutura física. Só este
+          // renascimento natural muda a identidade educativa; os hooks de
+          // QA também chamam placeProminence(), mas não devem criar história.
+          ps.eduGeneration++;
+        }
       } else ps.reborn = false;
       // proeminência <-> campo: a intensidade acompanha a força LOCAL do
       // campo das cargas (bFieldJS) na âncora AO LONGO DA VIDA — as
@@ -613,6 +620,37 @@ function init(){
       m.material.uniforms.uIntensity.value = base;
       m.material.uniforms.uTime.value = ctx.elapsed;
     });
+    // Museu Solar: uma proeminência/filamento é UMA estrutura, com uma
+    // identidade estável por geração. Só avaliamos isto com a experiência
+    // ligada e fora do determinístico: sem custo, DOM ou estado educativo no
+    // baseline técnico. O emissor recebe sinais já calculados pelo render
+    // (emissão no limbo e absorção no disco), nunca uma inferência de cor.
+    if (!DET && ctx.EDU_K > .5){
+      if (!ctx.promEduModes){
+        ctx.promEduModes = new Int8Array(promStates.length);
+        ctx.promEduHeights = new Float32Array(promStates.length);
+      }
+      for (var epi=0; epi<promStates.length; epi++){
+        var eps = promStates[epi];
+        var edir = eps.meshes[0].userData.dir;
+        var eEmit = Math.max(eps.meshes[0].material.uniforms.uIntensity.value,
+          eps.meshes[1].material.uniforms.uIntensity.value);
+        var eAbsorb = eps.flat && eps.flat.visible ? eps.flat.material.uniforms.uAbsorb.value : 0;
+        var eFacing = promWorldTmp.copy(edir).applyQuaternion(prominenceGroup.quaternion).dot(camDirN);
+        // O mesmo limiar que a cena usa para tornar a estrutura legível:
+        // emissão fora do limbo; absorção real sobre o disco. A faixa de
+        // sobreposição vira uma única narrativa "filamento e proeminência".
+        var isFilament = eAbsorb >= 0.055;
+        var isProminence = eEmit >= 0.34 && eFacing < 0.28;
+        ctx.promEduModes[epi] = isFilament ? (isProminence ? 3 : 2) : 1;
+        ctx.promEduHeights[epi] = (eps.eduHeight || SUN_RADIUS*0.12) * 0.56;
+        if (eps.eduAnnouncedGeneration !== eps.eduGeneration && eps.env >= 0.98 &&
+            eps.fieldK >= 0.52 && (isFilament || isProminence)){
+          if (ctx.eduEvent('prominence',edir.x,edir.y,edir.z,Math.max(eEmit,eAbsorb),epi,eps.eduGeneration))
+            eps.eduAnnouncedGeneration = eps.eduGeneration;
+        }
+      }
+    }
     // PR6 — despeja o estado dos proxies de proeminência nos atributos das
     // 4 InstancedMesh (após o loop de estados, antes do render)
     ctx.flushProminences();

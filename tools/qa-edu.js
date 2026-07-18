@@ -9,24 +9,40 @@ function check(name,ok,detail){if(!ok)fails++;console.log((ok?'PASS  ':'FAIL  ')
 function overlap(a,b){return a.x<b.x+b.width&&a.x+a.width>b.x&&a.y<b.y+b.height&&a.y+a.height>b.y;}
 function segmentDistance(px,py,x1,y1,x2,y2){const dx=x2-x1,dy=y2-y1,d=dx*dx+dy*dy;if(d<.01)return Math.hypot(px-x1,py-y1);const t=Math.max(0,Math.min(1,((px-x1)*dx+(py-y1)*dy)/d));return Math.hypot(px-(x1+t*dx),py-(y1+t*dy));}
 async function frame(page){await page.evaluate(()=>new Promise((resolve)=>requestAnimationFrame(()=>resolve())));}
+async function waitForLabelSettled(page){
+  await page.waitForFunction(()=>{
+    const item=window.__solInfo.eduInfo().active[0],label=document.querySelector('#edu .edu-label');
+    if(!item||!item.visible||!label)return false;
+    const target=label.style.transform.match(/translate3d\((-?[\d.]+)px,\s*(-?[\d.]+)px/);
+    if(!target)return false;
+    const rect=label.getBoundingClientRect();
+    return Math.abs(rect.x-Number(target[1]))<1&&Math.abs(rect.y-Number(target[2]))<1;
+  },null,{timeout:5000});
+}
 async function forceVisible(page){
   for(let i=0;i<4;i++){
+    // startEvent verifica a visibilidade sincronicamente. Portanto a
+    // câmera precisa chegar ao par magnético ANTES de forceFlarePair()
+    // emitir o flare físico; mirar depois fazia o teste depender da
+    // orientação aleatória do Sol no carregamento.
     await page.evaluate((n)=>{
-      const dir=window.__solInfo.forceFlarePair(n),state=window.__solInfo.state();
-      // A prova é do cartão/redução de movimento, não da sorte de uma
-      // região já estar na frente sob SwiftShader. A mesma fonte física é
-      // enquadrada para que o flare tenha uma chance real de ser lido.
-      window.__solInfo.setView(Math.atan2(dir[2],dir[0]),Math.acos(Math.max(-1,Math.min(1,dir[1]))),state.fitDist*1.3);
+      const dir=window.__solInfo.eduSpotRegion(n).dir,state=window.__solInfo.state();
+      // É a mesma direção de ponto médio usada por forceFlarePair().
+      // `dir` é local ao Sol; a âncora educativa aplica `rotY` antes de
+      // medir a frente. A câmera precisa receber essa mesma direção mundo.
+      window.__solInfo.setView(Math.atan2(dir[2],dir[0])-state.rotY,Math.acos(Math.max(-1,Math.min(1,dir[1]))),state.fitDist*1.3);
     },i);
     await frame(page);await frame(page);
+    await page.evaluate((n)=>window.__solInfo.forceFlarePair(n),i);
+    await frame(page);
     try{
       await page.waitForFunction(()=>{const info=window.__solInfo.eduInfo(),item=info.active[0];return !!(item&&item.type==='flare'&&item.visible);},null,{timeout:12000});
     }catch(_){continue;}
     const info=await page.evaluate(()=>window.__solInfo.eduInfo());
     if(info.active.length&&info.active[0].type==='flare'&&info.active[0].visible){
-      // Aguarda a entrada editorial (máx. 650 ms) assentar antes de medir
-      // colisões; o estado semântico já estava ativo no frame anterior.
-      await page.waitForTimeout(700);
+      // A duração da transição depende do compositor; esperamos a posição
+      // DOM final, não um número arbitrário de milissegundos.
+      await waitForLabelSettled(page);
       return {index:i,info};
     }
   }
@@ -276,7 +292,7 @@ async function layoutState(page){
 
   await page.setViewportSize({width:390,height:844});
   await frame(page);
-  await page.waitForTimeout(700);
+  await waitForLabelSettled(page);
   state=await layoutState(page);
   const m=state.label,mv=state.viewport,ma=state.anchor;
   const mobileInside=m&&m.x>=12&&m.y>=12&&m.x+m.width<=mv.width-12&&m.y+m.height<=mv.height-12;

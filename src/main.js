@@ -29,6 +29,7 @@ import { createGpuProfile } from './debug/gpuprofile.js';
 import { createDiag } from './debug/diag.js';
 import { createRenderer, createRenderInfra, createRTType } from './core/renderer.js';
 import { createEdu } from './edu/edu.js';
+import { EDU_CONTENT } from './edu/content.js';
 import { createEduCollection } from './edu/collection.js';
 import { createEduTour } from './edu/tour.js';
 
@@ -358,10 +359,11 @@ function init(){
       flareEnvGrad = ctx.flareEnvGrad, surfFlareDir = ctx.surfFlareDir,
       flareTanDir = ctx.flareTanDir, flarePerpDir = ctx.flarePerpDir;
 
+  // Fonte única do hint: content.js (idioma resolvido pelo config). O texto
+  // estático do index.html é só fallback no-JS; edu.js retoca ao trocar idioma.
   if (hintEl) {
-    hintEl.textContent = hasTouch
-      ? 'arraste para girar · pince aproxima · toque duplo enquadra'
-      : 'arraste para girar · scroll aproxima · duplo clique enquadra';
+    var hintCopy = EDU_CONTENT[ctx.eduLang === 'en' ? 'en' : 'pt'];
+    hintEl.textContent = hasTouch ? hintCopy.touchHint : hintCopy.desktopHint;
   }
   setTimeout(function(){ if(hintEl) hintEl.style.opacity='0'; }, 6000);
 

@@ -12,11 +12,6 @@ export function createEdu(ctx){
   var title = document.querySelector('#title-block h1');
   var subtitle = document.querySelector('#title-block p');
   var hint = document.getElementById('hint');
-  var originalChrome = {
-    title:title ? title.textContent : '',
-    subtitle:subtitle ? subtitle.textContent : '',
-    hint:hint ? hint.textContent : ''
-  };
 
   var style = document.createElement('style');
   style.id = 'eduStyle';
@@ -141,17 +136,13 @@ export function createEdu(ctx){
   function isGlobal(type){ return type === 'cycleMaximum' || type === 'cycleMinimum'; }
   function eventPriority(type){ return type === 'cme' ? 100 : type === 'flare' ? 90 : type === 'prominence' ? 70 : isGlobal(type) ? 65 : 60; }
   function syncChrome(){
+    // Marca única "SOL — uma estrela viva": ligar/desligar descobertas não
+    // rebrandiza a página; só o idioma muda o chrome.
     var c = copy();
     document.documentElement.lang = lang === 'en' ? 'en' : 'pt-BR';
-    if (enabled){
-      if (title) title.textContent = '☉ ' + c.brand;
-      if (subtitle) subtitle.textContent = c.brandTag;
-      if (hint) hint.textContent = ctx.hasTouch ? c.touchHint : c.desktopHint;
-    } else {
-      if (title) title.textContent = originalChrome.title;
-      if (subtitle) subtitle.textContent = originalChrome.subtitle;
-      if (hint) hint.textContent = originalChrome.hint;
-    }
+    if (title) title.textContent = '☉ ' + c.brand;
+    if (subtitle) subtitle.textContent = c.brandTag;
+    if (hint) hint.textContent = ctx.hasTouch ? c.touchHint : c.desktopHint;
   }
   function renderEvent(){
     var eventText = eventCopy();

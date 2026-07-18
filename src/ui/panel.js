@@ -342,8 +342,19 @@ export function createPanel(ctx){
     if(reason==='autotune-disabled')return 'desativado pelo ajuste automático';
     return '';
   }
+  var TOUR_BLOCK_TITLE='indisponível durante a visita guiada';
+  function blockActionForTour(btn,blocked){
+    if(!btn)return;
+    // PR-2: durante a visita guiada as prévias ficam indisponíveis — a
+    // visita já coreografa flare/CME/ciclo e um disparo manual competiria
+    // com a etapa em leitura. O refreshAvailability (400ms com o painel
+    // aberto) desfaz o bloqueio assim que a visita termina.
+    if(blocked){btn.disabled=true;btn.title=TOUR_BLOCK_TITLE;}
+    else if(btn.title===TOUR_BLOCK_TITLE)btn.title='';
+  }
   function syncAction(key,e,info){
     if(!e.action)return;
+    var tourBlocked=!!(ctx.eduTourInfo&&ctx.eduTourInfo().active);
     if(key==='cycle'){
       var evState=ctx.canPreviewSolarMax&&ctx.canPreviewSolarMax();
       var evOk=!!(evState&&evState.ok);
@@ -352,6 +363,7 @@ export function createPanel(ctx){
         var evMsg=previewMessage(evState.reason);
         if(evMsg&&(!e.state.textContent||evState.reason==='event-active'))e.state.textContent=evMsg;
       }
+      blockActionForTour(e.action,tourBlocked);blockActionForTour(e.action2,tourBlocked);
       return;
     }
     if(key==='dof'){
@@ -372,6 +384,7 @@ export function createPanel(ctx){
       if(msg&&(!e.state.textContent||state.reason==='event-active'||state.reason==='cooldown'||state.reason==='not-visible'))
         e.state.textContent=msg;
     }
+    blockActionForTour(e.action,tourBlocked);
   }
   function syncEntry(key, info){
     var e = entries[key]; if (!e) return;

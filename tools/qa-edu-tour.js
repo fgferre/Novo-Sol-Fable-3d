@@ -48,13 +48,25 @@ async function cardState(page){
   check('chip da visita é visível, tocável e não cobre o disco',
     chrome.tour.chip.visible&&chrome.tour.chip.rect.height>=44&&chrome.tour.chip.rect.width>=44&&!overlap(chrome.tour.chip.rect,chrome.tour.diskRect),
     JSON.stringify(chrome.tour.chip));
+  // PR-2 — restauração suave da pose: registramos theta/phi ANTES da visita
+  // iniciada pelo chip, deixamos a etapa de abertura assentar, saímos no
+  // meio e provamos que a câmera volta sozinha (sem teleporte) à pose de
+  // entrada. O mesmo fluxo cobre o contrato do chip (cede/não insiste).
+  const poseBefore=await page.evaluate(()=>window.__solInfo.state());
   await page.click('#eduTourChip');
   await page.waitForFunction(()=>window.__solInfo.eduTourInfo().active);
   const chipStart=await page.evaluate(()=>window.__solInfo.eduTourInfo().chip);
   check('chip inicia a visita e cede o palco',!chipStart.visible,JSON.stringify(chipStart));
+  await waitStep(page,'surface');
   await page.click('#eduTourExit');await page.waitForFunction(()=>!window.__solInfo.eduTourInfo().active);
   const chipAfter=await page.evaluate(()=>window.__solInfo.eduTourInfo().chip);
   check('depois da primeira visita o chip não volta a insistir',!chipAfter.visible,JSON.stringify(chipAfter));
+  await page.waitForTimeout(2000);
+  const poseAfter=await page.evaluate(()=>window.__solInfo.state());
+  check('sair no meio devolve a pose suavemente à de entrada',
+    Math.abs(poseAfter.theta-poseBefore.theta)<0.05&&Math.abs(poseAfter.phi-poseBefore.phi)<0.05,
+    JSON.stringify({before:{theta:+poseBefore.theta.toFixed(4),phi:+poseBefore.phi.toFixed(4)},
+      after:{theta:+poseAfter.theta.toFixed(4),phi:+poseAfter.phi.toFixed(4)}}));
 
   await page.click('#knobBtn');await page.click('#eduTourBtn');
   await page.waitForFunction(()=>window.__solInfo.eduTourInfo().active);
@@ -109,7 +121,30 @@ async function cardState(page){
   check('sair devolve o modo livre e limpa os empréstimos temporários',!finished.tour.active&&!finished.cycle.event.on&&
     !finished.spots.overrideOwner&&!finished.cme.overrideOwner&&!finished.loops.overrideOwner,JSON.stringify(finished));
   check('console permanece limpo na visita',errors.length===0,errors.slice(0,3).join(' | '));
+  // PR-2 — telemetria: nenhuma exceção de física pode ter sido engolida em
+  // silêncio durante a caminhada inteira (ring agregado em core/config.js).
+  const health=await page.evaluate(()=>window.__solInfo.eduHealth());
+  check('nenhuma falha de física engolida',health.faults.length===0,JSON.stringify(health.faults.slice(0,4)));
   fs.writeFileSync(path.join(outDir,'evidence.json'),JSON.stringify({viewport:{width:390,height:844},steps:evidence,errors:errors},null,2));
+
+  // PR-2 — paisagem de telefone (844×390): o cartão precisa usar o layout
+  // mobile (nunca o desktop de width 330/left 22) e ficar fora do disco.
+  const land=await browser.newContext({viewport:{width:844,height:390},deviceScaleFactor:1,isMobile:true,hasTouch:true});
+  const lp=await land.newPage();lp.setDefaultTimeout(240000);
+  await lp.goto(base+'?edu=1&lang=pt&tier=high&scale=0.25&speed=3&cycle=1');
+  await lp.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduTourInfo);
+  await lp.evaluate(()=>window.__solInfo.eduTourStart());
+  await lp.waitForFunction(()=>{const t=window.__solInfo.eduTourInfo();return t.active&&t.stepId==='surface'&&t.settled;});
+  const landUi=await lp.evaluate(()=>{
+    const e=document.querySelector('#eduTour .tour-card'),r=e.getBoundingClientRect();
+    return {card:{x:r.x,y:r.y,width:r.width,height:r.height},disk:window.__solInfo.eduTourInfo().diskRect};
+  });
+  check('paisagem usa o layout mobile do cartão',
+    landUi.card.width<700&&landUi.card.x<=20&&!(Math.round(landUi.card.width)===330&&Math.round(landUi.card.x)===22),
+    JSON.stringify(landUi.card));
+  check('paisagem mantém o cartão fora do disco',!overlap(landUi.card,landUi.disk),JSON.stringify(landUi));
+  await land.close();
+
   await context.close();await browser.close();browser=null;
   if(fails){console.log('QA TOUR: '+fails+' FALHA(S)');process.exitCode=1;}else console.log('QA TOUR: tudo verde · evidência em '+path.join(outDir,'evidence.json'));
 })().catch(async(e)=>{console.error(e);if(browser)await browser.close();process.exitCode=2;});

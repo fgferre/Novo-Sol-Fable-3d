@@ -112,6 +112,10 @@ export function createActivity(ctx){
     return defLat + (hemi * lat - defLat) * d;
   }
   function placePair(ps){
+    // Uma nova posição equivale a uma nova região magnética física. A
+    // geração dá identidade estável à descoberta educativa sem depender
+    // dos pontos visuais auxiliares de manchas.
+    ps.eduGeneration++;
     // rejeição: regiões ativas independentes não nascem sobrepostas —
     // exige distância angular mínima dos líderes das outras regiões
     var lat, lon, lead;
@@ -165,7 +169,8 @@ export function createActivity(ctx){
       var ps = {
         lead: lead, foll: foll, baseQ: q, hemi: hemi,
         period: 150 + srand()*90,
-        phase: 0, reborn: false, polSign: 1
+        phase: 0, reborn: false, polSign: 1,
+        eduGeneration: -1, eduAnnouncedGeneration: -1
       };
       ps.phase = (i/4 + srand()*0.1) * ps.period;
       placePair(ps);

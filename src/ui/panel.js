@@ -2,6 +2,8 @@
 // central. O painel exibe o valor nominal; overrides/condições entram na
 // linha curta de estado sem tomar o lugar do controle.
 
+import { EDU_CONTENT } from '../edu/content.js';
+
 export function createPanel(ctx){
   var hudEl = ctx.hudEl, TIER = ctx.TIER, TIER_ORDER = ctx.TIER_ORDER;
   var defs = ctx.CONTROL_SCHEMA.filter(function(d){ return !d.hidden; });
@@ -57,6 +59,21 @@ export function createPanel(ctx){
     '#knobPanel .choiceBtns button{min-width:42px;padding:5px 8px;border:0;border-radius:7px;cursor:pointer;',
     ' background:transparent;color:rgba(233,228,218,.62);font:600 10px/1 inherit;letter-spacing:.08em;transition:background .25s,color .25s}',
     '#knobPanel .choiceBtns button.cur{background:rgba(255,140,50,.30);color:#ffd9a8}',
+    '#knobPanel .collectionToggle{display:flex;align-items:center;justify-content:space-between;width:100%;min-height:44px;',
+    ' margin:8px 0 0;padding:8px 10px;border-radius:10px;cursor:pointer;text-align:left;',
+    ' border:1px solid rgba(255,170,90,.28);background:rgba(255,140,50,.08);color:#ffd9a8;font:600 11px/1.25 inherit}',
+    '#knobPanel .collectionToggle::after{content:"›";font-size:20px;line-height:1;transform:rotate(0);transition:transform .2s ease}',
+    '#knobPanel .collectionToggle[aria-expanded="true"]::after{transform:rotate(90deg)}',
+    '#knobPanel .collectionList{margin:7px 0 3px;border-left:1px solid rgba(255,170,90,.18);padding-left:8px}',
+    '#knobPanel .collectionItem{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;min-height:44px;',
+    ' padding:7px 8px;margin:2px 0;border:0;border-radius:8px;cursor:pointer;text-align:left;background:transparent;color:#f4e9db;font:inherit}',
+    '#knobPanel .collectionItem:hover{background:rgba(255,255,255,.06)}#knobPanel .collectionItem:disabled{cursor:default;color:rgba(233,228,218,.42)}',
+    '#knobPanel .collectionItemTitle{font-size:11.5px;line-height:1.25}#knobPanel .collectionItemState{font-size:9.5px;line-height:1.2;color:rgba(255,190,130,.72);text-align:right}',
+    '#knobPanel .collectionItem:disabled .collectionItemState{color:rgba(233,228,218,.34)}',
+    '#knobPanel .collectionDetail{margin:8px 0 6px;padding:10px 11px;border-radius:9px;background:rgba(0,0,0,.20);border-top:1px solid rgba(255,179,103,.32)}',
+    '#knobPanel .collectionDetail[hidden]{display:none}#knobPanel .collectionDetailHead{font-size:9.5px;font-weight:700;letter-spacing:.14em;color:#ffbf7d}',
+    '#knobPanel .collectionDetailTerm{margin-top:4px;font-size:15px;line-height:1.12;color:#fff6e9}#knobPanel .collectionDetailBody{margin-top:6px;font-size:11px;line-height:1.45;color:rgba(255,242,225,.84)}',
+    '#knobPanel .collectionClear{width:100%;min-height:44px;margin:7px 0 0;border:0;background:transparent;color:rgba(233,228,218,.50);font:11px/1 inherit;cursor:pointer;text-decoration:underline;text-underline-offset:3px}',
     '#knobPanel .sw{position:relative;width:40px;height:22px;border:0;padding:0;border-radius:12px;cursor:pointer;',
     ' background:rgba(255,255,255,.14);transition:background .25s}',
     '#knobPanel .sw.on{background:rgba(255,140,50,.75)}',
@@ -123,9 +140,85 @@ export function createPanel(ctx){
         langButtons[key].setAttribute('aria-pressed',String(current));
       });
     }
+    var renderCollection=function(){};
     syncLanguage(ctx.eduLang==='en'?'en':'pt');
-    ctx.onEduLanguageChange=syncLanguage;
+    ctx.onEduLanguageChange=function(code){ syncLanguage(code); renderCollection(); };
     langRow.appendChild(langLabel);langRow.appendChild(langChoices);panel.appendChild(langRow);
+
+    // A coleção é deliberadamente uma leitura calma dentro dos ajustes: ela
+    // não reaponta a câmera, não recria o fenômeno e não revela o que ainda
+    // não foi observado. Cada botão útil tem área de toque de pelo menos 44px.
+    if(ctx.eduCollectionInfo){
+      var collectionSec=document.createElement('div'); collectionSec.className='sec'; collectionSec.id='eduCollectionSec'; panel.appendChild(collectionSec);
+      var collectionRow=document.createElement('div'); collectionRow.id='eduCollectionRow';
+      var collectionToggle=document.createElement('button'); collectionToggle.type='button'; collectionToggle.id='eduCollectionToggle'; collectionToggle.className='collectionToggle';
+      var collectionList=document.createElement('div'); collectionList.id='eduCollectionList'; collectionList.hidden=true;
+      collectionToggle.setAttribute('aria-expanded','false'); collectionToggle.setAttribute('aria-controls',collectionList.id);
+      var collectionExpanded=false, collectionSelected='';
+      var collectionReader=document.createElement('article'); collectionReader.id='eduCollectionReader'; collectionReader.className='collectionDetail'; collectionReader.hidden=true;
+      collectionReader.tabIndex=-1; collectionReader.setAttribute('role','region'); collectionReader.setAttribute('aria-live','polite');
+      var readerHead=document.createElement('div'); readerHead.className='collectionDetailHead';
+      var readerTerm=document.createElement('div'); readerTerm.className='collectionDetailTerm';
+      var readerBody=document.createElement('div'); readerBody.className='collectionDetailBody';
+      collectionReader.appendChild(readerHead);collectionReader.appendChild(readerTerm);collectionReader.appendChild(readerBody);
+      var collectionClear=document.createElement('button'); collectionClear.type='button'; collectionClear.id='eduCollectionClear'; collectionClear.className='collectionClear';
+      function collectionText(){
+        var en=ctx.eduLang==='en';
+        return en ? {section:'collection',open:'Collection',of:'of',observed:'observed',notSeen:'Not observed yet',views:'views seen',clear:'Clear observed discoveries',confirm:'Clear the discoveries observed on this device? This cannot be undone.'} :
+          {section:'coleção',open:'Coleção',of:'de',observed:'observadas',notSeen:'Ainda não observada',views:'vistas observadas',clear:'Limpar descobertas observadas',confirm:'Limpar as descobertas observadas neste aparelho? Esta ação não pode ser desfeita.'};
+      }
+      function collectionContentKey(id,item){
+        if(id==='prominence') return item.views.filament && item.views.prominence ? 'prominenceFilament' : item.views.filament ? 'filament' : 'prominence';
+        if(id==='cycle') return item.views.cycleMaximum && item.views.cycleMinimum ? 'cycle' : item.views.cycleMaximum ? 'cycleMaximum' : 'cycleMinimum';
+        return id;
+      }
+      function collectionTerm(id,item,content){
+        if(id==='prominence') return content.prominenceFilament.term;
+        if(id==='cycle') return content.cycle.term;
+        return content[collectionContentKey(id,item)].term;
+      }
+      renderCollection=function(){
+        var info=ctx.eduCollectionInfo(), text=collectionText(), content=EDU_CONTENT[ctx.eduLang==='en'?'en':'pt'];
+        collectionSec.textContent=text.section;
+        collectionToggle.textContent=text.open+' · '+info.discoveredFamilies+' '+text.of+' '+info.totalFamilies+' '+text.observed;
+        collectionToggle.setAttribute('aria-label',collectionToggle.textContent);
+        collectionToggle.setAttribute('aria-expanded',String(collectionExpanded));
+        collectionList.hidden=!collectionExpanded;
+        collectionList.textContent='';
+        info.order.forEach(function(id){
+          var item=info.items[id], row=document.createElement('button'); row.type='button'; row.className='collectionItem';
+          row.disabled=!item.seen; row.dataset.collection=id; row.id='eduCollectionItem-'+id;
+          var title=document.createElement('span'); title.className='collectionItemTitle'; title.textContent=collectionTerm(id,item,content);
+          var state=document.createElement('span'); state.className='collectionItemState';
+          state.textContent=item.seen ? (item.totalViews>1 ? item.discoveredViews+'/'+item.totalViews+' '+text.views : text.observed) : text.notSeen;
+          row.setAttribute('aria-label',title.textContent+'. '+state.textContent);
+          row.appendChild(title);row.appendChild(state);
+          row.addEventListener('click',function(){ collectionSelected=id; renderCollection(); collectionReader.focus(); });
+          collectionList.appendChild(row);
+        });
+        if(collectionSelected&&info.items[collectionSelected]&&info.items[collectionSelected].seen){
+          var selected=info.items[collectionSelected], key=collectionContentKey(collectionSelected,selected), detail=content[key];
+          readerHead.textContent=detail.headline; readerTerm.textContent=detail.term; readerBody.textContent=detail.body;
+          collectionReader.setAttribute('aria-label',detail.term);
+          collectionReader.hidden=false;
+        } else collectionReader.hidden=true;
+        collectionList.appendChild(collectionReader);
+        collectionClear.hidden=!collectionExpanded||info.discoveredFamilies===0;
+        collectionClear.textContent=text.clear;
+      };
+      collectionToggle.addEventListener('click',function(){ collectionExpanded=!collectionExpanded; renderCollection(); });
+      collectionClear.addEventListener('click',function(){
+        var text=collectionText();
+        if(window.confirm(text.confirm)){
+          collectionSelected='';
+          if(ctx.clearEduCollection)ctx.clearEduCollection();
+          renderCollection();
+        }
+      });
+      collectionRow.appendChild(collectionToggle);collectionRow.appendChild(collectionList);collectionRow.appendChild(collectionClear);panel.appendChild(collectionRow);
+      ctx.onEduCollectionChange=function(){ renderCollection(); };
+      renderCollection();
+    }
   }
 
   var entries = Object.create(null), lastSection = '';

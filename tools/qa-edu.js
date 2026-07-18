@@ -14,7 +14,7 @@ async function forceVisible(page){
     await page.evaluate((n)=>window.__solInfo.forceFlarePair(n),i);
     await frame(page);
     const info=await page.evaluate(()=>window.__solInfo.eduInfo());
-    if(info.active.length&&info.active[0].visible){
+    if(info.active.length&&info.active[0].type==='flare'&&info.active[0].visible){
       // Aguarda a entrada editorial (máx. 650 ms) assentar antes de medir
       // colisões; o estado semântico já estava ativo no frame anterior.
       await page.waitForTimeout(700);
@@ -74,6 +74,61 @@ async function forceProminenceView(page,view){
   }
   return null;
 }
+async function forceSpotDiscovery(page){
+  await page.evaluate(()=>{
+    window.__solInfo.setControl('edu',0,{persist:false});
+    window.__solInfo.setRotSpeed(0);
+    // Retira as proeminências da disputa: a fonte da prova deve ser a
+    // região magnética real, não outra descoberta já madura.
+    for(let j=0;j<window.__solInfo.promLife().length;j++)window.__solInfo.setPromLife(j,.01);
+    window.__solInfo.setCyclePhase(.5,true);
+  });
+  await frame(page);
+  for(let i=0;i<4;i++){
+    const candidate=await page.evaluate((i)=>window.__solInfo.eduSpotRegion(i),i);
+    if(candidate.strength<.70)continue;
+    await page.evaluate(({i,dir})=>{
+      const state=window.__solInfo.state();
+      window.__solInfo.setView(Math.atan2(dir[2],dir[0]),Math.acos(Math.max(-1,Math.min(1,dir[1]))),state.fitDist*1.3);
+      window.__solInfo.setControl('edu',1,{persist:false});
+    },{i,dir:candidate.dir});
+    await frame(page);await frame(page);
+    const state=await page.evaluate((i)=>({spot:window.__solInfo.eduSpotRegion(i),info:window.__solInfo.eduInfo(),text:document.querySelector('.edu-label').textContent}),i);
+    const item=state.info.active[0];
+    if(item&&item.type==='spots'&&item.sourceId===i&&item.visible)return {index:i,item,...state};
+  }
+  return null;
+}
+async function forceCycleDiscovery(page,kind){
+  await page.evaluate((kind)=>{
+    window.__solInfo.setControl('edu',1,{persist:false});
+    window.__solInfo.setRotSpeed(0);
+    // Mantém a prova focada no estado global: o cartão só poderá nascer
+    // depois de o relógio físico ter alcançado o hold do ciclo.
+    for(let j=0;j<window.__solInfo.promLife().length;j++)window.__solInfo.setPromLife(j,.01);
+    if(kind==='maximum')window.__solInfo.forceSolarMax();
+    else window.__solInfo.forceSolarMin();
+  },kind);
+  await page.waitForFunction(()=>{
+    const event=window.__solInfo.cycleInfo().event;
+    return event&&event.state==='ramp';
+  },null,{timeout:240000});
+  const rampInfo=await page.evaluate(()=>window.__solInfo.eduInfo());
+  await page.waitForFunction((kind)=>{
+    const cycle=window.__solInfo.cycleInfo();
+    const atTarget=kind==='maximum' ? Math.abs(cycle.phase-.5)<.04 : cycle.phase<.04||cycle.phase>.96;
+    return cycle.event&&cycle.event.state==='hold'&&atTarget;
+  },kind,{timeout:240000});
+  await page.evaluate(()=>window.__solInfo.setControl('edu',1,{persist:false}));
+  await page.waitForFunction((kind)=>{
+    const item=window.__solInfo.eduInfo().active[0];
+    return item&&item.type===(kind==='maximum'?'cycleMaximum':'cycleMinimum')&&item.global&&item.visible;
+  },kind,{timeout:240000});
+  // A semântica já existe no frame anterior; aguarda apenas a transição de
+  // entrada acabar antes de medir a posição editorial na tela.
+  await page.waitForTimeout(700);
+  return page.evaluate((rampInfo)=>({rampInfo:rampInfo,info:window.__solInfo.eduInfo(),cycle:window.__solInfo.cycleInfo(),text:document.querySelector('.edu-label').textContent}),rampInfo);
+}
 async function layoutState(page){
   return page.evaluate(()=>{
     const info=window.__solInfo.eduInfo(),a=info.active[0];
@@ -92,14 +147,77 @@ async function layoutState(page){
   // Mesmo ?edu=1 não pode atravessar a guarda determinística.
   const det=await browser.newPage({viewport:{width:640,height:400},deviceScaleFactor:1});
   det.setDefaultTimeout(180000);
+  await det.addInitScript(()=>localStorage.setItem('solEduCollection.v1','{"sentinel":true}'));
   det.on('pageerror',(e)=>errors.push('[det] '+e.message));
   det.on('console',(m)=>{if(m.type()==='error')errors.push('[det] '+m.text());});
   await det.goto(base+'?det=1&seed=7&hold=2&tier=low&scale=0.25&edu=1');
   await det.waitForFunction(()=>window.__solInfo&&window.__solInfo.frame>4);
   const inert=await det.evaluate(()=>({info:__solInfo.eduInfo(),root:!!document.querySelector('#edu'),style:!!document.querySelector('#eduStyle'),
-    panelSwitch:!!document.querySelector('#eduSwitchRow'),langControl:!!document.querySelector('#eduLangRow'),emit:__solInfo.eduEmit('flare'),force:__solInfo.forceFlarePair(0)}));
-  check('det permanece totalmente sem camada educativa',!inert.info.enabled&&!inert.root&&!inert.style&&!inert.panelSwitch&&!inert.langControl&&!inert.emit);
+    panelSwitch:!!document.querySelector('#eduSwitchRow'),langControl:!!document.querySelector('#eduLangRow'),collectionRow:!!document.querySelector('#eduCollectionRow'),
+    collection:__solInfo.eduCollectionInfo(),collectionStored:localStorage.getItem('solEduCollection.v1'),emit:__solInfo.eduEmit('flare'),force:__solInfo.forceFlarePair(0)}));
+  check('det permanece totalmente sem camada educativa',!inert.info.enabled&&!inert.root&&!inert.style&&!inert.panelSwitch&&!inert.langControl&&!inert.collectionRow&&!inert.collection.available&&inert.collectionStored==='{"sentinel":true}'&&!inert.emit);
   await det.close();
+
+  // Coleção: memória separada de solKnobs, gravada apenas após uma
+  // descoberta física visível. O contexto isolado impede que itens de
+  // cenários anteriores escondam uma regressão de persistência.
+  const collectionContext=await browser.newContext({viewport:{width:960,height:600},deviceScaleFactor:1});
+  const collectionPage=await collectionContext.newPage();
+  collectionPage.setDefaultTimeout(240000);
+  collectionPage.on('pageerror',(e)=>errors.push('[collection] '+e.message));
+  collectionPage.on('console',(m)=>{if(m.type()==='error')errors.push('[collection] '+m.text());});
+  await collectionPage.goto(base+'?edu=0&lang=pt&tier=low&scale=0.25&speed=0.05&cycle=0&fprom=0&spots=0&cme=0');
+  await collectionPage.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduCollectionInfo);
+  await collectionPage.evaluate(()=>{
+    localStorage.setItem('solKnobs',JSON.stringify({qaSentinel:17}));
+    __solInfo.clearEduCollection();__solInfo.setRotSpeed(0);
+    // A coleção deste cenário mede apenas o flare. As proeminências são
+    // reais e normalmente visíveis mesmo com fprom=0, então as deixamos
+    // encerrar enquanto a experiência educativa ainda está desligada.
+    for(let j=0;j<__solInfo.promLife().length;j++)__solInfo.setPromLife(j,.01);
+  });
+  await frame(collectionPage);await frame(collectionPage);
+  const collectionStart=await collectionPage.evaluate(()=>({info:__solInfo.eduCollectionInfo(),store:localStorage.getItem('solEduCollection.v1')}));
+  await collectionPage.evaluate(()=>__solInfo.forceFlarePair(0));
+  await frame(collectionPage);
+  const collectionHidden=await collectionPage.evaluate(()=>__solInfo.eduCollectionInfo());
+  await collectionPage.evaluate(()=>__solInfo.setControl('edu',1,{persist:false}));
+  const collectionFlare=await forceVisible(collectionPage);
+  const collectionObserved=await collectionPage.evaluate(()=>({info:__solInfo.eduCollectionInfo(),store:localStorage.getItem('solEduCollection.v1')}));
+  check('coleção só registra descoberta física já visível',collectionStart.info.discoveredFamilies===0&&collectionStart.store===null&&collectionHidden.discoveredFamilies===0&&!!collectionFlare&&collectionObserved.info.items.flare.seen&&!!collectionObserved.store);
+  // Fecha a cena educativa antes de abrir o leitor: assim uma eventual
+  // descoberta espontânea não mascara a garantia de que o leitor é estático.
+  await collectionPage.evaluate(()=>__solInfo.setControl('edu',0,{persist:false}));
+  await frame(collectionPage);
+  await collectionPage.click('#knobBtn');await collectionPage.waitForTimeout(650);
+  await collectionPage.click('#eduCollectionToggle');
+  await collectionPage.click('#eduCollectionItem-flare');
+  const collectionReaderPt=await collectionPage.evaluate(()=>{
+    var toggle=document.querySelector('#eduCollectionToggle'), item=document.querySelector('#eduCollectionItem-flare'), reader=document.querySelector('#eduCollectionReader');
+    return {expanded:toggle.getAttribute('aria-expanded'),text:reader.textContent,focus:document.activeElement.id,active:__solInfo.eduInfo().active.length,
+      toggleH:toggle.getBoundingClientRect().height,itemH:item.getBoundingClientRect().height};
+  });
+  check('coleção relê sem recriar cartão ou âncora falsa',collectionReaderPt.expanded==='true'&&/Flare solar/.test(collectionReaderPt.text)&&collectionReaderPt.focus==='eduCollectionReader'&&collectionReaderPt.active===0&&collectionReaderPt.toggleH>=44&&collectionReaderPt.itemH>=44,JSON.stringify(collectionReaderPt));
+  await collectionPage.click('#edu-lang-en');
+  const collectionEnglish=await collectionPage.evaluate(()=>({text:document.querySelector('#eduCollectionReader').textContent,info:__solInfo.eduCollectionInfo()}));
+  check('coleção troca a releitura para inglês sem duplicar descoberta',/Solar flare/.test(collectionEnglish.text)&&collectionEnglish.info.discoveredFamilies===1&&collectionEnglish.info.discoveredViews===1,JSON.stringify({text:collectionEnglish.text,info:collectionEnglish.info}));
+  const collectionPersistedPage=await collectionContext.newPage();
+  collectionPersistedPage.setDefaultTimeout(240000);
+  await collectionPersistedPage.goto(base+'?edu=0&lang=pt&tier=low&scale=0.25&speed=0.05&cycle=0&fprom=0&spots=0&cme=0');
+  await collectionPersistedPage.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduCollectionInfo);
+  const collectionPersisted=await collectionPersistedPage.evaluate(()=>({info:__solInfo.eduCollectionInfo(),active:__solInfo.eduInfo().active.length}));
+  check('coleção persiste entre visitas sem reabrir um evento ao vivo',collectionPersisted.info.items.flare.seen&&collectionPersisted.active===0);
+  await collectionPersistedPage.close();
+  await collectionPage.setViewportSize({width:390,height:844});await frame(collectionPage);
+  const collectionMobile=await collectionPage.evaluate(()=>({clearH:document.querySelector('#eduCollectionClear').getBoundingClientRect().height,clearVisible:!document.querySelector('#eduCollectionClear').hidden}));
+  check('coleção mantém alvos de toque no iPhone',collectionMobile.clearVisible&&collectionMobile.clearH>=44,JSON.stringify(collectionMobile));
+  const knobsBeforeClear=await collectionPage.evaluate(()=>localStorage.getItem('solKnobs'));
+  collectionPage.once('dialog',(d)=>d.dismiss());await collectionPage.click('#eduCollectionClear');await collectionPage.waitForTimeout(80);
+  const collectionKept=await collectionPage.evaluate(()=>__solInfo.eduCollectionInfo());
+  collectionPage.once('dialog',(d)=>d.accept());await collectionPage.click('#eduCollectionClear');await collectionPage.waitForTimeout(80);
+  const collectionCleared=await collectionPage.evaluate(()=>({info:__solInfo.eduCollectionInfo(),store:localStorage.getItem('solEduCollection.v1'),knobs:localStorage.getItem('solKnobs')}));
+  check('limpar coleção pede confirmação e preserva ajustes',collectionKept.items.flare.seen&&collectionCleared.info.discoveredFamilies===0&&collectionCleared.store===null&&collectionCleared.knobs===knobsBeforeClear);
+  await collectionContext.close();
 
   const page=await browser.newPage({viewport:{width:960,height:600},deviceScaleFactor:1});
   page.setDefaultTimeout(240000);
@@ -176,8 +294,8 @@ async function layoutState(page){
   await lowCme.evaluate(()=>window.__solInfo.setRotSpeed(0));
   const lowLaunch=await lowCme.evaluate(()=>({forced:__solInfo.forceCME(0),cme:__solInfo.cmeInfo()}));
   await frame(lowCme);
-  const lowEdu=await lowCme.evaluate(()=>__solInfo.eduInfo());
-  check('CME não inventa descoberta em tier sem geometria',!lowLaunch.forced&&lowLaunch.cme.steps===0&&!lowEdu.active.some((x)=>x.type==='cme')&&!lowEdu.queued.some((x)=>x.type==='cme'));
+  const lowEdu=await lowCme.evaluate(()=>({info:__solInfo.eduInfo(),collection:__solInfo.eduCollectionInfo()}));
+  check('CME não inventa descoberta em tier sem geometria',!lowLaunch.forced&&lowLaunch.cme.steps===0&&!lowEdu.info.active.some((x)=>x.type==='cme')&&!lowEdu.info.queued.some((x)=>x.type==='cme')&&!lowEdu.collection.items.cme.seen);
   await lowCme.close();
 
   const cmePage=await browser.newPage({viewport:{width:960,height:600},deviceScaleFactor:1});
@@ -188,10 +306,10 @@ async function layoutState(page){
   await cmePage.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduInfo);
   await cmePage.evaluate(()=>window.__solInfo.setRotSpeed(0));
   const cmeFired=await forceVisibleCme(cmePage);
-  const cmeState=await cmePage.evaluate(()=>({info:__solInfo.eduInfo(),text:document.querySelector('.edu-label').textContent,cme:__solInfo.cmeInfo()}));
+  const cmeState=await cmePage.evaluate(()=>({info:__solInfo.eduInfo(),text:document.querySelector('.edu-label').textContent,cme:__solInfo.cmeInfo(),collection:__solInfo.eduCollectionInfo()}));
   const cmeItem=cmeState.info.active[0];
   const cmeLineClear=cmeItem&&!cmeItem.connectorVisible||!!(cmeItem&&segmentDistance(cmeItem.disk.x,cmeItem.disk.y,cmeItem.anchor.x,cmeItem.anchor.y,cmeItem.lineEnd.x,cmeItem.lineEnd.y)>cmeItem.disk.r+6);
-  check('CME física substitui o flare quando sua frente emerge',!!cmeFired&&!!cmeFired.cme.on&&cmeItem&&cmeItem.type==='cme'&&cmeItem.priority>90&&cmeItem.visible&&/Ejeção de massa coronal/.test(cmeState.text)&&cmeLineClear,cmeItem?JSON.stringify({par:cmeFired?cmeFired.index:null,anchor:cmeItem.anchor,line:cmeItem.connectorVisible,cme:cmeState.cme,text:cmeState.text}):'sem CME');
+  check('CME física substitui o flare quando sua frente emerge',!!cmeFired&&!!cmeFired.cme.on&&cmeItem&&cmeItem.type==='cme'&&cmeItem.priority>90&&cmeItem.visible&&cmeState.collection.items.cme.seen&&/Ejeção de massa coronal/.test(cmeState.text)&&cmeLineClear,cmeItem?JSON.stringify({par:cmeFired?cmeFired.index:null,anchor:cmeItem.anchor,line:cmeItem.connectorVisible,cme:cmeState.cme,text:cmeState.text}):'sem CME');
   await cmePage.evaluate(()=>window.__solInfo.setCmeClock(20));
   await frame(cmePage);
   const cmeEnded=await cmePage.evaluate(()=>window.__solInfo.eduInfo());
@@ -225,7 +343,73 @@ async function layoutState(page){
   }
   const sameStructure=prominence?await promPage.evaluate((i)=>({info:window.__solInfo.eduInfo(),text:document.querySelector('.edu-label').textContent,physical:window.__solInfo.fpromInfo()[i]}),prominence.index):null;
   check('a câmera renomeia a mesma estrutura sem criar outro cartão',!!sameStructure&&sameStructure.info.active.length===1&&sameStructure.info.active[0].sourceId===prominence.index&&sameStructure.info.active[0].contentKey==='filament'&&sameStructure.physical.absorb>=.055&&/Filamento solar/.test(sameStructure.text));
+  const promCollection=await promPage.evaluate(()=>__solInfo.eduCollectionInfo());
+  check('coleção reconhece as duas vistas da mesma estrutura',!!filament&&!!prominence&&promCollection.items.prominence.discoveredViews===2);
   await promPage.close();
+
+  const spotsPage=await browser.newPage({viewport:{width:960,height:600},deviceScaleFactor:1});
+  spotsPage.setDefaultTimeout(240000);
+  spotsPage.on('pageerror',(e)=>errors.push('[spots] '+e.message));
+  spotsPage.on('console',(m)=>{if(m.type()==='error')errors.push('[spots] '+m.text());});
+  // Começa desligado: a prova habilita a experiência só depois de preparar
+  // a região ativa física no máximo do ciclo.
+  await spotsPage.goto(base+'?edu=0&lang=pt&tier=high&scale=0.25&speed=0.05&cycle=1&spots=1');
+  await spotsPage.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduSpotRegion);
+  const spots=await forceSpotDiscovery(spotsPage);
+  const spotsLineClear=spots&&!spots.item.connectorVisible||!!(spots&&segmentDistance(spots.item.disk.x,spots.item.disk.y,spots.item.anchor.x,spots.item.anchor.y,spots.item.lineEnd.x,spots.item.lineEnd.y)>spots.item.disk.r+6);
+  check('grupo de manchas vem da região magnética real',!!spots&&spots.spot.strength>=.70&&spots.item.generation===spots.spot.generation&&/Grupo de manchas solares/.test(spots.text)&&spotsLineClear,spots?JSON.stringify({slot:spots.index,generation:spots.spot.generation,strength:spots.spot.strength,line:spots.item.connectorVisible}):'nenhuma região ativa frontal');
+  const spotsEnglish=await spotsPage.evaluate(()=>{window.__solInfo.setLang('en');return document.querySelector('.edu-label').textContent;});
+  check('grupo de manchas troca para inglês',!!spots&&/Sunspot group/.test(spotsEnglish));
+  if(spots){
+    await spotsPage.evaluate(()=>{window.__solInfo.setControl('edu',0,{persist:false});window.__solInfo.setControl('edu',1,{persist:false});});
+    await frame(spotsPage);await frame(spotsPage);
+  }
+  const spotsReplay=await spotsPage.evaluate(()=>window.__solInfo.eduInfo());
+  check('o mesmo conceito de manchas não repete cartões na sessão',!!spots&&!spotsReplay.active.some((x)=>x.type==='spots'));
+  const spotsCollection=await spotsPage.evaluate(()=>window.__solInfo.eduCollectionInfo());
+  check('coleção registra o grupo de manchas observado',!!spots&&spotsCollection.items.spots.seen);
+  await spotsPage.close();
+
+  // Máximo e mínimo pertencem à mesma coleção local; usamos explicitamente
+  // o mesmo contexto de navegador para provar que as duas vistas coexistem.
+  const cycleCollectionContext=await browser.newContext({viewport:{width:960,height:600},deviceScaleFactor:1});
+  const maxPage=await cycleCollectionContext.newPage();
+  maxPage.setDefaultTimeout(240000);
+  maxPage.on('pageerror',(e)=>errors.push('[cycle-max] '+e.message));
+  maxPage.on('console',(m)=>{if(m.type()==='error')errors.push('[cycle-max] '+m.text());});
+  await maxPage.goto(base+'?edu=0&lang=pt&tier=high&scale=0.25&speed=0.05&cycle=1&spots=1&fprom=0&cme=0');
+  await maxPage.waitForFunction(()=>window.__solInfo&&window.__solInfo.cycleInfo);
+  const maximum=await forceCycleDiscovery(maxPage,'maximum');
+  const maxItem=maximum&&maximum.info.active[0];
+  const maxLayout=await layoutState(maxPage);
+  const maxInside=maxLayout.label&&maxLayout.label.x>=12&&maxLayout.label.y>=12&&maxLayout.label.x+maxLayout.label.width<=maxLayout.viewport.width-12&&maxLayout.label.y+maxLayout.label.height<=maxLayout.viewport.height-12;
+  const maxChromeClear=maxLayout.label&&[maxLayout.title,maxLayout.gear,maxLayout.hint].filter(Boolean).every((x)=>!overlap(maxLayout.label,x));
+  check('máximo solar só ganha cartão quando o ciclo físico chega ao pico',!!maximum&&!maximum.rampInfo.active.some((x)=>x.type==='cycleMaximum'||x.type==='cycleMinimum')&&maximum.cycle.event.state==='hold'&&Math.abs(maximum.cycle.phase-.5)<.04&&maximum.cycle.amp>1.12&&!!maxItem&&maxItem.global&&maxItem.anchor===null&&maxItem.lineEnd===null&&!maxItem.connectorVisible&&!maxItem.haloVisible&&!maxLayout.introVisible&&!maximum.info.queued.some((x)=>x.global)&&/Máximo solar/.test(maximum.text)&&maxInside&&maxChromeClear,maximum?JSON.stringify({phase:maximum.cycle.phase,amp:maximum.cycle.amp,global:maxItem&&maxItem.global,anchor:maxItem&&maxItem.anchor,ramp:maximum.rampInfo.active.map((x)=>x.type)}):'não chegou ao máximo');
+  const maxCollection=await maxPage.evaluate(()=>__solInfo.eduCollectionInfo());
+  check('coleção registra o máximo solar alcançado',maxCollection.items.cycle.views.cycleMaximum);
+  const maxEnglish=await maxPage.evaluate(()=>{window.__solInfo.setLang('en');return document.querySelector('.edu-label').textContent;});
+  check('máximo solar troca para inglês sem criar nova descoberta',/Solar maximum/.test(maxEnglish)&&(await maxPage.evaluate(()=>window.__solInfo.eduInfo().active.length))===1);
+  await maxPage.setViewportSize({width:390,height:844});
+  await frame(maxPage);await maxPage.waitForTimeout(700);
+  const maxMobile=await layoutState(maxPage);
+  const maxMobileInside=maxMobile.label&&maxMobile.label.x>=12&&maxMobile.label.y>=12&&maxMobile.label.x+maxMobile.label.width<=maxMobile.viewport.width-12&&maxMobile.label.y+maxMobile.label.height<=maxMobile.viewport.height-12;
+  const maxMobileClear=maxMobile.label&&[maxMobile.title,maxMobile.gear,maxMobile.hint].filter(Boolean).every((x)=>!overlap(maxMobile.label,x));
+  check('cartão global do máximo permanece legível no iPhone',maxMobileInside&&maxMobileClear&&maxMobile.anchor===null&&!maxMobile.introVisible);
+  await maxPage.close();
+
+  const minPage=await cycleCollectionContext.newPage();
+  minPage.setDefaultTimeout(240000);
+  minPage.on('pageerror',(e)=>errors.push('[cycle-min] '+e.message));
+  minPage.on('console',(m)=>{if(m.type()==='error')errors.push('[cycle-min] '+m.text());});
+  await minPage.goto(base+'?edu=0&lang=pt&tier=high&scale=0.25&speed=0.05&cycle=1&spots=1&fprom=0&cme=0');
+  await minPage.waitForFunction(()=>window.__solInfo&&window.__solInfo.cycleInfo);
+  const minimum=await forceCycleDiscovery(minPage,'minimum');
+  const minItem=minimum&&minimum.info.active[0];
+  check('mínimo solar usa o estado físico de baixa atividade',!!minimum&&minimum.cycle.event.state==='hold'&&(minimum.cycle.phase<.04||minimum.cycle.phase>.96)&&minimum.cycle.amp<.5&&!!minItem&&minItem.global&&/Mínimo solar/.test(minimum.text),minimum?JSON.stringify({phase:minimum.cycle.phase,amp:minimum.cycle.amp,global:minItem&&minItem.global}):'não chegou ao mínimo');
+  const minCollection=await minPage.evaluate(()=>__solInfo.eduCollectionInfo());
+  check('coleção registra o mínimo solar alcançado',minCollection.items.cycle.views.cycleMaximum&&minCollection.items.cycle.views.cycleMinimum);
+  await minPage.close();
+  await cycleCollectionContext.close();
 
   const reducedContext=await browser.newContext({viewport:{width:640,height:420},deviceScaleFactor:1,reducedMotion:'reduce'});
   const reduced=await reducedContext.newPage();

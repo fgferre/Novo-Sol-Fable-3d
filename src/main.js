@@ -29,6 +29,7 @@ import { createGpuProfile } from './debug/gpuprofile.js';
 import { createDiag } from './debug/diag.js';
 import { createRenderer, createRenderInfra, createRTType } from './core/renderer.js';
 import { createEdu } from './edu/edu.js';
+import { createEduCollection } from './edu/collection.js';
 
 THREE.ColorManagement.enabled = false;
 
@@ -213,6 +214,10 @@ function init(){
   // Todos os targets existem neste ponto; o store central assume a autoria
   // do runtime antes de o painel se inscrever ou o primeiro frame rodar.
   ctx.activateControlTargets();
+  // A coleção não cria UI nem toca no modo determinístico. Ela nasce antes
+  // do painel para que o menu possa refletir imediatamente descobertas
+  // salvas em visitas anteriores; createEdu registra só fatos já visíveis.
+  createEduCollection(ctx);
   createPanel(ctx);
 
   // ---------------------------------------------------------------
@@ -476,6 +481,21 @@ function init(){
       ctx.cycleTime += delta * cycMul;
       if (cycMul > 1.0) ctx.cycleWarp += delta * (cycMul - 1.0);
       updateCycleState();
+      // Museu Solar — o cartão do ciclo não nasce ao apertar um botão.
+      // Ele só é liberado quando o relógio físico alcançou e está segurando
+      // o máximo/mínimo. Assim a explicação acompanha a transformação real
+      // do modelo, inclusive no modo de prévia acelerada do painel.
+      if (!DET && ctx.EDU_K > .5 && ctx.eduEvent){
+        var eduCycleEvent = ctx.act.cycleEventInfo();
+        if (eduCycleEvent.on && eduCycleEvent.state === 'hold'){
+          var eduCycleKey = Math.round(eduCycleEvent.targetTot * 2);
+          if (Math.abs(ctx.cyclePhase01 - .5) < .04){
+            if (ctx.eduCycleMaxKey !== eduCycleKey && ctx.eduEvent('cycleMaximum',ctx.cyclePhase01,ctx.cycleAmpK,ctx.cyclePolF,1,eduCycleKey)) ctx.eduCycleMaxKey = eduCycleKey;
+          } else if (ctx.cyclePhase01 < .04 || ctx.cyclePhase01 > .96){
+            if (ctx.eduCycleMinKey !== eduCycleKey && ctx.eduEvent('cycleMinimum',ctx.cyclePhase01,ctx.cycleAmpK,ctx.cyclePolF,1,eduCycleKey)) ctx.eduCycleMinKey = eduCycleKey;
+          }
+        }
+      }
     } else if (ctx.solarMaxK !== 0) ctx.solarMaxK = 0;
     // escalar de apresentação do máximo (uniform do disco); com ciclo
     // desligado/det é 0.0 — os termos do shader colapsam bit-exatos
@@ -732,6 +752,33 @@ function init(){
       }
     }
     updateCamera();
+    // Museu Solar — grupo de manchas: a descoberta nasce da região ativa
+    // magnética real (as cargas lead/foll), não dos slots virtuais usados
+    // apenas para enriquecer a textura do disco. Uma explicação por sessão
+    // basta para ensinar a ideia; a coleção persistente poderá reabri-la.
+    // Não explicamos uma mancha quando a camada visual de manchas foi
+    // desativada: a coleção e o cartão devem sempre corresponder a algo que
+    // a pessoa consegue ver na cena, não apenas ao campo magnético interno.
+    if (!DET && ctx.EDU_K > .5 && ctx.SPOTS_K > .5 && !ctx.eduSpotExplained){
+      for (var eduSpotI=0; eduSpotI<pairStates.length; eduSpotI++){
+        var eduSpot = pairStates[eduSpotI];
+        if (eduSpot.eduAnnouncedGeneration === eduSpot.eduGeneration) continue;
+        var leadStrength = Math.abs(eduSpot.lead.w) / Math.max(.001,Math.abs(eduSpot.baseQ));
+        var follStrength = Math.abs(eduSpot.foll.w) / Math.max(.001,Math.abs(eduSpot.baseQ)*.85);
+        var groupStrength = Math.min(leadStrength,follStrength);
+        if (groupStrength < .70) continue;
+        var groupX = eduSpot.lead.x + eduSpot.foll.x;
+        var groupY = eduSpot.lead.y + eduSpot.foll.y;
+        var groupZ = eduSpot.lead.z + eduSpot.foll.z;
+        var groupLen = Math.sqrt(groupX*groupX + groupY*groupY + groupZ*groupZ);
+        if (groupLen < .001) continue;
+        if (ctx.eduEvent('spots',groupX/groupLen,groupY/groupLen,groupZ/groupLen,groupStrength,eduSpotI,eduSpot.eduGeneration)){
+          eduSpot.eduAnnouncedGeneration = eduSpot.eduGeneration;
+          ctx.eduSpotExplained = true;
+          break;
+        }
+      }
+    }
     if (ctx.eduTick) ctx.eduTick(rawDelta);
 
     renderer.setRenderTarget(sceneRT);

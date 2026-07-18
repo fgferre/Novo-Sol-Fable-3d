@@ -30,6 +30,8 @@ export function createEdu(ctx){
     ' border-left:1px solid rgba(255,179,103,.72);text-shadow:0 1px 5px rgba(0,0,0,.9);',
     ' opacity:0;transform:translate3d(-30vw,-30vh,0);transition:opacity .32s ease,transform .52s cubic-bezier(.22,1,.36,1);will-change:transform,opacity}',
     '#edu .edu-label.visible{opacity:1}',
+    '#edu .edu-label.global{border-left:0;border-top:1px solid rgba(255,179,103,.72);',
+    ' background:linear-gradient(90deg,rgba(7,9,15,.94),rgba(7,9,15,.80))}',
     '#edu .edu-headline{font-size:11px;line-height:1.25;font-weight:700;letter-spacing:.16em;color:#ffbf7d}',
     '#edu .edu-term{margin-top:5px;font-size:22px;line-height:1.05;font-weight:540;letter-spacing:-.015em;color:#fff6e9}',
     '#edu .edu-body{margin-top:8px;max-width:28em;font-size:14px;line-height:1.5;color:rgba(255,242,225,.92)}',
@@ -101,8 +103,9 @@ export function createEdu(ctx){
   var projected = new THREE.Vector3();
   var sunProjected = new THREE.Vector3();
   var camDir = new THREE.Vector3();
-  var active = false, visible = false, inFront = false, eventType = 'flare';
+  var active = false, visible = false, inFront = false, eventType = 'flare', eventGlobal = false;
   var eventSourceId = -1, eventSourceGeneration = -1, eventContentKey = 'flare';
+  var recordedDiscoveryKey = '';
   var age = 0, introAge = 0, sinceEvent = 99;
   var anchorX = 0, anchorY = 0, labelX = 0, labelY = 0;
   var labelW = 300, labelH = 108, side = 'right', layoutDirty = true;
@@ -126,7 +129,17 @@ export function createEdu(ctx){
     return mode === 3 ? 'prominenceFilament' : mode === 2 ? 'filament' : 'prominence';
   }
   function eventCopy(){ return copy()[eventContentKey] || copy().flare; }
-  function eventPriority(type){ return type === 'cme' ? 100 : type === 'flare' ? 90 : 70; }
+  function rememberCurrentDiscovery(){
+    // A coleção recebe apenas uma descoberta que já venceu a geometria e a
+    // leitura visual. O marcador local evita trabalho por frame; o store
+    // também é idempotente entre visitas e entre fontes equivalentes.
+    var key = eventType + '|' + eventContentKey;
+    if (recordedDiscoveryKey === key) return;
+    recordedDiscoveryKey = key;
+    if (ctx.recordEduDiscovery) ctx.recordEduDiscovery(eventType,eventContentKey);
+  }
+  function isGlobal(type){ return type === 'cycleMaximum' || type === 'cycleMinimum'; }
+  function eventPriority(type){ return type === 'cme' ? 100 : type === 'flare' ? 90 : type === 'prominence' ? 70 : isGlobal(type) ? 65 : 60; }
   function syncChrome(){
     var c = copy();
     document.documentElement.lang = lang === 'en' ? 'en' : 'pt-BR';
@@ -186,7 +199,8 @@ export function createEdu(ctx){
     if (enabled){ introAge = 0; intro.classList.add('visible'); }
     else {
       intro.classList.remove('visible'); label.classList.remove('visible'); line.style.opacity='0';
-      halo.visible = false; visible = false; active = false; pendingCme = false; pendingProm = false; live.textContent = '';
+      halo.visible = false; visible = false; active = false; eventGlobal = false; inFront = false; connectorVisible = false;
+      label.classList.remove('global'); pendingCme = false; pendingProm = false; live.textContent = '';
     }
     syncChrome();
   }
@@ -303,19 +317,30 @@ export function createEdu(ctx){
     paintConnector(endX,endY);
   }
 
+  function placeGlobalLabel(){
+    if (layoutDirty) measure();
+    labelX = window.innerWidth < 720 ? 20 : 28;
+    // Fica abaixo da identidade do museu, não preso a qualquer ponto do
+    // Sol. O ciclo é uma escala global, não um evento localizado.
+    labelY = window.innerWidth < 720 ? 96 : 94;
+    label.style.transform = 'translate3d('+Math.round(labelX)+'px,'+Math.round(labelY)+'px,0)';
+    connectorVisible = false;
+    line.style.opacity = '0';
+  }
+
   function showVisual(){
     if (visible) return;
     // A mensagem de boas-vindas é só onboarding. Assim que existe uma
     // descoberta real, ela sai de cena para nunca disputar leitura — em
     // especial no retrato estreito de iPhone.
     intro.classList.remove('visible');
-    visible = true; label.classList.add('visible'); line.style.opacity='0'; halo.visible = true;
+    visible = true; label.classList.add('visible'); line.style.opacity='0'; halo.visible = !eventGlobal;
   }
   function hideVisual(){
     if (!visible) return;
     visible = false; connectorVisible = false; label.classList.remove('visible'); line.style.opacity='0'; halo.visible = false;
   }
-  function finishEvent(){ active = false; hideVisual(); live.textContent = ''; }
+  function finishEvent(){ active = false; eventGlobal = false; label.classList.remove('global'); hideVisual(); live.textContent = ''; }
 
   function startEvent(type,x,y,z,salience,sourceId,generation){
     if (!enabled) return false;
@@ -330,15 +355,20 @@ export function createEdu(ctx){
     if (eventDir.lengthSq() < .5) return false;
     eventDir.normalize();
     var previousType = eventType, previousSource = eventSourceId;
-    var previousGeneration = eventSourceGeneration, previousContent = eventContentKey;
+    var previousGeneration = eventSourceGeneration, previousContent = eventContentKey, previousGlobal = eventGlobal;
+    var previousRecorded = recordedDiscoveryKey;
     eventType = type;
     eventSourceId = source; eventSourceGeneration = sourceGeneration;
     eventContentKey = contentKeyFor(type,source);
+    recordedDiscoveryKey = '';
+    eventGlobal = false; label.classList.remove('global');
     // Um flare no lado oculto não inicia uma legenda; uma CME fica na
     // fila até a frente real emergir além do limbo.
     if (!projectAnchor()){
       eventType = previousType; eventSourceId = previousSource;
       eventSourceGeneration = previousGeneration; eventContentKey = previousContent;
+      recordedDiscoveryKey = previousRecorded;
+      eventGlobal = previousGlobal; if (previousGlobal) label.classList.add('global');
       eventDir.set(oldX,oldY,oldZ); anchorDistance = oldDistance;
       return false;
     }
@@ -349,7 +379,8 @@ export function createEdu(ctx){
     renderEvent();
     var text = eventCopy();
     live.textContent = text.term + '. ' + text.body;
-    showVisual(); placeLabel();
+    if (visible) halo.visible = true;
+    showVisual(); placeLabel(); rememberCurrentDiscovery();
     return true;
   }
 
@@ -401,10 +432,41 @@ export function createEdu(ctx){
     if (startEvent('prominence',pendingPromDir.x,pendingPromDir.y,pendingPromDir.z,pendingPromSalience,pendingPromSourceId,pendingPromGeneration)) pendingProm = false;
   }
 
+  function startGlobalEvent(type,salience,sourceId){
+    if (!enabled) return false;
+    var source = sourceId == null ? -1 : (sourceId|0);
+    if (active){
+      if (eventGlobal && eventType === type && eventSourceId === source) return true;
+      if (eventPriority(type) <= eventPriority(eventType)) return false;
+      hideVisual();
+    }
+    eventType = type; eventSourceId = source; eventSourceGeneration = -1;
+    eventContentKey = contentKeyFor(type,source); eventGlobal = true;
+    recordedDiscoveryKey = '';
+    // Máximo e mínimo descrevem o Sol inteiro: não herdam âncora, halo
+    // ou estado de visibilidade do fenômeno local que acabaram de suceder.
+    inFront = false; connectorVisible = false; halo.visible = false;
+    active = true; visible = false; age = 0; sinceEvent = 0;
+    layoutDirty = true; label.classList.add('global');
+    // Mesmo se uma descoberta local estava temporariamente oculta, a
+    // chegada do estado global encerra o onboarding por completo.
+    intro.classList.remove('visible');
+    renderEvent();
+    var text = eventCopy();
+    live.textContent = text.term + '. ' + text.body;
+    showVisual(); placeGlobalLabel(); rememberCurrentDiscovery();
+    return true;
+  }
+
   ctx.eduEvent = function(name,a,b,c,d,e,f){
     if (name === 'flare') return startFlare(a,b,c,d);
     if (name === 'cme') return queueCme(a,b,c,d);
     if (name === 'prominence') return queueProminence(a,b,c,d,e,f);
+    if (name === 'spots') return startEvent('spots',a,b,c,d,e,f);
+    // Um estado global vale somente enquanto ele está acontecendo. Ao
+    // contrário de uma CME que emerge, máximo/mínimo não fica em fila:
+    // o emissor físico tentará de novo no próximo frame ainda em hold.
+    if (name === 'cycleMaximum' || name === 'cycleMinimum') return startGlobalEvent(name,d,e);
     return false;
   };
   ctx.eduEmit = function(name,opts){
@@ -432,30 +494,43 @@ export function createEdu(ctx){
     }
     if (!active) return;
     age += rawDelta;
+    if (eventGlobal){
+      if (age > 10){ finishEvent(); return; }
+      // Defesa adicional contra qualquer reaplicação assíncrona do switch:
+      // uma descoberta global não divide a leitura com o onboarding.
+      intro.classList.remove('visible');
+      syncEventContent();
+      showVisual(); placeGlobalLabel();
+      return;
+    }
     if (eventType === 'cme'){
       if (age > 16 || ctx.cmeT >= 900 || ctx.cmeT > 18){ finishEvent(); return; }
-    } else if (eventType === 'prominence') {
+    } else if (eventType === 'prominence' || eventType === 'spots') {
       if (age > 9.5){ finishEvent(); return; }
     } else if (age > 7.5 || ctx.surfFlareT > 12){ finishEvent(); return; }
     syncEventContent();
     var canShow = projectAnchor();
     if (!canShow){ hideVisual(); return; }
     halo.position.copy(eventDir).multiplyScalar(anchorDistance);
-    showVisual(); placeLabel();
+    showVisual(); placeLabel(); rememberCurrentDiscovery();
     var pulse = reducedMotion ? 1 : 1 + .16*Math.sin(age*7.5)*Math.exp(-age*.22);
-    var haloScale = eventType === 'cme' ? .72 : eventType === 'prominence' ? .56 : .48;
+    var haloScale = eventType === 'cme' ? .72 : eventType === 'prominence' ? .56 : eventType === 'spots' ? .52 : .48;
     halo.scale.setScalar(haloScale*pulse);
     haloMaterial.opacity = reducedMotion ? .62 : Math.max(.32,(eventType === 'cme' ? .72 : .80)-age*.045);
   };
 
   ctx.eduInfo = function(){
     var rect = visible ? label.getBoundingClientRect() : {x:labelX,y:labelY,width:labelW,height:labelH};
+    var queued = [];
+    if (pendingCme) queued.push({type:'cme',age:pendingCmeAge});
+    if (pendingProm) queued.push({type:'prominence',age:pendingPromAge,sourceId:pendingPromSourceId,generation:pendingPromGeneration});
     return { available:true, enabled:enabled, lang:lang, reducedMotion:reducedMotion, limit:1,
-      queued:(pendingCme ? [{type:'cme',age:pendingCmeAge}] : []).concat(pendingProm ? [{type:'prominence',age:pendingPromAge,sourceId:pendingPromSourceId,generation:pendingPromGeneration}] : []),
-      active:active ? [{type:eventType,priority:eventPriority(eventType),visible:visible,inFront:inFront,phase:age<.65?'enter':'reading',
-        anchor:{x:anchorX,y:anchorY},labelRect:{x:rect.x,y:rect.y,width:rect.width,height:rect.height},
-        lineEnd:{x:lineEndX,y:lineEndY},disk:{x:diskX,y:diskY,r:diskRadius},
-        connectorVisible:connectorVisible,contentKey:eventContentKey,sourceId:eventSourceId,generation:eventSourceGeneration}] : [] };
+      queued:queued,
+      active:active ? [{type:eventType,priority:eventPriority(eventType),visible:visible,inFront:eventGlobal ? false : inFront,phase:age<.65?'enter':'reading',
+        global:eventGlobal,haloVisible:halo.visible,
+        anchor:eventGlobal ? null : {x:anchorX,y:anchorY},labelRect:{x:rect.x,y:rect.y,width:rect.width,height:rect.height},
+        lineEnd:eventGlobal ? null : {x:lineEndX,y:lineEndY},disk:eventGlobal ? null : {x:diskX,y:diskY,r:diskRadius},
+        connectorVisible:eventGlobal ? false : connectorVisible,contentKey:eventContentKey,sourceId:eventSourceId,generation:eventSourceGeneration}] : [] };
   };
 
   if (reduceQuery){

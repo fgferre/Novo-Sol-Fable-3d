@@ -251,8 +251,20 @@ export function createSolInfo(ctx){
                    // FASE 3: latitude do líder em graus (o raio das cargas
                    // é 0.88) e sinal de Hale — p/ o QA da borboleta
                    lat: Math.asin(Math.max(-1, Math.min(1, ps.lead.y/0.88)))*180/Math.PI,
-                   pol: ps.polSign };
+                    pol: ps.polSign, generation:ps.eduGeneration };
         });
+      };
+      // Adaptador de QA para a MESMA região magnética que ancora o grupo
+      // educativo de manchas. Não lê os spots virtuais do shader.
+      window.__solInfo.eduSpotRegion = function(i){
+        var idx = Math.max(0,Math.min(pairStates.length-1,i|0));
+        var ps = pairStates[idx];
+        var x = ps.lead.x + ps.foll.x, y = ps.lead.y + ps.foll.y, z = ps.lead.z + ps.foll.z;
+        var l = Math.sqrt(x*x+y*y+z*z) || 1;
+        var leadK = Math.abs(ps.lead.w)/Math.max(.001,Math.abs(ps.baseQ));
+        var follK = Math.abs(ps.foll.w)/Math.max(.001,Math.abs(ps.baseQ)*.85);
+        return { sourceId:idx, generation:ps.eduGeneration,
+          dir:[x/l,y/l,z/l], strength:Math.min(leadK,follK) };
       };
       // FASE 3 — QA do ciclo de 11 anos: fase/índice/sinais correntes...
       window.__solInfo.cycleInfo = function(){
@@ -571,6 +583,12 @@ export function createSolInfo(ctx){
       };
       window.__solInfo.setLang = function(lang){
         return ctx.setEduLang ? ctx.setEduLang(lang) : false;
+      };
+      window.__solInfo.eduCollectionInfo = function(){
+        return ctx.eduCollectionInfo ? ctx.eduCollectionInfo() : { available:false, items:{} };
+      };
+      window.__solInfo.clearEduCollection = function(){
+        return ctx.clearEduCollection ? ctx.clearEduCollection() : false;
       };
       // FASE 5 — QA do foco raso: override do plano de foco (0 centro,
       // 1 limbo; -1 volta ao automático) + estado corrente

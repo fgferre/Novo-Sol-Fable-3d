@@ -32,6 +32,26 @@ export const EDU_CONTENT = {
       headline: 'A MESMA ESTRUTURA, DUAS VISTAS',
       term: 'Filamento e proeminência solar',
       body: 'Campos magnéticos sustentam plasma relativamente frio e denso. Contra o espaço ele brilha; sobre o disco solar, a mesma estrutura aparece mais escura.'
+    },
+    spots: {
+      headline: 'UMA REGIÃO MAGNÉTICA ATIVA',
+      term: 'Grupo de manchas solares',
+      body: 'Campos magnéticos fortes reduzem a chegada de calor à superfície. As manchas parecem escuras só porque o entorno é ainda mais brilhante.'
+    },
+    cycleMaximum: {
+      headline: 'PICO DE ATIVIDADE',
+      term: 'Máximo solar',
+      body: 'Ao longo de cerca de 11 anos, a atividade magnética aumenta. Manchas, flares e ejeções tornam-se mais prováveis.'
+    },
+    cycleMinimum: {
+      headline: 'UMA PAUSA NO CICLO',
+      term: 'Mínimo solar',
+      body: 'A atividade magnética diminuiu. O Sol continua ativo, mas manchas e grandes erupções ficam menos frequentes.'
+    },
+    cycle: {
+      headline: 'UM RITMO MAGNÉTICO',
+      term: 'Ciclo solar',
+      body: 'Em cerca de 11 anos, a atividade magnética do Sol cresce e diminui. Esse ritmo muda a frequência de manchas, flares e ejeções.'
     }
   },
   en: {
@@ -65,6 +85,26 @@ export const EDU_CONTENT = {
       headline: 'ONE STRUCTURE, TWO VIEWS',
       term: 'Solar filament and prominence',
       body: 'Magnetic fields hold relatively cool, dense plasma aloft. Against space it shines; across the solar disk, the same structure appears darker.'
+    },
+    spots: {
+      headline: 'AN ACTIVE MAGNETIC REGION',
+      term: 'Sunspot group',
+      body: 'Strong magnetic fields reduce the heat reaching the surface. The spots look dark only because the surrounding surface is even brighter.'
+    },
+    cycleMaximum: {
+      headline: 'ACTIVITY AT ITS PEAK',
+      term: 'Solar maximum',
+      body: 'Over about 11 years, magnetic activity rises. Sunspots, flares, and ejections become more likely.'
+    },
+    cycleMinimum: {
+      headline: 'A QUIETER PHASE',
+      term: 'Solar minimum',
+      body: 'Magnetic activity has declined. The Sun remains active, but sunspots and large eruptions become less frequent.'
+    },
+    cycle: {
+      headline: 'A MAGNETIC RHYTHM',
+      term: 'Solar cycle',
+      body: 'Over about 11 years, the Sun’s magnetic activity rises and falls. That rhythm changes how often sunspots, flares, and ejections occur.'
     }
   }
 };

@@ -1,14 +1,13 @@
-# Baselines "museu" — PROVISÓRIAS (capturas locais)
+# Baselines "museu" — canônicas do gate
 
-## ⚠️ Aviso
+## Origem
 
-Estas capturas foram geradas numa máquina local (Windows) apenas para
-validar o FLUXO do novo passo "Paridade museu" do `qa.yml`. Pela regra da
-série Museu (incidente PR-1, ver `docs/SERIE-MUSEU.md`), baseline canônica
-vem SEMPRE do ambiente do gate: **antes do merge o integrador deve
-substituí-las** rodando o workflow `regen-baselines` com o input `query`
-abaixo e commitando o artifact `baselines-regeneradas`. Até o swap, o passo
-"Paridade museu" do CI vai falhar — é esperado.
+Capturas do workflow `regen-baselines` (run 29664836522, ubuntu/SwiftShader,
+branch museu/pr4-sol-completo) — o ambiente do próprio gate, pela regra da
+série Museu (incidente PR-1, ver `docs/SERIE-MUSEU.md`). Prova de
+determinismo multiplataforma: as capturas do CI deram **0 px de diff (com
+máscaras de texto)** contra as capturas Windows do desenvolvimento — o
+render da cena museu completa é bit-idêntico entre plataformas.
 
 ## Query exata
 

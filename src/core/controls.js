@@ -177,6 +177,12 @@ function timeMetrics(ctx, runtime){
     cycleOn:ctx.CYCLE_K>0.001||ctx.LAPSE_K>0 };
 }
 
+// Museu (PR-4) — o Sol completo por default: fenômenos físicos e cinema
+// acoplado a eventos nascem ligados no modo normal (valores = os campos
+// `preset` já julgados); sob ?det=1 tudo volta a 0 pelo mesmo padrão
+// det-aware do `cycle` — a paridade histórica não move um byte.
+function museuDefault(v){ return function(ctx){ return ctx.DET ? 0 : v; }; }
+
 export const CONTROL_SCHEMA = [
   // Camada educativa espacial. Fica fora do drawer de sliders e ganha um
   // switch próprio. GO-LIVE (série Museu, PR-3): no modo normal as
@@ -200,7 +206,8 @@ export const CONTROL_SCHEMA = [
     metrics:function(ctx){ return timeMetrics(ctx,ctx.CYCLE_K); }}),
   def('tempo','lapse','Velocidade do ciclo',0,1,0.05,0,setCtx('LAPSE_K'),{condition:lapseCondition,
     metrics:function(ctx){ return timeMetrics(ctx,ctx.LAPSE_K); }}),
-  def('tempo','spots','Manchas solares (grupos)',0,1.5,0.05,0,setCtx('SPOTS_K'),{preset:1}),
+  // Museu (PR-4): manchas com plages visíveis já na chegada — física, não estilo.
+  def('tempo','spots','Manchas solares (grupos)',0,1.5,0.05,museuDefault(1),setCtx('SPOTS_K'),{preset:1}),
 
   def('luz & cor','bloom','Bloom',0,3,0.025,1,bloomStrength,{preset:1.075,
     metrics:function(ctx){ return { runtime:ctx.BLOOM_STRENGTH_BASE, gain:bloomGain(ctx.getAppliedControl('bloom')) }; }}),
@@ -219,12 +226,15 @@ export const CONTROL_SCHEMA = [
 
   def('cinema','veil','Halação (glare)',0,1.5,0.05,0,setCtx('VEIL_BASE'),{preset:0.85}),
   def('cinema','streak','Flare anamórfico',0,1.5,0.05,0,setCtx('STREAK_K'),{preset:0.65}),
-  def('cinema','burst','Starburst (difração)',0,1.5,0.05,0,setCtx('BURST_K'),{preset:0.55,condition:burstCondition}),
-  def('cinema','disp','Bloom espectral (dispersão)',0,1.5,0.05,0,setCtx('DISP_K'),{preset:0.40}),
-  def('cinema','hal','Halação quente (corpo negro)',0,1.5,0.05,0,setCtx('HAL_K'),{preset:0.45}),
-  def('cinema','adapt','Olho (adaptação)',0,1,0.05,0,setCtx('ADAPT_K'),{preset:0.55}),
+  // Museu (PR-4): só o cinema ACOPLADO A EVENTOS liga por default — a tela
+  // reage quando o Sol age; estilização estática (veil/streak/fringe/tone/
+  // film/hand/dof) segue opt-in no ?look=sunshine.
+  def('cinema','burst','Starburst (difração)',0,1.5,0.05,museuDefault(0.55),setCtx('BURST_K'),{preset:0.55,condition:burstCondition}),
+  def('cinema','disp','Bloom espectral (dispersão)',0,1.5,0.05,museuDefault(0.40),setCtx('DISP_K'),{preset:0.40}),
+  def('cinema','hal','Halação quente (corpo negro)',0,1.5,0.05,museuDefault(0.45),setCtx('HAL_K'),{preset:0.45}),
+  def('cinema','adapt','Olho (adaptação)',0,1,0.05,museuDefault(0.55),setCtx('ADAPT_K'),{preset:0.55}),
   def('cinema','fringe','Franja da lente',0,1.5,0.05,0,setUniform('compUniforms','uFringe'),{preset:0.35}),
-  def('cinema','shimmer','Calor no limbo',0,1.5,0.05,0,setUniform('compUniforms','uShimmer'),{preset:0.45}),
+  def('cinema','shimmer','Calor no limbo',0,1.5,0.05,museuDefault(0.45),setUniform('compUniforms','uShimmer'),{preset:0.45}),
   def('cinema','tone','Grade Sunshine',0,1.2,0.05,0,setUniform('compUniforms','uTone'),{preset:0.65}),
   def('cinema','film','Filme (ACES→AgX)',0,1,0.05,0,setUniform('compUniforms','uFilm')),
   def('cinema','hand','Micro-movimento de câmera',0,1.5,0.025,0,setCtx('HAND_K'),{
@@ -238,12 +248,14 @@ export const CONTROL_SCHEMA = [
   def('coroa','halo','Halo coronal',0,2,0.05,0.55,setUniform('coronaRaysUniforms','uHalo')),
   def('coroa','ray','Streamers',0,3,0.05,0.9,setUniform('coronaRaysUniforms','uRayBoost')),
   def('coroa','cact','Resposta à atividade',0,2,0.05,0.5,setUniform('coronaRaysUniforms','uActGain')),
-  def('coroa','cvol','Coroa volumétrica (raymarch)',0,1.5,0.05,0,setCtx('CVOL_K'),{preset:0.5,condition:cvolCondition,
+  // Museu (PR-4): a atmosfera completa por default — coroa volumétrica, CME,
+  // loops e filamentos são física observável (tier/auto-tune seguem mandando).
+  def('coroa','cvol','Coroa volumétrica (raymarch)',0,1.5,0.05,museuDefault(0.5),setCtx('CVOL_K'),{preset:0.5,condition:cvolCondition,
     metrics:function(ctx){ return { runtime:ctx.CVOL_K, ready:!!ctx.cvolReady, cycles:ctx.cvolCycles || 0 }; }}),
-  def('coroa','cme','CME (erupção)',0,1.5,0.05,0,setCtx('CME_K'),{preset:0.9,condition:cmeCondition,
+  def('coroa','cme','CME (erupção)',0,1.5,0.05,museuDefault(0.9),setCtx('CME_K'),{preset:0.9,condition:cmeCondition,
     metrics:function(ctx){ return { runtime:ctx.CME_K, event:ctx.cmeT < 900, cooldown:ctx.cmeCooldown || 0 }; }}),
-  def('coroa','loops','Loops coronais',0,1.5,0.05,0,setCtx('LOOP_K'),{preset:0.55}),
-  def('coroa','fprom','Absorção de filamentos',0,1,0.05,0,setCtx('FPROM_K'),{preset:0.55}),
+  def('coroa','loops','Loops coronais',0,1.5,0.05,museuDefault(0.55),setCtx('LOOP_K'),{preset:0.55}),
+  def('coroa','fprom','Absorção de filamentos',0,1,0.05,museuDefault(0.55),setCtx('FPROM_K'),{preset:0.55}),
 
   def('céu','stars','Estrelas',0,2,0.05,1,stars,{metrics:function(ctx){
     return { runtime:ctx.stars ? ctx.stars.material.opacity : undefined,

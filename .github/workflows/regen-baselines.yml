@@ -8,6 +8,16 @@ name: Regenerar baselines
 # local, cujas fontes/ambiente divergem do gate.
 on:
   workflow_dispatch:
+    inputs:
+      # Museu (PR-4): query extra passada ao parity. Vazio = baselines
+      # históricas (det puro, knobs pinados em 0). Para a família "museu",
+      # passe a query dos knobs ligados usada no passo "Paridade museu" do
+      # qa.yml e commite as capturas em qa/baselines-museu/.
+      query:
+        description: 'Query extra do parity (vazio = baselines históricas)'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   regen:
@@ -26,9 +36,21 @@ jobs:
           npm run build
           npm run build:single
       - name: Capturar baselines determinísticas
-        run: node tools/parity.js qa-out --file dist-single/index.html
+        run: |
+          if [ -n "${{ inputs.query }}" ]; then
+            node tools/parity.js qa-out --file dist-single/index.html --query "${{ inputs.query }}"
+          else
+            node tools/parity.js qa-out --file dist-single/index.html
+          fi
       - name: Diff vs baselines atuais (informativo)
-        run: node tools/imgdiff.js qa/baselines qa-out --max-frac 1 --out qa-diff --mask 0,0,620,130 --mask 0,-90,9999,90
+        run: |
+          BASE_DIR=qa/baselines
+          if [ -n "${{ inputs.query }}" ]; then BASE_DIR=qa/baselines-museu; fi
+          if [ -d "$BASE_DIR" ]; then
+            node tools/imgdiff.js "$BASE_DIR" qa-out --max-frac 1 --out qa-diff --mask 0,0,620,130 --mask 0,-90,9999,90
+          else
+            echo "sem $BASE_DIR para comparar — primeira geração desta família"
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: baselines-regeneradas

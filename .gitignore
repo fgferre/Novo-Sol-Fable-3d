@@ -10,7 +10,10 @@ qa-subtle/
 qa-ab-branch/
 qa-ab-main/
 qa-out/
+qa-out-museu/
 qa-out-pr0*/
+qa-diff/
+qa-diff-museu/
 shots-*/
 shots/
 sweep-out/

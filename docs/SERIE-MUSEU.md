@@ -31,7 +31,7 @@ Legenda status: ⬜ pendente · 🚧 em andamento · ⏸️ aguardando aceite do
 
 | PR | Título | Escopo | Gate 🟢 | Aceite 🟣 | Status |
 |----|--------|--------|---------|-----------|--------|
-| 1 | Porta e placa | Marca única no HTML ("SOL — uma estrela viva"), chip "▶ Visita guiada" no palco, hint em fonte única, meta/OG | baselines regeneradas por decisão de marca com prova cirúrgica (0 px de diff fora das regiões de título/hint nos 5 shots — o Sol é bit-idêntico); chip visível em 390×844, ≥44px, sem intersectar o disco, some ao iniciar a visita e não insiste depois da 1ª visita | "Abra em aba anônima no iPhone: título 'SOL — uma estrela viva'; chip 'Visita guiada' embaixo; um toque inicia a visita sem abrir a engrenagem." | 🚧 em andamento |
+| 1 | Porta e placa | Marca única no HTML ("SOL — uma estrela viva"), chip "▶ Visita guiada" no palco, hint em fonte única, meta/OG | baselines regeneradas por decisão de marca com prova cirúrgica (0 px de diff fora das regiões de título/hint nos 5 shots — o Sol é bit-idêntico); chip visível em 390×844, ≥44px, sem intersectar o disco, some ao iniciar a visita e não insiste depois da 1ª visita | "Abra em aba anônima no iPhone: título 'SOL — uma estrela viva'; chip 'Visita guiada' embaixo; um toque inicia a visita sem abrir a engrenagem." | ✅ merged (PR #61 + correção #PR-1b; ver Incidentes) |
 | 2 | Blindagem | Try/catch com telemetria nos ticks edu, memoização do cartão, fix de landscape, fix da deriva idle na visita, prévias do painel desligadas durante a visita, restauração suave de pose, safe-area | qa:tour verde + checks novos (`faults===0`; pose restaurada); qa-ab base-vs-head pixel-0 | "Faça a visita e saia no meio: a câmera volta suave para onde estava." | ⬜ pendente |
 | 3 | Go-live das descobertas | Default de `edu` passa a ligado fora de `det` (função det-aware, padrão `cycle`); URL/storage continuam vencendo | parity intacta por construção (edu inerte sob det); qa:edu/qa:tour verdes | "Abra em aba anônima: em 1-2 min um cartão de descoberta aparece sozinho quando algo acontece no Sol." | ⬜ pendente |
 | 4 | O Sol completo por default | Defaults det-aware para física (spots/loops/fprom/cme/cvol) e para o cinema acoplado a eventos (burst/adapt/disp/hal/shimmer); blindagem de baselines (knobs visuais pinados na URL do parity) | baselines históricas intocadas; nova família de baselines "museu" estável; asserts de default atualizados | "Abra no iPhone e só observe 2 min: manchas com plages, arcos magnéticos e coroa aparecem sozinhos; quando vier um flare, a tela explode num starburst e a exposição respira." | ⬜ pendente |
@@ -73,6 +73,25 @@ Legenda status: ⬜ pendente · 🚧 em andamento · ⏸️ aguardando aceite do
   anterior de remediação: push + PR + auto-merge quando o CI fica verde,
   sem gate do dono para o merge em si. Os gates 🟣 (visuais) podem ser
   assíncronos — registro antes/depois na issue/PR, aprovação depois.
+
+---
+
+## Incidentes e lições
+
+**PR-1 (2026-07-18) — merge com CI vermelho + baselines dependentes de fonte.**
+O `gh pr merge --auto` mergeia NA HORA quando o repositório não tem checks
+obrigatórios — o PR-1 entrou no main com a paridade vermelha. Causa da
+vermelhidão: as baselines tinham sido regeneradas na máquina local (fontes
+Windows/Segoe UI), mas o gate renderiza no ubuntu (Liberation) — o texto DOM
+do título/hint rasteriza diferente por SO. Correção (PR-1b): (1) `imgdiff.js`
+ganhou `--mask x,y,w,h` e o gate mascara as DUAS faixas de texto (título
+`0,0,620,130` e base `0,-90,9999,90`) — o render da estrela continua
+comparado pixel a pixel e provou-se bit-idêntico entre Windows e ubuntu
+(0 px com máscara); (2) baselines canônicas = capturas do PRÓPRIO gate
+(artifact do CI); (3) workflow `regen-baselines.yml` (dispatch) é o caminho
+oficial de regeneração. Regras novas da série: **nunca regenerar baseline de
+máquina local**, e **merge manual após CI verde** até existir check
+obrigatório no branch main.
 
 ---
 

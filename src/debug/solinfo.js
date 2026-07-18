@@ -600,6 +600,11 @@ export function createSolInfo(ctx){
       window.__solInfo.eduTourExpand = function(on){ return ctx.eduTourExpand ? ctx.eduTourExpand(on) : false; };
       window.__solInfo.eduTourExit = function(){ return ctx.eduTourExit ? ctx.eduTourExit('qa') : false; };
       window.__solInfo.eduTourResumeFrame = function(){ return ctx.eduTourResumeFrame ? ctx.eduTourResumeFrame() : false; };
+      // PR-2 — telemetria de falhas engolidas (ring agregado por label em
+      // core/config.js). Vazio = nenhuma exceção de física foi silenciada.
+      window.__solInfo.eduHealth = function(){
+        return { faults: ctx.eduFaults ? ctx.eduFaults.slice() : [] };
+      };
       // FASE 5 — QA do foco raso: override do plano de foco (0 centro,
       // 1 limbo; -1 volta ao automático) + estado corrente
       window.__solInfo.setDofFocus = function(x){

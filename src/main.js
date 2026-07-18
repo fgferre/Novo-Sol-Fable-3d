@@ -734,7 +734,14 @@ function init(){
 
     // A visita pode ajustar a pose-alvo antes da inércia/zoom. Um gesto do
     // usuário desliga apenas esta assistência (controls.js), não a visita.
-    if (ctx.eduTourCameraTick) ctx.eduTourCameraTick(rawDelta);
+    // PR-2 (Museu): uma exceção na camada edu não pode derrubar o frame.
+    // Na PRIMEIRA falha o tick é desligado (degradação limpa: a cena
+    // continua, a camada edu para) e a falha vai para o ring de telemetria.
+    // Sob ?det os ticks são undefined — o guard nunca entra, inerte.
+    if (ctx.eduTourCameraTick){
+      try { ctx.eduTourCameraTick(rawDelta); }
+      catch(e){ ctx.eduTourCameraTick = null; ctx.eduFault('tick-tour-camera', e); }
+    }
     // inércia: continua girando ao soltar, com amortecimento exponencial
     if (pointers.size === 0){
       ctx.theta += ctx.thetaVel*rawDelta;
@@ -755,9 +762,13 @@ function init(){
     // dependia da velocidade da máquina (flake do A/B base-vs-base). Agora
     // conta FRAMES desde a última interação: >132 (≈2200ms@60fps) ⇒ frame 132
     // ainda sem deriva, frame 133 recebe o 1º incremento 0.066·rawDelta.
-    var idleDrift = DET
+    // PR-2 (Museu): a visita guiada enquadra a câmera; a deriva idle não
+    // disputa com ela. Sob ?det eduTourActive é undefined (fábrica ausente)
+    // e a condição fica idêntica à anterior — paridade por construção.
+    var idleDrift = (DET
       ? (ctx.detFrames - ctx.lastInteractionFrame > 132)
-      : (performance.now() - ctx.lastInteraction > 2200);
+      : (performance.now() - ctx.lastInteraction > 2200))
+      && !ctx.eduTourActive;
     if (pointers.size === 0 && idleDrift && !directorActive()){
       ctx.theta += 0.066*rawDelta;
       // ?idle=1: câmera idle cinematográfica — deriva orbital + balanço
@@ -770,7 +781,11 @@ function init(){
     updateCamera();
     // A fonte física e a câmera deste mesmo frame já estão atualizadas; a
     // visita confirma visibilidade e libera seu cartão somente agora.
-    if (ctx.eduTourTick) ctx.eduTourTick(rawDelta);
+    // PR-2: mesma blindagem do cameraTick — 1ª falha desliga e registra.
+    if (ctx.eduTourTick){
+      try { ctx.eduTourTick(rawDelta); }
+      catch(e){ ctx.eduTourTick = null; ctx.eduFault('tick-tour', e); }
+    }
     // Museu Solar — grupo de manchas: a descoberta nasce da região ativa
     // magnética real (as cargas lead/foll), não dos slots virtuais usados
     // apenas para enriquecer a textura do disco. Uma explicação por sessão
@@ -798,7 +813,11 @@ function init(){
         }
       }
     }
-    if (ctx.eduTick) ctx.eduTick(rawDelta);
+    // PR-2: mesma blindagem — a descoberta espontânea nunca derruba a cena.
+    if (ctx.eduTick){
+      try { ctx.eduTick(rawDelta); }
+      catch(e){ ctx.eduTick = null; ctx.eduFault('tick-edu', e); }
+    }
 
     renderer.setRenderTarget(sceneRT);
     renderer.render(scene, camera);

@@ -30,14 +30,16 @@ export function createEdu(ctx){
     '#edu .edu-headline{font-size:11px;line-height:1.25;font-weight:700;letter-spacing:.16em;color:#ffbf7d}',
     '#edu .edu-term{margin-top:5px;font-size:22px;line-height:1.05;font-weight:540;letter-spacing:-.015em;color:#fff6e9}',
     '#edu .edu-body{margin-top:8px;max-width:28em;font-size:14px;line-height:1.5;color:rgba(255,242,225,.92)}',
-    '#edu .edu-intro{position:absolute;left:50%;bottom:68px;max-width:calc(100vw - 60px);transform:translate3d(-50%,8px,0);',
+    '#edu .edu-intro{position:absolute;left:50%;bottom:max(68px,calc(env(safe-area-inset-bottom) + 56px));max-width:calc(100vw - 60px);transform:translate3d(-50%,8px,0);',
     ' font-size:13px;letter-spacing:.035em;color:rgba(255,239,218,.82);text-align:center;text-shadow:0 2px 10px #000;',
     ' opacity:0;transition:opacity .55s ease,transform .7s cubic-bezier(.22,1,.36,1)}',
     '#edu .edu-intro.visible{opacity:1;transform:translate3d(-50%,0,0)}',
     '#edu .edu-sr{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;',
     ' overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important}',
-    '@media(max-width:719px){#edu .edu-label{width:calc(100vw - 40px);padding:12px 15px 13px}',
-    '#edu .edu-term{font-size:19px}#edu .edu-body{font-size:13px;line-height:1.48}#edu .edu-intro{bottom:108px;font-size:12px}}',
+    // Telefone deitado (largo mas baixo) também usa o layout mobile.
+    '@media(max-width:719px),(max-height:499px){#edu .edu-label{width:calc(100vw - 40px);padding:12px 15px 13px}',
+    '#edu .edu-term{font-size:19px}#edu .edu-body{font-size:13px;line-height:1.48}',
+    '#edu .edu-intro{bottom:max(108px,calc(env(safe-area-inset-bottom) + 96px));font-size:12px}}',
     '@media(prefers-reduced-motion:reduce){#edu .edu-label,#edu .edu-intro{transition:opacity .15s linear!important}',
     '#edu .edu-line{transition:opacity .15s linear!important}}'
   ].join('');

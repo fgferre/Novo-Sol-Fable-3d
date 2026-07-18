@@ -45,6 +45,11 @@ export function createEduTour(ctx){
     source:{kind:'',sourceId:-1,generation:-1,physical:false,visible:false,unavailable:false},
     previous:null
   };
+  // PR-2 — retorno suave da pose ao sair da visita em modo assistido. O
+  // processamento vive no início de tick() (que o main chama sempre que
+  // ctx.eduTourTick existe), então continua rodando depois de state.active
+  // virar false.
+  var restore={active:false,theta:0,phi:0,dist:0,startedAt:0};
 
   var style=document.createElement('style');
   style.id='eduTourStyle';
@@ -70,7 +75,12 @@ export function createEduTour(ctx){
     '#eduTour button.primary{background:rgba(255,142,47,.25);border-color:rgba(255,192,121,.64);color:#fff0dc}',
     '#eduTour button.quiet{background:transparent;color:rgba(255,235,212,.72)}#eduTour button[hidden],#eduTour .tour-body[hidden]{display:none}',
     '#eduTour button:disabled{opacity:.48;cursor:default}#eduTour button:focus-visible{outline:2px solid #ffe0ad;outline-offset:3px}',
-    '@media(min-width:720px){#eduTour .tour-card{left:22px;right:auto;bottom:28px;width:330px}}',
+    // Layout desktop só em janelas realmente altas: telefone deitado
+    // (largo mas baixo) permanece no layout mobile, colado à base segura.
+    '@media(min-width:720px) and (min-height:500px){#eduTour .tour-card{left:22px;right:auto;bottom:28px;width:330px}}',
+    // Em paisagem de telefone o disco domina a altura da tela; um cartão
+    // mais estreito na esquerda deixa o Sol visível ao lado do texto.
+    '@media(min-width:720px) and (max-height:499px){#eduTour .tour-card{width:min(240px,calc(100vw - 28px))}}',
     '@media(prefers-reduced-motion:reduce){#eduTour .tour-card{backdrop-filter:none;-webkit-backdrop-filter:none}}',
     // Chip de palco: o convite à visita mora no palco, não na engrenagem.
     '#eduTourChip{position:fixed;left:50%;bottom:max(16px,calc(env(safe-area-inset-bottom) + 10px));transform:translate3d(-50%,0,0);',
@@ -153,7 +163,7 @@ export function createEduTour(ctx){
   }
   function notify(){
     if(typeof ctx.onEduTourChange==='function'){
-      try{ctx.onEduTourChange(stateSnapshot());}catch(e){}
+      try{ctx.onEduTourChange(stateSnapshot());}catch(e){ctx.eduFault('notify',e);}
     }
   }
   function paintProgress(){
@@ -162,7 +172,18 @@ export function createEduTour(ctx){
       var dot=document.createElement('span');dot.className='tour-dot'+(i<state.index?' done':i===state.index?' current':'');progress.appendChild(dot);
     }
   }
+  var lastRenderKey='',lastProgressIndex=-1;
   function render(){
+    // tick() chama render() todo frame, mas o cartão é aria-live: reescrever
+    // textContent sem mudança real vira spam de mutações para VoiceOver e
+    // lixo de DOM. A chave cobre TUDO que altera o output (root.hidden,
+    // textos, estados e rótulos dos botões); chave igual ⇒ retorno cedo.
+    var key=state.active
+      ?'1|'+state.index+'|'+lang()+'|'+(state.expanded?1:0)+'|'+(state.ready?1:0)+'|'+state.phase
+        +'|'+(state.source.unavailable?1:0)+'|'+(state.assist?1:0)+'|'+state.manualReason
+      :'0';
+    if(key===lastRenderKey)return;
+    lastRenderKey=key;
     if(!state.active){root.hidden=true;return;}
     var t=copy(),step=current(),c=t[step.copy]||t.surface;
     root.hidden=false;root.lang=lang()==='en'?'en':'pt-BR';
@@ -181,7 +202,8 @@ export function createEduTour(ctx){
     next.disabled=!state.ready&&!state.source.unavailable;
     resume.hidden=state.assist;resume.textContent=t.resume;
     exit.textContent=t.exit;
-    paintProgress();
+    // Os pontos de progresso só dependem de index/total.
+    if(state.index!==lastProgressIndex){lastProgressIndex=state.index;paintProgress();}
   }
   function factor(){
     if(!state.active)return 1;
@@ -249,20 +271,25 @@ export function createEduTour(ctx){
     return {visible:p.z<1&&p.z>-1,x:(p.x*.5+.5)*window.innerWidth,y:(1-(p.y*.5+.5))*window.innerHeight};
   }
   function updateSourceVisibility(){
-    var step=current(),p=sourceProjection();
-    state.source.visible=!!p.visible;
-    if(step.id==='flare')state.source.physical=ctx.surfFlareT<12&&ctx.surfFlareAmp>0;
-    else if(step.id==='cme')state.source.physical=ctx.cmeT<900&&ctx.cmeT>0;
-    else if(step.id==='loops')state.source.physical=hasAmbientLoop();
-    else if(step.id==='filament'){
-      var fil=ctx.promStates[state.source.sourceId];
-      state.source.physical=!!(fil&&fil.flat&&fil.flat.visible&&fil.flat.material.uniforms.uAbsorb.value>.02);
-    }else if(step.id==='prominence'){
-      var prom=ctx.promStates[state.source.sourceId];
-      state.source.physical=!!(prom&&Math.max(prom.meshes[0].material.uniforms.uIntensity.value,prom.meshes[1].material.uniforms.uIntensity.value)>.04);
-    }else if(step.id==='corona')state.source.physical=!!ctx.coronaRays;
-    else if(step.id==='maximum')state.source.physical=Math.abs(ctx.cyclePhase01-.5)<.04&&ctx.cycleAmpK>1.12;
-    else if(step.id==='minimum')state.source.physical=(ctx.cyclePhase01<.04||ctx.cyclePhase01>.96)&&ctx.cycleAmpK<.5;
+    // Os acessos profundos (uniforms de materiais que a simulação pode
+    // recriar) ficam sob guarda: uma estrutura ausente marca a fonte como
+    // não-física em vez de derrubar o tick da visita.
+    try{
+      var step=current(),p=sourceProjection();
+      state.source.visible=!!p.visible;
+      if(step.id==='flare')state.source.physical=ctx.surfFlareT<12&&ctx.surfFlareAmp>0;
+      else if(step.id==='cme')state.source.physical=ctx.cmeT<900&&ctx.cmeT>0;
+      else if(step.id==='loops')state.source.physical=hasAmbientLoop();
+      else if(step.id==='filament'){
+        var fil=ctx.promStates[state.source.sourceId];
+        state.source.physical=!!(fil&&fil.flat&&fil.flat.visible&&fil.flat.material.uniforms.uAbsorb.value>.02);
+      }else if(step.id==='prominence'){
+        var prom=ctx.promStates[state.source.sourceId];
+        state.source.physical=!!(prom&&Math.max(prom.meshes[0].material.uniforms.uIntensity.value,prom.meshes[1].material.uniforms.uIntensity.value)>.04);
+      }else if(step.id==='corona')state.source.physical=!!ctx.coronaRays;
+      else if(step.id==='maximum')state.source.physical=Math.abs(ctx.cyclePhase01-.5)<.04&&ctx.cycleAmpK>1.12;
+      else if(step.id==='minimum')state.source.physical=(ctx.cyclePhase01<.04||ctx.cyclePhase01>.96)&&ctx.cycleAmpK<.5;
+    }catch(e){state.source.physical=false;ctx.eduFault('source-visibility',e);}
   }
   function record(){
     if(state.recorded||!state.source.physical||!ctx.recordEduDiscovery)return;
@@ -301,9 +328,11 @@ export function createEduTour(ctx){
     if(id==='surface'){state.source.physical=!!ctx.sunMesh;}
     syncFactor();render();notify();
   }
-  function canRun(fn){
+  function canRun(fn,label){
     if(typeof fn!=='function')return null;
-    try{return fn();}catch(e){return null;}
+    // Uma falha de física não pode sumir em silêncio: o ring de telemetria
+    // (core/config.js) registra e o QA cobra faults===0 no fim da visita.
+    try{return fn();}catch(e){ctx.eduFault(label,e);return null;}
   }
   function tickStep(){
     var id=current().id;
@@ -323,15 +352,15 @@ export function createEduTour(ctx){
     }
     if(id==='flare'){
       if(!state.fired&&state.entered>.28){
-        var flare=canRun(ctx.canPreviewBurst);
-        if(flare&&flare.ok){var fired=canRun(ctx.previewBurst);if(fired&&fired.ok){state.fired=true;state.source.kind='flare';state.source.physical=true;state.source.sourceId=state.source.sourceId<0?0:state.source.sourceId;}}
+        var flare=canRun(ctx.canPreviewBurst,'can-preview-burst');
+        if(flare&&flare.ok){var fired=canRun(ctx.previewBurst,'preview-burst');if(fired&&fired.ok){state.fired=true;state.source.kind='flare';state.source.physical=true;state.source.sourceId=state.source.sourceId<0?0:state.source.sourceId;}}
       }
       if(state.fired&&ctx.surfFlareT>.08&&ctx.surfFlareT<10)ready();return;
     }
     if(id==='cme'){
       if(!state.fired){
-        var cme=canRun(ctx.canPreviewCME);
-        if(cme&&cme.ok){var launched=canRun(ctx.previewCME);if(launched&&launched.ok){state.fired=true;state.source.kind='cme';state.source.physical=true;}}
+        var cme=canRun(ctx.canPreviewCME,'can-preview-cme');
+        if(cme&&cme.ok){var launched=canRun(ctx.previewCME,'preview-cme');if(launched&&launched.ok){state.fired=true;state.source.kind='cme';state.source.physical=true;}}
       }
       if(state.fired&&ctx.cmeT>.18&&ctx.cmeT<10)ready();return;
     }
@@ -343,7 +372,7 @@ export function createEduTour(ctx){
     }
     if(id==='maximum'||id==='minimum'){
       if(!state.fired){
-        var event=id==='maximum'?canRun(ctx.previewSolarMax):canRun(ctx.previewSolarMin);
+        var event=id==='maximum'?canRun(ctx.previewSolarMax,'preview-solar-max'):canRun(ctx.previewSolarMin,'preview-solar-min');
         if(event&&event.ok)state.fired=true;
       }
       var cycle=ctx.act&&ctx.act.cycleEventInfo?ctx.act.cycleEventInfo():null;
@@ -354,6 +383,10 @@ export function createEduTour(ctx){
     if(ctx.directorUserExit)ctx.directorUserExit();
     if(state.active)end('restart');
     state.active=true;state.index=0;state.assist=true;state.manualReason='';state.panelOpen=false;
+    // Uma nova visita toma a câmera: qualquer retorno em andamento cessa e
+    // a pose corrente (onde quer que o retorno tenha chegado) vira a nova
+    // referência de restauração.
+    restore.active=false;
     state.previous={theta:ctx.theta,phi:ctx.phi,targetCamDist:ctx.targetCamDist};
     ctx.eduTourActive=true;
     if(!chipState.engaged){chipState.engaged=true;persistChip();}
@@ -363,7 +396,17 @@ export function createEduTour(ctx){
   function end(reason){
     if(!state.active)return false;
     clearOverrides();if(ctx.cancelCycleEvent)ctx.cancelCycleEvent();
-    if(state.previous){ctx.targetCamDist=state.previous.targetCamDist;}
+    if(state.previous){
+      if(state.assist){
+        // A pessoa nunca tomou a câmera (saiu ainda assistida): devolvemos
+        // a pose COMPLETA de onde a visita começou, suavemente, via tick().
+        restore.active=true;restore.theta=state.previous.theta;restore.phi=state.previous.phi;
+        restore.dist=state.previous.targetCamDist;restore.startedAt=performance.now();
+      }else{
+        // Quem explorou manualmente não é teleportado: só o zoom volta.
+        ctx.targetCamDist=state.previous.targetCamDist;
+      }
+    }
     state.active=false;state.phase='free';state.expanded=false;state.ready=false;state.timeFactor=1;state.panelOpen=false;
     ctx.eduTourActive=false;ctx.eduTourTimeFactor=1;root.hidden=true;syncChip();notify();
     return reason||true;
@@ -407,7 +450,22 @@ export function createEduTour(ctx){
     var th=Math.atan2(aim.z,aim.x),ph=Math.acos(clamp(aim.y,-1,1));
     ctx.theta=lerpAngle(ctx.theta,th,k);ctx.phi+= (ph-ctx.phi)*k;ctx.phi=clamp(ctx.phi,.18,Math.PI-.18);ctx.thetaVel=0;ctx.phiVel=0;
   }
+  function restoreTick(rawDelta){
+    // Qualquer gesto NOVO durante o retorno cancela na hora — nunca
+    // disputamos a câmera com a pessoa. O clique de saída marca interação
+    // ANTES do end(); por isso o cancelamento compara o relógio de
+    // interação com o instante em que o retorno começou, em vez de uma
+    // janela absoluta que abortaria o retorno no próprio clique de sair.
+    if(ctx.lastInteraction>restore.startedAt){restore.active=false;return;}
+    var k=1-Math.exp(-Math.max(0,rawDelta)*3.5);
+    ctx.theta=lerpAngle(ctx.theta,restore.theta,k);
+    ctx.phi+=(restore.phi-ctx.phi)*k;
+    ctx.targetCamDist+=(restore.dist-ctx.targetCamDist)*k;
+    var dTheta=Math.abs(lerpAngle(ctx.theta,restore.theta,1)-ctx.theta);
+    if(dTheta<.01&&Math.abs(restore.phi-ctx.phi)<.01&&Math.abs(restore.dist-ctx.targetCamDist)<.01)restore.active=false;
+  }
   function tick(rawDelta){
+    if(restore.active)restoreTick(rawDelta);
     if(!state.active)return;
     if(state.panelOpen){render();return;}
     state.entered+=Math.max(0,rawDelta);
@@ -415,8 +473,14 @@ export function createEduTour(ctx){
     render();
   }
 
-  expand.addEventListener('click',function(){setExpanded();});
-  next.addEventListener('click',nextStep);exit.addEventListener('click',function(){end('user');});resume.addEventListener('click',resumeFrame);
+  // Os botões do cartão contam como interação real: seguram a deriva idle
+  // (controls.js) sem tocar na pose. A marca vem ANTES do end() do exit —
+  // assim ela nunca cancela o retorno suave que o próprio exit inicia.
+  function markUser(){if(ctx.markUserInteraction)ctx.markUserInteraction();}
+  expand.addEventListener('click',function(){markUser();setExpanded();});
+  next.addEventListener('click',function(){markUser();nextStep();});
+  exit.addEventListener('click',function(){markUser();end('user');});
+  resume.addEventListener('click',function(){markUser();resumeFrame();});
   ctx.eduTourStart=start;ctx.eduTourNext=nextStep;ctx.eduTourExit=end;ctx.eduTourExpand=setExpanded;ctx.eduTourUserExit=userExit;
   ctx.eduTourResumeFrame=resumeFrame;ctx.eduTourPanelChanged=panelChanged;ctx.eduTourCameraTick=cameraTick;ctx.eduTourTick=tick;ctx.eduTourInfo=stateSnapshot;
   ctx.onEduTourLanguageChange=function(){chipCopy();render();notify();};ctx.eduTourTimeFactor=1;ctx.eduTourActive=false;

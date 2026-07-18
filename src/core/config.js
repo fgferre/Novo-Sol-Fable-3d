@@ -194,6 +194,23 @@ export function createConfig(ctx){
   // A camada educativa segue o mesmo contrato: eventos passam apenas
   // primitivos; fora de ?edu=1 esta chamada permanece vazia e barata.
   ctx.eduEvent = function(){};
+  // PR-2 (Museu) — telemetria de falhas engolidas da camada educativa.
+  // O ring vive AQUI (não em edu.js/tour.js) para existir mesmo com edu
+  // desligado e sob ?det=1 — onde é inerte por construção: só coleta se
+  // alguém chamar, e sob det os ticks edu nem existem. Agrega por label
+  // (até 16 entradas {label,message,count}) e avisa no console apenas na
+  // PRIMEIRA ocorrência de cada label — telemetria, não spam.
+  ctx.eduFaults = [];
+  ctx.eduFault = function(label, err){
+    var faults = ctx.eduFaults;
+    for (var fi = 0; fi < faults.length; fi++){
+      if (faults[fi].label === label){ faults[fi].count++; return; }
+    }
+    if (faults.length >= 16) faults.shift();
+    faults.push({ label: String(label || '?'),
+      message: err && err.message ? String(err.message) : String(err), count: 1 });
+    try { console.warn('[edu]', label, err); } catch(e){}
+  };
 
   // superfície do domínio (imutáveis pós-init; mutáveis já escritos como ctx.*)
   ctx.urlQ = urlQ; ctx.DET = DET; ctx.DET_HOLD = DET_HOLD; ctx.srand = srand;

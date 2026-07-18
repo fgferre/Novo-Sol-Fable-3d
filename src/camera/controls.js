@@ -26,6 +26,11 @@ export function createControls(ctx){
   var minDist = SUN_RADIUS*1.5, maxDist = 30;
   // ctx.lastInteraction / ctx.lastInteractionFrame nascem em createConfig
   // (Achado 11): o relógio de interação é escrito via ctx.markInteraction().
+  // PR-2 (Museu): interações de UI fora do canvas (os botões do cartão da
+  // visita) contam como interação real — seguram a deriva idle com a MESMA
+  // atualização de timestamps dos gestos, SEM parar inércia nem tocar a
+  // pose da câmera.
+  ctx.markUserInteraction = function(){ ctx.markInteraction(); };
 
   var pointers = new Map();
   var rotLast = null;

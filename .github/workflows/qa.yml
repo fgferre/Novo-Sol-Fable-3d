@@ -45,10 +45,13 @@ jobs:
         run: node tools/qa-edu.js dist-single/index.html
       - name: QA da visita guiada no iPhone
         run: node tools/qa-edu-tour.js dist-single/index.html
+      # As máscaras excluem as duas faixas de texto DOM (título e base):
+      # fontes rasterizam diferente por SO e não são o objeto deste gate —
+      # o render da estrela continua comparado pixel a pixel, sem máscara.
       - name: Paridade visual vs baselines
         run: |
           node tools/parity.js qa-out --file dist-single/index.html
-          node tools/imgdiff.js qa/baselines qa-out --max-frac 0.001 --out qa-diff
+          node tools/imgdiff.js qa/baselines qa-out --max-frac 0.001 --out qa-diff --mask 0,0,620,130 --mask 0,-90,9999,90
       - name: Anexar diffs em caso de falha
         if: failure()
         uses: actions/upload-artifact@v4

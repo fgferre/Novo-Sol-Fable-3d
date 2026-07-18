@@ -1,0 +1,38 @@
+name: Regenerar baselines
+
+# Caminho OFICIAL para regenerar qa/baselines: roda tools/parity.js no MESMO
+# ambiente do gate (ubuntu + SwiftShader + fontes do CI) e publica as capturas
+# como artifact para serem commitadas num PR. Regra da série Museu (ver
+# docs/SERIE-MUSEU.md): baseline só muda por decisão deliberada, sempre com
+# prova cirúrgica de confinamento do diff — nunca regenerar de uma máquina
+# local, cujas fontes/ambiente divergem do gate.
+on:
+  workflow_dispatch:
+
+jobs:
+  regen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Build (arquivo único)
+        run: |
+          npm run build
+          npm run build:single
+      - name: Capturar baselines determinísticas
+        run: node tools/parity.js qa-out --file dist-single/index.html
+      - name: Diff vs baselines atuais (informativo)
+        run: node tools/imgdiff.js qa/baselines qa-out --max-frac 1 --out qa-diff --mask 0,0,620,130 --mask 0,-90,9999,90
+      - uses: actions/upload-artifact@v4
+        with:
+          name: baselines-regeneradas
+          retention-days: 7
+          path: |
+            qa-out/
+            qa-diff/

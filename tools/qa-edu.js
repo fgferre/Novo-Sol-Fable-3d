@@ -182,6 +182,30 @@ async function layoutState(page){
   check('det permanece totalmente sem camada educativa',!inert.info.enabled&&!inert.root&&!inert.style&&!inert.panelSwitch&&!inert.langControl&&!inert.collectionRow&&!inert.collection.available&&inert.collectionStored==='{"sentinel":true}'&&!inert.emit);
   await det.close();
 
+  // GO-LIVE (série Museu, PR-3): a carga SEM parâmetros, num contexto
+  // virgem de iPhone, chega com o museu de porta aberta — descobertas
+  // ligadas, intro visível, chip da visita no palco. URL/storage seguem
+  // vencendo: ?edu=0 desliga e storage desligado permanece desligado.
+  const fresh=await browser.newContext({viewport:{width:390,height:844},deviceScaleFactor:1});
+  const freshPage=await fresh.newPage();
+  freshPage.setDefaultTimeout(240000);
+  freshPage.on('pageerror',(e)=>errors.push('[fresh] '+e.message));
+  freshPage.on('console',(m)=>{if(m.type()==='error')errors.push('[fresh] '+m.text());});
+  await freshPage.goto(base);
+  await freshPage.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduInfo&&window.__solInfo.eduTourInfo);
+  const arrival=await freshPage.evaluate(()=>({info:__solInfo.eduInfo(),rootHidden:document.querySelector('#edu')&&document.querySelector('#edu').hidden,
+    introVisible:!!document.querySelector('#edu .edu-intro.visible'),chip:__solInfo.eduTourInfo().chip}));
+  // Uma descoberta real pode disparar já nos primeiros segundos e ocupar o
+  // lugar da intro — museu de porta aberta COM obra em exposição também
+  // conta como recepção correta.
+  check('carga sem parâmetros chega com descobertas ligadas e chip no palco',
+    arrival.info.enabled&&arrival.rootHidden===false&&(arrival.introVisible||arrival.info.active.length>0)&&arrival.chip.visible,
+    JSON.stringify({enabled:arrival.info.enabled,rootHidden:arrival.rootHidden,introVisible:arrival.introVisible,
+      activeCount:arrival.info.active.length,chip:arrival.chip}));
+  const optOut=await freshPage.evaluate(()=>{__solInfo.setControl('edu',0,{persist:false});return __solInfo.eduInfo().enabled;});
+  check('desligar continua possível e imediato',optOut===false);
+  await fresh.close();
+
   // Coleção: memória separada de solKnobs, gravada apenas após uma
   // descoberta física visível. O contexto isolado impede que itens de
   // cenários anteriores escondam uma regressão de persistência.

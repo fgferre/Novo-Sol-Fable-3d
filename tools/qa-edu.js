@@ -11,8 +11,17 @@ function segmentDistance(px,py,x1,y1,x2,y2){const dx=x2-x1,dy=y2-y1,d=dx*dx+dy*d
 async function frame(page){await page.evaluate(()=>new Promise((resolve)=>requestAnimationFrame(()=>resolve())));}
 async function forceVisible(page){
   for(let i=0;i<4;i++){
-    await page.evaluate((n)=>window.__solInfo.forceFlarePair(n),i);
-    await frame(page);
+    await page.evaluate((n)=>{
+      const dir=window.__solInfo.forceFlarePair(n),state=window.__solInfo.state();
+      // A prova é do cartão/redução de movimento, não da sorte de uma
+      // região já estar na frente sob SwiftShader. A mesma fonte física é
+      // enquadrada para que o flare tenha uma chance real de ser lido.
+      window.__solInfo.setView(Math.atan2(dir[2],dir[0]),Math.acos(Math.max(-1,Math.min(1,dir[1]))),state.fitDist*1.3);
+    },i);
+    await frame(page);await frame(page);
+    try{
+      await page.waitForFunction(()=>{const info=window.__solInfo.eduInfo(),item=info.active[0];return !!(item&&item.type==='flare'&&item.visible);},null,{timeout:12000});
+    }catch(_){continue;}
     const info=await page.evaluate(()=>window.__solInfo.eduInfo());
     if(info.active.length&&info.active[0].type==='flare'&&info.active[0].visible){
       // Aguarda a entrada editorial (máx. 650 ms) assentar antes de medir
@@ -81,7 +90,10 @@ async function forceSpotDiscovery(page){
     // Retira as proeminências da disputa: a fonte da prova deve ser a
     // região magnética real, não outra descoberta já madura.
     for(let j=0;j<window.__solInfo.promLife().length;j++)window.__solInfo.setPromLife(j,.01);
-    window.__solInfo.setCyclePhase(.5,true);
+    // Fica perto do pico para manter regiões fortes, mas fora da janela
+    // editorial de máximo natural. Assim a prova isola manchas em vez de
+    // competir com um cartão global de maior prioridade.
+    window.__solInfo.setCyclePhase(.42,true);
   });
   await frame(page);
   for(let i=0;i<4;i++){
@@ -100,34 +112,30 @@ async function forceSpotDiscovery(page){
   return null;
 }
 async function forceCycleDiscovery(page,kind){
-  await page.evaluate((kind)=>{
-    window.__solInfo.setControl('edu',1,{persist:false});
+  const prepared=await page.evaluate((kind)=>{
+    // A prova da descoberta natural não usa a prévia/hold. Ela posiciona o
+    // relógio físico num estado legítimo do modelo e confirma que o emissor
+    // reage a fase+amplitude mesmo sem cycleEvent.
+    window.__solInfo.setControl('edu',0,{persist:false});
     window.__solInfo.setRotSpeed(0);
-    // Mantém a prova focada no estado global: o cartão só poderá nascer
-    // depois de o relógio físico ter alcançado o hold do ciclo.
     for(let j=0;j<window.__solInfo.promLife().length;j++)window.__solInfo.setPromLife(j,.01);
-    if(kind==='maximum')window.__solInfo.forceSolarMax();
-    else window.__solInfo.forceSolarMin();
+    window.__solInfo.setControl('spots',0,{persist:false});
+    window.__solInfo.setCyclePhase(kind==='maximum'?.5:1,true);
+    const cycle=window.__solInfo.cycleInfo();
+    window.__solInfo.setControl('edu',1,{persist:false});
+    return {cycle:cycle,info:window.__solInfo.eduInfo()};
   },kind);
-  await page.waitForFunction(()=>{
-    const event=window.__solInfo.cycleInfo().event;
-    return event&&event.state==='ramp';
-  },null,{timeout:240000});
-  const rampInfo=await page.evaluate(()=>window.__solInfo.eduInfo());
+  await frame(page);await frame(page);
   await page.waitForFunction((kind)=>{
     const cycle=window.__solInfo.cycleInfo();
     const atTarget=kind==='maximum' ? Math.abs(cycle.phase-.5)<.04 : cycle.phase<.04||cycle.phase>.96;
-    return cycle.event&&cycle.event.state==='hold'&&atTarget;
-  },kind,{timeout:240000});
-  await page.evaluate(()=>window.__solInfo.setControl('edu',1,{persist:false}));
-  await page.waitForFunction((kind)=>{
     const item=window.__solInfo.eduInfo().active[0];
-    return item&&item.type===(kind==='maximum'?'cycleMaximum':'cycleMinimum')&&item.global&&item.visible;
-  },kind,{timeout:240000});
+    return !cycle.event.on&&atTarget&&item&&item.type===(kind==='maximum'?'cycleMaximum':'cycleMinimum')&&item.global&&item.visible;
+  },kind,{timeout:30000});
   // A semântica já existe no frame anterior; aguarda apenas a transição de
   // entrada acabar antes de medir a posição editorial na tela.
   await page.waitForTimeout(700);
-  return page.evaluate((rampInfo)=>({rampInfo:rampInfo,info:window.__solInfo.eduInfo(),cycle:window.__solInfo.cycleInfo(),text:document.querySelector('.edu-label').textContent}),rampInfo);
+  return page.evaluate((prepared)=>({prepared:prepared,info:window.__solInfo.eduInfo(),cycle:window.__solInfo.cycleInfo(),text:document.querySelector('.edu-label').textContent}),prepared);
 }
 async function layoutState(page){
   return page.evaluate(()=>{
@@ -384,7 +392,7 @@ async function layoutState(page){
   const maxLayout=await layoutState(maxPage);
   const maxInside=maxLayout.label&&maxLayout.label.x>=12&&maxLayout.label.y>=12&&maxLayout.label.x+maxLayout.label.width<=maxLayout.viewport.width-12&&maxLayout.label.y+maxLayout.label.height<=maxLayout.viewport.height-12;
   const maxChromeClear=maxLayout.label&&[maxLayout.title,maxLayout.gear,maxLayout.hint].filter(Boolean).every((x)=>!overlap(maxLayout.label,x));
-  check('máximo solar só ganha cartão quando o ciclo físico chega ao pico',!!maximum&&!maximum.rampInfo.active.some((x)=>x.type==='cycleMaximum'||x.type==='cycleMinimum')&&maximum.cycle.event.state==='hold'&&Math.abs(maximum.cycle.phase-.5)<.04&&maximum.cycle.amp>1.12&&!!maxItem&&maxItem.global&&maxItem.anchor===null&&maxItem.lineEnd===null&&!maxItem.connectorVisible&&!maxItem.haloVisible&&!maxLayout.introVisible&&!maximum.info.queued.some((x)=>x.global)&&/Máximo solar/.test(maximum.text)&&maxInside&&maxChromeClear,maximum?JSON.stringify({phase:maximum.cycle.phase,amp:maximum.cycle.amp,global:maxItem&&maxItem.global,anchor:maxItem&&maxItem.anchor,ramp:maximum.rampInfo.active.map((x)=>x.type)}):'não chegou ao máximo');
+  check('máximo solar nasce também do ciclo natural',!!maximum&&!maximum.prepared.info.active.some((x)=>x.type==='cycleMaximum'||x.type==='cycleMinimum')&&!maximum.prepared.cycle.event.on&&!maximum.cycle.event.on&&Math.abs(maximum.cycle.phase-.5)<.04&&maximum.cycle.amp>1.12&&!!maxItem&&maxItem.global&&maxItem.anchor===null&&maxItem.lineEnd===null&&!maxItem.connectorVisible&&!maxItem.haloVisible&&!maxLayout.introVisible&&!maximum.info.queued.some((x)=>x.global)&&/Máximo solar/.test(maximum.text)&&maxInside&&maxChromeClear,maximum?JSON.stringify({phase:maximum.cycle.phase,amp:maximum.cycle.amp,global:maxItem&&maxItem.global,event:maximum.cycle.event.on}):'não chegou ao máximo');
   const maxCollection=await maxPage.evaluate(()=>__solInfo.eduCollectionInfo());
   check('coleção registra o máximo solar alcançado',maxCollection.items.cycle.views.cycleMaximum);
   const maxEnglish=await maxPage.evaluate(()=>{window.__solInfo.setLang('en');return document.querySelector('.edu-label').textContent;});
@@ -405,7 +413,7 @@ async function layoutState(page){
   await minPage.waitForFunction(()=>window.__solInfo&&window.__solInfo.cycleInfo);
   const minimum=await forceCycleDiscovery(minPage,'minimum');
   const minItem=minimum&&minimum.info.active[0];
-  check('mínimo solar usa o estado físico de baixa atividade',!!minimum&&minimum.cycle.event.state==='hold'&&(minimum.cycle.phase<.04||minimum.cycle.phase>.96)&&minimum.cycle.amp<.5&&!!minItem&&minItem.global&&/Mínimo solar/.test(minimum.text),minimum?JSON.stringify({phase:minimum.cycle.phase,amp:minimum.cycle.amp,global:minItem&&minItem.global}):'não chegou ao mínimo');
+  check('mínimo solar nasce do estado físico de baixa atividade',!!minimum&&!minimum.prepared.cycle.event.on&&!minimum.cycle.event.on&&(minimum.cycle.phase<.04||minimum.cycle.phase>.96)&&minimum.cycle.amp<.5&&!!minItem&&minItem.global&&/Mínimo solar/.test(minimum.text),minimum?JSON.stringify({phase:minimum.cycle.phase,amp:minimum.cycle.amp,global:minItem&&minItem.global,event:minimum.cycle.event.on}):'não chegou ao mínimo');
   const minCollection=await minPage.evaluate(()=>__solInfo.eduCollectionInfo());
   check('coleção registra o mínimo solar alcançado',minCollection.items.cycle.views.cycleMaximum&&minCollection.items.cycle.views.cycleMinimum);
   await minPage.close();

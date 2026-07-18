@@ -83,10 +83,10 @@ export function createPanel(ctx){
     '#knobReset{margin-top:22px;width:100%;padding:9px 0;border-radius:9px;cursor:pointer;',
     ' border:1px solid rgba(255,170,90,.3);background:transparent;color:#ffb877;font-size:12px;',
     ' letter-spacing:.05em;transition:background .25s}#knobReset:hover{background:rgba(255,140,50,.12)}',
-    '#lookBtn,#dirBtn{margin-top:14px;width:100%;padding:9px 0;border-radius:9px;cursor:pointer;',
+    '#lookBtn,#dirBtn,#eduTourBtn{margin-top:14px;width:100%;min-height:44px;padding:9px 0;border-radius:9px;cursor:pointer;',
     ' border:1px solid rgba(255,170,90,.45);background:rgba(255,140,50,.16);color:#ffd9a8;',
     ' font-size:12px;letter-spacing:.05em;transition:background .25s}',
-    '#lookBtn:hover,#dirBtn:hover{background:rgba(255,140,50,.28)}#dirBtn{margin-top:8px}',
+    '#lookBtn:hover,#dirBtn:hover,#eduTourBtn:hover{background:rgba(255,140,50,.28)}#dirBtn{margin-top:8px}#eduTourBtn{margin-top:3px}',
     '#tierRow{display:flex;gap:6px;margin:8px 0 2px}',
     '#tierRow button{flex:1;padding:7px 0;border-radius:8px;cursor:pointer;font-size:11px;',
     ' border:1px solid rgba(255,170,90,.25);background:transparent;color:rgba(233,228,218,.75);',
@@ -122,6 +122,23 @@ export function createPanel(ctx){
     ctx.subscribeControls(function(key,info){ if(key==='edu')syncEdu(info.applied>.5); });
     eduRow.appendChild(eduLabel);eduRow.appendChild(eduSwitch);panel.appendChild(eduRow);
 
+    // A visita guiada é opt-in e não substitui a exploração livre. Ela fica
+    // junto da camada educativa, antes de idioma/coleção, para ser achada
+    // por quem chega pelo celular sem precisar entender os sliders.
+    var tourButton=document.createElement('button');tourButton.type='button';tourButton.id='eduTourBtn';
+    tourButton.textContent='começar visita guiada';tourButton.setAttribute('aria-pressed','false');
+    function syncTour(info){
+      var active=!!(info&&info.active),en=ctx.eduLang==='en';
+      tourButton.textContent=en?(active?'guided visit in progress':'start guided visit'):(active?'visita guiada em andamento':'começar visita guiada');
+      tourButton.setAttribute('aria-pressed',String(active));
+    }
+    tourButton.addEventListener('click',function(){
+      var info=ctx.eduTourInfo&&ctx.eduTourInfo();
+      if(info&&info.active){setPanelOpen(false);return;}
+      if(ctx.eduTourStart){ctx.eduTourStart();setPanelOpen(false);}
+    });
+    ctx.onEduTourChange=syncTour;syncTour(ctx.eduTourInfo&&ctx.eduTourInfo());panel.appendChild(tourButton);
+
     var langRow=document.createElement('div'); langRow.className='choice'; langRow.id='eduLangRow';
     var langLabel=document.createElement('span'); langLabel.textContent='Idioma / Language';
     var langChoices=document.createElement('div'); langChoices.className='choiceBtns';
@@ -142,7 +159,7 @@ export function createPanel(ctx){
     }
     var renderCollection=function(){};
     syncLanguage(ctx.eduLang==='en'?'en':'pt');
-    ctx.onEduLanguageChange=function(code){ syncLanguage(code); renderCollection(); };
+    ctx.onEduLanguageChange=function(code){ syncLanguage(code); renderCollection(); syncTour(ctx.eduTourInfo&&ctx.eduTourInfo()); };
     langRow.appendChild(langLabel);langRow.appendChild(langChoices);panel.appendChild(langRow);
 
     // A coleção é deliberadamente uma leitura calma dentro dos ajustes: ela
@@ -465,6 +482,7 @@ export function createPanel(ctx){
     hudEl.style.right=open?'calc(min(330px, 86vw) + 18px)':'10px';
     clearInterval(stateTimer); stateTimer=0;
     if(open){ refreshAvailability(); stateTimer=setInterval(refreshAvailability,400);requestAnimationFrame(function(){panel.focus();}); }
+    if(ctx.eduTourPanelChanged)ctx.eduTourPanelChanged(open);
     refreshPerformanceAttention();
   }
   gear.addEventListener('click',function(){setPanelOpen(!panel.classList.contains('open'));});

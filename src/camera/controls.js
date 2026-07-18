@@ -66,6 +66,9 @@ export function createControls(ctx){
   }
 
   function onPointerDown(e){
+    // A visita nunca disputa uma câmera que a pessoa acabou de tocar: ela
+    // mantém a etapa/cartão, mas solta o reenquadramento automático.
+    if (ctx.eduTourUserExit) ctx.eduTourUserExit('gesture');
     ctx.directorUserExit();   // FASE 5: input devolve a câmera ao usuário
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     try { renderer.domElement.setPointerCapture(e.pointerId); } catch(_){}
@@ -177,6 +180,7 @@ export function createControls(ctx){
 
   function onWheel(e){
     e.preventDefault();
+    if (ctx.eduTourUserExit) ctx.eduTourUserExit('gesture');
     ctx.directorUserExit();   // FASE 5: input devolve a câmera ao usuário
     ctx.targetCamDist += e.deltaY*0.0035*ctx.targetCamDist;
     ctx.targetCamDist = Math.max(minDist, Math.min(maxDist, ctx.targetCamDist));
@@ -221,6 +225,7 @@ export function createControls(ctx){
     // Tab, Escape e qualquer tecla alheia à câmera não são edição da cena.
     // A guarda vem antes de devolver o controle do diretor ao usuário.
     if (!handled) return;
+    if (ctx.eduTourUserExit) ctx.eduTourUserExit('keyboard');
     ctx.directorUserExit();   // FASE 5: input de câmera devolve o controle
     // passo imediato + impulso de inércia: responde já no keydown mesmo
     // se o próximo frame demorar (máquinas lentas), sem mudar o "feel"

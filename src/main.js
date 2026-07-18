@@ -30,6 +30,7 @@ import { createDiag } from './debug/diag.js';
 import { createRenderer, createRenderInfra, createRTType } from './core/renderer.js';
 import { createEdu } from './edu/edu.js';
 import { createEduCollection } from './edu/collection.js';
+import { createEduTour } from './edu/tour.js';
 
 THREE.ColorManagement.enabled = false;
 
@@ -369,6 +370,9 @@ function init(){
   createEdu(ctx);
 
   createDirector(ctx);
+  // A visita guiada é separada das descobertas espontâneas e do diretor:
+  // cartão persistente/tátil, tempo de leitura e enquadramento consentido.
+  createEduTour(ctx);
   var directorTick = ctx.directorTick, directorActive = ctx.directorActive,
       directorStart = ctx.directorStart;
 
@@ -391,6 +395,9 @@ function init(){
       ? (held ? 0 : (1/60))
       : Math.min(clock.getDelta(), 0.1);
     var delta = rawDelta * ctx.TIME_SCALE;
+    // O museu só reduz/pausa o relógio físico durante uma leitura explícita.
+    // A câmera continua com rawDelta, portanto ainda converge suavemente.
+    if (!DET && ctx.eduTourTimeFactor !== undefined) delta *= ctx.eduTourTimeFactor;
     ctx.elapsed += delta;
     sunUniforms.uTime.value = ctx.elapsed;
     // FASE 5 — modo diretor: coreografa câmera/eventos/knobs por cima
@@ -481,19 +488,23 @@ function init(){
       ctx.cycleTime += delta * cycMul;
       if (cycMul > 1.0) ctx.cycleWarp += delta * (cycMul - 1.0);
       updateCycleState();
-      // Museu Solar — o cartão do ciclo não nasce ao apertar um botão.
-      // Ele só é liberado quando o relógio físico alcançou e está segurando
-      // o máximo/mínimo. Assim a explicação acompanha a transformação real
-      // do modelo, inclusive no modo de prévia acelerada do painel.
+      // Museu Solar — máximo e mínimo precisam nascer tanto na prévia
+      // acelerada quanto na evolução natural do relógio. Antes só o estado
+      // `hold` da prévia emitia o cartão, deixando um ciclo normal de ~30 min
+      // sem explicação alguma. Os limiares abaixo vêm do MESMO estado físico
+      // (fase/amplitude), e a chave por meio-ciclo impede repetição.
       if (!DET && ctx.EDU_K > .5 && ctx.eduEvent){
-        var eduCycleEvent = ctx.act.cycleEventInfo();
-        if (eduCycleEvent.on && eduCycleEvent.state === 'hold'){
-          var eduCycleKey = Math.round(eduCycleEvent.targetTot * 2);
-          if (Math.abs(ctx.cyclePhase01 - .5) < .04){
-            if (ctx.eduCycleMaxKey !== eduCycleKey && ctx.eduEvent('cycleMaximum',ctx.cyclePhase01,ctx.cycleAmpK,ctx.cyclePolF,1,eduCycleKey)) ctx.eduCycleMaxKey = eduCycleKey;
-          } else if (ctx.cyclePhase01 < .04 || ctx.cyclePhase01 > .96){
-            if (ctx.eduCycleMinKey !== eduCycleKey && ctx.eduEvent('cycleMinimum',ctx.cyclePhase01,ctx.cycleAmpK,ctx.cyclePolF,1,eduCycleKey)) ctx.eduCycleMinKey = eduCycleKey;
-          }
+        var eduCycleTotal=CYCLE_PHASE0+ctx.cycleTime/CYCLE_PERIOD;
+        // O mínimo atravessa a fronteira 0/1; +.04 torna os dois lados da
+        // mesma janela a mesma chave (evita explicar duas vezes a virada).
+        var eduMaxKey=Math.floor(eduCycleTotal)*2+1;
+        var eduMinKey=Math.floor(eduCycleTotal+.04)*2;
+        var atMax=Math.abs(ctx.cyclePhase01-.5)<.04&&ctx.cycleAmpK>1.12;
+        var atMin=(ctx.cyclePhase01<.04||ctx.cyclePhase01>.96)&&ctx.cycleAmpK<.50;
+        if(atMax){
+          if(ctx.eduCycleMaxKey!==eduMaxKey&&ctx.eduEvent('cycleMaximum',ctx.cyclePhase01,ctx.cycleAmpK,ctx.cyclePolF,1,eduMaxKey))ctx.eduCycleMaxKey=eduMaxKey;
+        }else if(atMin){
+          if(ctx.eduCycleMinKey!==eduMinKey&&ctx.eduEvent('cycleMinimum',ctx.cyclePhase01,ctx.cycleAmpK,ctx.cyclePolF,1,eduMinKey))ctx.eduCycleMinKey=eduMinKey;
         }
       }
     } else if (ctx.solarMaxK !== 0) ctx.solarMaxK = 0;
@@ -719,6 +730,9 @@ function init(){
       cvolFrame(cvolOn, rawDelta, held);
     }
 
+    // A visita pode ajustar a pose-alvo antes da inércia/zoom. Um gesto do
+    // usuário desliga apenas esta assistência (controls.js), não a visita.
+    if (ctx.eduTourCameraTick) ctx.eduTourCameraTick(rawDelta);
     // inércia: continua girando ao soltar, com amortecimento exponencial
     if (pointers.size === 0){
       ctx.theta += ctx.thetaVel*rawDelta;
@@ -752,6 +766,9 @@ function init(){
       }
     }
     updateCamera();
+    // A fonte física e a câmera deste mesmo frame já estão atualizadas; a
+    // visita confirma visibilidade e libera seu cartão somente agora.
+    if (ctx.eduTourTick) ctx.eduTourTick(rawDelta);
     // Museu Solar — grupo de manchas: a descoberta nasce da região ativa
     // magnética real (as cargas lead/foll), não dos slots virtuais usados
     // apenas para enriquecer a textura do disco. Uma explicação por sessão

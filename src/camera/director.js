@@ -38,6 +38,9 @@ export function createDirector(ctx){
   // raso no valor do preset se estiverem abaixo dele (restaurados na
   // saída). Quem já tem os knobs altos não é tocado.
   function directorStart(){
+    // Diretor e visita usam a mesma câmera/overrides; iniciar a sequência
+    // encerra a visita de forma explícita para não haver duas autorias.
+    if(ctx.eduTourExit)ctx.eduTourExit('director');
     if (directorActive()) directorUserExit();
     ctx.DIRECTOR_ON = true;
     ctx.dirT = 0;

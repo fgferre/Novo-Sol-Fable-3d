@@ -590,6 +590,16 @@ export function createSolInfo(ctx){
       window.__solInfo.clearEduCollection = function(){
         return ctx.clearEduCollection ? ctx.clearEduCollection() : false;
       };
+      // Visita guiada: contrato pequeno para a prova mobile. Sob ?det a
+      // fábrica não existe e todos os comandos seguem inertes.
+      window.__solInfo.eduTourInfo = function(){
+        return ctx.eduTourInfo ? ctx.eduTourInfo() : {available:false,active:false,stepId:'',index:-1,total:0};
+      };
+      window.__solInfo.eduTourStart = function(){ return ctx.eduTourStart ? ctx.eduTourStart() : false; };
+      window.__solInfo.eduTourNext = function(){ return ctx.eduTourNext ? ctx.eduTourNext() : false; };
+      window.__solInfo.eduTourExpand = function(on){ return ctx.eduTourExpand ? ctx.eduTourExpand(on) : false; };
+      window.__solInfo.eduTourExit = function(){ return ctx.eduTourExit ? ctx.eduTourExit('qa') : false; };
+      window.__solInfo.eduTourResumeFrame = function(){ return ctx.eduTourResumeFrame ? ctx.eduTourResumeFrame() : false; };
       // FASE 5 — QA do foco raso: override do plano de foco (0 centro,
       // 1 limbo; -1 volta ao automático) + estado corrente
       window.__solInfo.setDofFocus = function(x){

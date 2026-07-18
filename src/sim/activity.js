@@ -294,6 +294,10 @@ export function createActivity(ctx){
   ctx.canPreviewSolarMin = canPreviewCycleEvent;
   ctx.previewSolarMax = previewSolarMax;
   ctx.previewSolarMin = previewSolarMin;
+  // A visita guiada pode encerrar uma prévia documental quando a pessoa
+  // passa de máximo para mínimo ou volta à exploração. Isso remove apenas
+  // o acelerador/hold temporário; a fase física já alcançada é preservada.
+  ctx.cancelCycleEvent = endCycleEvent;
   var lastRegionT = 0;
   function updateActiveRegions(timeNow){
     // rotação diferencial nas CARGAS (mesma lei Snodgrass do sim, relativa
@@ -365,6 +369,7 @@ export function createActivity(ctx){
            updateActiveRegions: updateActiveRegions, cycleDepth: cycleDepth,
            cycleMultiplier: cycleMultiplier,
            startCycleEvent: startCycleEvent, tickCycleEvent: tickCycleEvent,
+           cancelCycleEvent: endCycleEvent,
            cycleEventInfo: cycleEventInfo,
            lifeEnvelope: lifeEnvelope, lifeEnvelopeEased: lifeEnvelopeEased,
            bFieldJS: bFieldJS, flicker1f: flicker1f,

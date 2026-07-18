@@ -190,6 +190,7 @@ export function createEdu(ctx){
       live.textContent = activeText.term + '. ' + activeText.body;
     }
     if (ctx.onEduLanguageChange) ctx.onEduLanguageChange(lang);
+    if (ctx.onEduTourLanguageChange) ctx.onEduTourLanguageChange(lang);
     return lang;
   }
 
@@ -459,6 +460,10 @@ export function createEdu(ctx){
   }
 
   ctx.eduEvent = function(name,a,b,c,d,e,f){
+    // A visita guiada tem um cartão persistente próprio. Suprimir o cartão
+    // espontâneo enquanto ela está ativa evita duas narrativas concorrendo
+    // no mesmo iPhone; o fenômeno físico continua exatamente o mesmo.
+    if (ctx.eduTourActive) return false;
     if (name === 'flare') return startFlare(a,b,c,d);
     if (name === 'cme') return queueCme(a,b,c,d);
     if (name === 'prominence') return queueProminence(a,b,c,d,e,f);
@@ -479,6 +484,8 @@ export function createEdu(ctx){
 
   ctx.eduTick = function(rawDelta){
     if (!enabled) return;
+    if (ctx.eduTourActive){ root.hidden = true; return; }
+    if (root.hidden) root.hidden = false;
     sinceEvent += rawDelta;
     if (pendingCme){
       pendingCmeAge += rawDelta;

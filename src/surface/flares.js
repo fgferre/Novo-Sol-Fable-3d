@@ -116,7 +116,11 @@ export function createFlares(ctx){
     ctx.surfFlareCooldown=Math.max(ctx.surfFlareCooldown,8);
   }
   function canPreviewBurst(){
-    if(ctx.getControl('burst')<=0.001)return {ok:false,reason:'source-empty'};
+    // Prévia e visita guiada devem respeitar o valor EFETIVO. O diretor e
+    // o museu usam overrides transitórios que não podem ser confundidos com
+    // a escolha nominal/persistida da pessoa.
+    var burstK=ctx.getAppliedControl?ctx.getAppliedControl('burst'):ctx.getControl('burst');
+    if(burstK<=0.001)return {ok:false,reason:'source-empty'};
     if(ctx.surfFlareT<8)return {ok:false,reason:'event-active'};
     var sel=previewRegion('burst');
     return sel?Object.assign({ok:true,reason:''},sel):{ok:false,reason:'not-visible'};
@@ -124,14 +128,15 @@ export function createFlares(ctx){
   function previewBurst(){
     var state=canPreviewBurst();if(!state.ok)return state;
     if(ctx.directorUserExit)ctx.directorUserExit();
-    var strength=ctx.getControl('burst'),eventAmp=1;
+    var strength=ctx.getAppliedControl?ctx.getAppliedControl('burst'):ctx.getControl('burst'),eventAmp=1;
     // A amplitude física do flare é canônica; BURST_K aplica a intensidade
     // nominal uma única vez no consumidor óptico (antes a prévia fazia k²).
     firePreviewPair(state,eventAmp);
     return Object.assign({},state,{amp:strength,strength:strength,eventAmp:eventAmp});
   }
   function canPreviewCME(){
-    if(ctx.getControl('cme')<=0.001)return {ok:false,reason:'source-empty'};
+    var cmeK=ctx.getAppliedControl?ctx.getAppliedControl('cme'):ctx.getControl('cme');
+    if(cmeK<=0.001)return {ok:false,reason:'source-empty'};
     if(ctx.CME_STEPS<=0)return {ok:false,reason:'tier-unavailable'};
     if(ctx.cmeKilled)return {ok:false,reason:'autotune-disabled'};
     if(ctx.surfFlareT<8)return {ok:false,reason:'event-active'};
@@ -143,7 +148,7 @@ export function createFlares(ctx){
   function previewCME(){
     var state=canPreviewCME();if(!state.ok)return state;
     if(ctx.directorUserExit)ctx.directorUserExit();
-    var strength=ctx.getControl('cme'),eventAmp=1;
+    var strength=ctx.getAppliedControl?ctx.getAppliedControl('cme'):ctx.getControl('cme'),eventAmp=1;
     // CME_K controla o brilho uma vez em updateCME; o evento-fonte não
     // replica o knob, evitando a resposta quadrática das prévias antigas.
     firePreviewPair(state,eventAmp);ctx.launchCME(eventAmp);

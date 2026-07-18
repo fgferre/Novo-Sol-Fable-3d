@@ -92,21 +92,32 @@ export function createEdu(ctx){
   halo.visible = false; halo.renderOrder = 8;
   ctx.sunMesh.add(halo);
 
+  // O motor começa com uma narrativa por vez: uma CME pode substituir o
+  // flare que a originou, sem empilhar caixas sobre a estrela. A mesma
+  // estrutura será usada pelas próximas famílias (proeminências e manchas).
   var eventDir = new THREE.Vector3(0,0,1);
   var worldDir = new THREE.Vector3();
   var worldPos = new THREE.Vector3();
   var projected = new THREE.Vector3();
+  var sunProjected = new THREE.Vector3();
   var camDir = new THREE.Vector3();
-  var active = false, visible = false, inFront = false;
+  var active = false, visible = false, inFront = false, eventType = 'flare';
   var age = 0, introAge = 0, sinceEvent = 99;
   var anchorX = 0, anchorY = 0, labelX = 0, labelY = 0;
   var labelW = 300, labelH = 108, side = 'right', layoutDirty = true;
+  var anchorDistance = ctx.SUN_RADIUS * 1.018;
+  var diskX = 0, diskY = 0, diskRadius = 0, connectorVisible = false;
+  var lineEndX = 0, lineEndY = 0;
+  var pendingCme = false, pendingCmeAge = 0, pendingCmeSalience = 1;
+  var pendingCmeDir = new THREE.Vector3(0,0,1);
   var lang = ctx.eduLang === 'en' ? 'en' : 'pt';
   var enabled = ctx.EDU_K > 0.5;
   var reduceQuery = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
   var reducedMotion = !!(reduceQuery && reduceQuery.matches);
 
   function copy(){ return EDU_CONTENT[lang] || EDU_CONTENT.pt; }
+  function eventCopy(){ return copy()[eventType] || copy().flare; }
+  function eventPriority(type){ return type === 'cme' ? 100 : 90; }
   function syncChrome(){
     var c = copy();
     document.documentElement.lang = lang === 'en' ? 'en' : 'pt-BR';
@@ -120,11 +131,15 @@ export function createEdu(ctx){
       if (hint) hint.textContent = originalChrome.hint;
     }
   }
+  function renderEvent(){
+    var eventText = eventCopy();
+    headline.textContent = eventText.headline;
+    term.textContent = eventText.term;
+    body.textContent = eventText.body;
+  }
   function renderLanguage(){
     var c = copy();
-    headline.textContent = c.flare.headline;
-    term.textContent = c.flare.term;
-    body.textContent = c.flare.body;
+    renderEvent();
     intro.textContent = c.intro;
     root.setAttribute('lang',lang === 'en' ? 'en' : 'pt-BR');
     root.setAttribute('aria-label',lang === 'en' ? 'Discoveries about the Sun' : 'Descobertas sobre o Sol');
@@ -136,7 +151,10 @@ export function createEdu(ctx){
     lang = next; ctx.eduLang = next;
     try { ctx.savedKnobs.lang = next; localStorage.setItem('solKnobs',JSON.stringify(ctx.savedKnobs)); } catch(e){}
     renderLanguage();
-    if (active) live.textContent = copy().flare.term + '. ' + copy().flare.body;
+    if (active){
+      var activeText = eventCopy();
+      live.textContent = activeText.term + '. ' + activeText.body;
+    }
     if (ctx.onEduLanguageChange) ctx.onEduLanguageChange(lang);
     return lang;
   }
@@ -147,7 +165,7 @@ export function createEdu(ctx){
     if (enabled){ introAge = 0; intro.classList.add('visible'); }
     else {
       intro.classList.remove('visible'); label.classList.remove('visible'); line.style.opacity='0';
-      halo.visible = false; visible = false; live.textContent = '';
+      halo.visible = false; visible = false; active = false; pendingCme = false; live.textContent = '';
     }
     syncChrome();
   }
@@ -169,12 +187,53 @@ export function createEdu(ctx){
     // Para um ponto na superfície visto de distância finita, o horizonte é
     // R/D (não zero). Isso impede uma linha apontando através da estrela.
     var horizon = ctx.SUN_RADIUS / Math.max(ctx.camera.position.length(),ctx.SUN_RADIUS*1.001);
-    inFront = facing > horizon + .012;
-    worldPos.copy(worldDir).multiplyScalar(ctx.SUN_RADIUS * 1.018);
+    // CME não é um ponto preso à superfície: acompanha a frente física
+    // da ejeção. Ela só ganha narrativa quando já saiu visualmente do
+    // disco, evitando sugerir uma nuvem que ainda não pode ser vista.
+    var cmeGeom = null;
+    if (eventType === 'cme' && ctx.cmeGeomAt && ctx.cmeT < 900){
+      cmeGeom = ctx.cmeGeomAt(ctx.cmeT);
+      anchorDistance = ctx.SUN_RADIUS * Math.max(1.045,cmeGeom.cx + cmeGeom.rho*.55);
+    } else anchorDistance = ctx.SUN_RADIUS * 1.018;
+    inFront = eventType === 'cme' ? facing > -0.08 : facing > horizon + .012;
+    worldPos.copy(worldDir).multiplyScalar(anchorDistance);
     projected.copy(worldPos).project(ctx.camera);
     anchorX = (projected.x * .5 + .5) * window.innerWidth;
     anchorY = (1 - (projected.y * .5 + .5)) * window.innerHeight;
-    return inFront && projected.z > -1 && projected.z < 1 && anchorX > -16 && anchorX < window.innerWidth+16 && anchorY > -16 && anchorY < window.innerHeight+16;
+    sunProjected.set(0,0,0).project(ctx.camera);
+    diskX = (sunProjected.x * .5 + .5) * window.innerWidth;
+    diskY = (1 - (sunProjected.y * .5 + .5)) * window.innerHeight;
+    var halfFov = ctx.camera.fov * Math.PI / 360;
+    var ang = Math.asin(Math.min(1,ctx.SUN_RADIUS / Math.max(ctx.camera.position.length(),ctx.SUN_RADIUS*1.001)));
+    diskRadius = .5 * window.innerHeight * Math.tan(ang) / Math.tan(halfFov);
+    if (eventType === 'cme'){
+      var fromDisk = Math.hypot(anchorX-diskX,anchorY-diskY);
+      inFront = inFront && !!cmeGeom && ctx.cmeT > .35 && fromDisk > diskRadius*.92;
+    }
+    var nearViewport = anchorX > -16 && anchorX < window.innerWidth+16 && anchorY > -16 && anchorY < window.innerHeight+16;
+    // Para a CME, a âncora precisa estar de fato dentro da tela: uma frente
+    // que já saiu alguns pixels pelo lado não merece manter uma narrativa
+    // aparentemente solta na margem.
+    var cmeOnScreen = eventType !== 'cme' || (anchorX >= 0 && anchorX <= window.innerWidth && anchorY >= 0 && anchorY <= window.innerHeight);
+    return inFront && projected.z > -1 && projected.z < 1 && nearViewport && cmeOnScreen;
+  }
+
+  function distanceToSegment(px,py,x1,y1,x2,y2){
+    var dx=x2-x1,dy=y2-y1,den=dx*dx+dy*dy;
+    if (den < .01) return Math.hypot(px-x1,py-y1);
+    var t=((px-x1)*dx+(py-y1)*dy)/den;
+    t=Math.max(0,Math.min(1,t));
+    return Math.hypot(px-(x1+t*dx),py-(y1+t*dy));
+  }
+
+  function paintConnector(endX,endY){
+    // Uma linha é permitida só quando o segmento inteiro fica fora do
+    // disco. Isso preserva a ligação espacial sem "cortar" o Sol na tela.
+    connectorVisible = distanceToSegment(diskX,diskY,anchorX,anchorY,endX,endY) > diskRadius + 7;
+    lineEndX = endX; lineEndY = endY;
+    line.setAttribute('x1',anchorX.toFixed(1)); line.setAttribute('y1',anchorY.toFixed(1));
+    line.setAttribute('x2',endX.toFixed(1)); line.setAttribute('y2',endY.toFixed(1));
+    line.style.opacity = visible && connectorVisible ? '1' : '0';
   }
 
   function placeLabel(){
@@ -201,42 +260,72 @@ export function createEdu(ctx){
       endX = Math.max(labelX+20,Math.min(labelX+labelW-20,anchorX));
       endY = anchorY > h*.58 ? labelY+labelH : labelY;
     }
-    line.setAttribute('x1',anchorX.toFixed(1)); line.setAttribute('y1',anchorY.toFixed(1));
-    line.setAttribute('x2',endX.toFixed(1)); line.setAttribute('y2',endY.toFixed(1));
+    paintConnector(endX,endY);
   }
 
   function showVisual(){
     if (visible) return;
-    visible = true; label.classList.add('visible'); line.style.opacity='1'; halo.visible = true;
+    visible = true; label.classList.add('visible'); line.style.opacity='0'; halo.visible = true;
   }
   function hideVisual(){
     if (!visible) return;
-    visible = false; label.classList.remove('visible'); line.style.opacity='0'; halo.visible = false;
+    visible = false; connectorVisible = false; label.classList.remove('visible'); line.style.opacity='0'; halo.visible = false;
   }
   function finishEvent(){ active = false; hideVisual(); live.textContent = ''; }
 
-  function startFlare(x,y,z,salience){
+  function startEvent(type,x,y,z,salience){
     if (!enabled) return false;
+    if (active && eventPriority(type) <= eventPriority(eventType)) return false;
+    var oldX=eventDir.x, oldY=eventDir.y, oldZ=eventDir.z, oldDistance=anchorDistance;
     eventDir.set(+x || 0,+y || 0,+z || 0);
     if (eventDir.lengthSq() < .5) return false;
     eventDir.normalize();
-    halo.position.copy(eventDir).multiplyScalar(ctx.SUN_RADIUS * 1.018);
-    if (!projectAnchor()) return false;
-    if (active && sinceEvent < 4) return false;
+    var previousType = eventType;
+    eventType = type;
+    // Um flare no lado oculto não inicia uma legenda; uma CME fica na
+    // fila até a frente real emergir além do limbo.
+    if (!projectAnchor()){
+      eventType = previousType; eventDir.set(oldX,oldY,oldZ); anchorDistance = oldDistance;
+      return false;
+    }
+    halo.position.copy(eventDir).multiplyScalar(anchorDistance);
     active = true; visible = false; age = 0; sinceEvent = 0;
     side = anchorX >= window.innerWidth*.5 ? 'right' : 'left';
     layoutDirty = true;
-    live.textContent = copy().flare.term + '. ' + copy().flare.body;
+    renderEvent();
+    var text = eventCopy();
+    live.textContent = text.term + '. ' + text.body;
     showVisual(); placeLabel();
     return true;
   }
 
+  function startFlare(x,y,z,salience){ return startEvent('flare',x,y,z,salience); }
+
+  function queueCme(x,y,z,salience){
+    if (!enabled) return false;
+    pendingCmeDir.set(+x || 0,+y || 0,+z || 0);
+    if (pendingCmeDir.lengthSq() < .5) return false;
+    pendingCmeDir.normalize(); pendingCme = true; pendingCmeAge = 0;
+    pendingCmeSalience = salience || 1;
+    return true;
+  }
+
+  function promotePendingCme(){
+    if (!pendingCme) return;
+    if (ctx.cmeT >= 900 || pendingCmeAge > 18){ pendingCme = false; return; }
+    if (active && eventType === 'cme'){ pendingCme = false; return; }
+    if (startEvent('cme',pendingCmeDir.x,pendingCmeDir.y,pendingCmeDir.z,pendingCmeSalience)) pendingCme = false;
+  }
+
   ctx.eduEvent = function(name,a,b,c,d){
-    return name === 'flare' ? startFlare(a,b,c,d) : false;
+    if (name === 'flare') return startFlare(a,b,c,d);
+    if (name === 'cme') return queueCme(a,b,c,d);
+    return false;
   };
   ctx.eduEmit = function(name,opts){
     opts = opts || {};
-    var d = opts.dir || (ctx.surfFlareDir ? [ctx.surfFlareDir.x,ctx.surfFlareDir.y,ctx.surfFlareDir.z] : [0,0,1]);
+    var fallback = name === 'cme' && ctx.cmeDir ? ctx.cmeDir : ctx.surfFlareDir;
+    var d = opts.dir || (fallback ? [fallback.x,fallback.y,fallback.z] : [0,0,1]);
     return ctx.eduEvent(name,d[0],d[1],d[2],opts.salience || 1);
   };
   ctx.setEduLang = setLanguage;
@@ -244,27 +333,37 @@ export function createEdu(ctx){
   ctx.eduTick = function(rawDelta){
     if (!enabled) return;
     sinceEvent += rawDelta;
+    if (pendingCme){
+      pendingCmeAge += rawDelta;
+      promotePendingCme();
+    }
     if (introAge < 5){
       introAge += rawDelta;
       if (introAge > 3.8) intro.classList.remove('visible');
     }
     if (!active) return;
     age += rawDelta;
-    if (age > 7.5 || ctx.surfFlareT > 12){ finishEvent(); return; }
+    if (eventType === 'cme'){
+      if (age > 16 || ctx.cmeT >= 900 || ctx.cmeT > 18){ finishEvent(); return; }
+    } else if (age > 7.5 || ctx.surfFlareT > 12){ finishEvent(); return; }
     var canShow = projectAnchor();
     if (!canShow){ hideVisual(); return; }
+    halo.position.copy(eventDir).multiplyScalar(anchorDistance);
     showVisual(); placeLabel();
     var pulse = reducedMotion ? 1 : 1 + .16*Math.sin(age*7.5)*Math.exp(-age*.22);
-    halo.scale.setScalar(.48*pulse);
-    haloMaterial.opacity = reducedMotion ? .62 : Math.max(.36,.80-age*.055);
+    var haloScale = eventType === 'cme' ? .72 : .48;
+    halo.scale.setScalar(haloScale*pulse);
+    haloMaterial.opacity = reducedMotion ? .62 : Math.max(.32,(eventType === 'cme' ? .72 : .80)-age*.045);
   };
 
   ctx.eduInfo = function(){
     var rect = visible ? label.getBoundingClientRect() : {x:labelX,y:labelY,width:labelW,height:labelH};
-    return { available:true, enabled:enabled, lang:lang, reducedMotion:reducedMotion,
-      active:active ? [{type:'flare',visible:visible,inFront:inFront,phase:age<.65?'enter':'reading',
+    return { available:true, enabled:enabled, lang:lang, reducedMotion:reducedMotion, limit:1,
+      queued:pendingCme ? [{type:'cme',age:pendingCmeAge}] : [],
+      active:active ? [{type:eventType,priority:eventPriority(eventType),visible:visible,inFront:inFront,phase:age<.65?'enter':'reading',
         anchor:{x:anchorX,y:anchorY},labelRect:{x:rect.x,y:rect.y,width:rect.width,height:rect.height},
-        contentKey:'flare'}] : [] };
+        lineEnd:{x:lineEndX,y:lineEndY},disk:{x:diskX,y:diskY,r:diskRadius},
+        connectorVisible:connectorVisible,contentKey:eventType}] : [] };
   };
 
   if (reduceQuery){

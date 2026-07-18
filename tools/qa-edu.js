@@ -7,6 +7,7 @@ const base='file://'+path.resolve(htmlFile);
 let browser,fails=0;
 function check(name,ok,detail){if(!ok)fails++;console.log((ok?'PASS  ':'FAIL  ')+name+(detail?'  ('+detail+')':''));}
 function overlap(a,b){return a.x<b.x+b.width&&a.x+a.width>b.x&&a.y<b.y+b.height&&a.y+a.height>b.y;}
+function segmentDistance(px,py,x1,y1,x2,y2){const dx=x2-x1,dy=y2-y1,d=dx*dx+dy*dy;if(d<.01)return Math.hypot(px-x1,py-y1);const t=Math.max(0,Math.min(1,((px-x1)*dx+(py-y1)*dy)/d));return Math.hypot(px-(x1+t*dx),py-(y1+t*dy));}
 async function frame(page){await page.evaluate(()=>new Promise((resolve)=>requestAnimationFrame(()=>resolve())));}
 async function forceVisible(page){
   for(let i=0;i<4;i++){
@@ -18,6 +19,30 @@ async function forceVisible(page){
       // colisões; o estado semântico já estava ativo no frame anterior.
       await page.waitForTimeout(700);
       return {index:i,info};
+    }
+  }
+  return null;
+}
+async function forceVisibleCme(page){
+  for(let i=0;i<4;i++){
+    await page.evaluate((n)=>{
+      window.__solInfo.forceCME(n);
+      // A fonte é real; a câmera apenas é posta no limbo dela, como a
+      // própria prova visual de CME faz. Assim o teste não depende de uma
+      // região aleatória estar no lado certo do Sol no carregamento.
+      const state=window.__solInfo.state(),dir=window.__solInfo.cmeInfo().dir;
+      const theta=Math.atan2(dir[2],dir[0]);
+      window.__solInfo.setView(theta+Math.PI/2,Math.PI*.5,state.fitDist*1.35);
+      window.__solInfo.setCmeClock(4);
+    },i);
+    await frame(page);
+    // Não esperamos a animação CSS aqui: em SwiftShader, 700 ms podem
+    // consumir a curta vida física da CME. O frame já confirma o estado
+    // editorial e a fonte física no mesmo instante.
+    const state=await page.evaluate(()=>({info:window.__solInfo.eduInfo(),cme:window.__solInfo.cmeInfo()}));
+    const info=state.info;
+    if(info.active.length&&info.active[0].type==='cme'&&info.active[0].visible){
+      return {index:i,info,cme:state.cme};
     }
   }
   return null;
@@ -65,7 +90,9 @@ async function layoutState(page){
   const clear=r&&a&&!(a.x>r.x-20&&a.x<r.x+r.width+20&&a.y>r.y-20&&a.y<r.y+r.height+20);
   const chromeClear=r&&![state.title,state.gear,state.hint].filter(Boolean).some((x)=>overlap(r,x));
   const lineAtAnchor=state.line&&Math.hypot(state.line.x1-a.x,state.line.y1-a.y)<=2;
-  check('layout desktop fica dentro da tela e não cobre o fenômeno',inside&&clear&&chromeClear&&lineAtAnchor,JSON.stringify({r,a}));
+  const item=state.info.active[0];
+  const lineClearsSun=!item.connectorVisible||segmentDistance(item.disk.x,item.disk.y,item.anchor.x,item.anchor.y,item.lineEnd.x,item.lineEnd.y)>item.disk.r+6;
+  check('layout desktop fica dentro da tela e não cobre o fenômeno',inside&&clear&&chromeClear&&lineAtAnchor&&lineClearsSun,JSON.stringify({r,a,line:item.connectorVisible}));
 
   const pt=await page.evaluate(()=>({text:document.querySelector('.edu-label').textContent,lang:__solInfo.eduInfo().lang,root:document.querySelector('#edu').lang,
     looseButton:!!document.querySelector('#edu .edu-lang')}));
@@ -108,6 +135,39 @@ async function layoutState(page){
   const ended=await page.evaluate(()=>window.__solInfo.eduInfo());
   check('descoberta encerra junto do evento',ended.active.length===0);
   await page.close();
+
+  // CME vive em tier alto: deve nascer da mesma fonte física que o flare,
+  // substituir sua narrativa quando a frente emerge e nunca existir no low.
+  const lowCme=await browser.newPage({viewport:{width:640,height:420},deviceScaleFactor:1});
+  lowCme.setDefaultTimeout(240000);
+  lowCme.on('pageerror',(e)=>errors.push('[cme-low] '+e.message));
+  lowCme.on('console',(m)=>{if(m.type()==='error')errors.push('[cme-low] '+m.text());});
+  await lowCme.goto(base+'?edu=1&tier=low&scale=0.25&speed=0.05&cycle=0&cme=1');
+  await lowCme.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduInfo);
+  await lowCme.evaluate(()=>window.__solInfo.setRotSpeed(0));
+  const lowLaunch=await lowCme.evaluate(()=>({forced:__solInfo.forceCME(0),cme:__solInfo.cmeInfo()}));
+  await frame(lowCme);
+  const lowEdu=await lowCme.evaluate(()=>__solInfo.eduInfo());
+  check('CME não inventa descoberta em tier sem geometria',!lowLaunch.forced&&lowLaunch.cme.steps===0&&!lowEdu.active.some((x)=>x.type==='cme')&&!lowEdu.queued.some((x)=>x.type==='cme'));
+  await lowCme.close();
+
+  const cmePage=await browser.newPage({viewport:{width:960,height:600},deviceScaleFactor:1});
+  cmePage.setDefaultTimeout(240000);
+  cmePage.on('pageerror',(e)=>errors.push('[cme] '+e.message));
+  cmePage.on('console',(m)=>{if(m.type()==='error')errors.push('[cme] '+m.text());});
+  await cmePage.goto(base+'?edu=1&lang=pt&tier=high&scale=0.25&speed=0.05&cycle=0&cme=1');
+  await cmePage.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduInfo);
+  await cmePage.evaluate(()=>window.__solInfo.setRotSpeed(0));
+  const cmeFired=await forceVisibleCme(cmePage);
+  const cmeState=await cmePage.evaluate(()=>({info:__solInfo.eduInfo(),text:document.querySelector('.edu-label').textContent,cme:__solInfo.cmeInfo()}));
+  const cmeItem=cmeState.info.active[0];
+  const cmeLineClear=cmeItem&&!cmeItem.connectorVisible||!!(cmeItem&&segmentDistance(cmeItem.disk.x,cmeItem.disk.y,cmeItem.anchor.x,cmeItem.anchor.y,cmeItem.lineEnd.x,cmeItem.lineEnd.y)>cmeItem.disk.r+6);
+  check('CME física substitui o flare quando sua frente emerge',!!cmeFired&&!!cmeFired.cme.on&&cmeItem&&cmeItem.type==='cme'&&cmeItem.priority>90&&cmeItem.visible&&/Ejeção de massa coronal/.test(cmeState.text)&&cmeLineClear,cmeItem?JSON.stringify({par:cmeFired?cmeFired.index:null,anchor:cmeItem.anchor,line:cmeItem.connectorVisible,cme:cmeState.cme,text:cmeState.text}):'sem CME');
+  await cmePage.evaluate(()=>window.__solInfo.setCmeClock(20));
+  await frame(cmePage);
+  const cmeEnded=await cmePage.evaluate(()=>window.__solInfo.eduInfo());
+  check('narrativa da CME encerra com a ejeção física',!cmeEnded.active.some((x)=>x.type==='cme'));
+  await cmePage.close();
 
   const reducedContext=await browser.newContext({viewport:{width:640,height:420},deviceScaleFactor:1,reducedMotion:'reduce'});
   const reduced=await reducedContext.newPage();

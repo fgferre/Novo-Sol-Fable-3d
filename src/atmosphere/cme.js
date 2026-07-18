@@ -108,6 +108,10 @@ export function createCME(ctx){
     cmeSeedVal = cmeRand()*100.0;
     ctx.cmeCooldown = 20;
     ctx.cmeCount++;
+    // Emissor canônico: prévia, evento natural, diretor e QA passam por
+    // esta mesma origem. A camada educativa decide quando a frente já
+    // emergiu visualmente do disco; aqui só publicamos a física real.
+    ctx.eduEvent('cme',cmeDir.x,cmeDir.y,cmeDir.z,amp);
     cmePtsSpawnArm();   // partículas re-armam a janela de respawn
   }
   // gatilho: chamado quando um flare dispara (natural ou forçado). Só

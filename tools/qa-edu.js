@@ -810,10 +810,15 @@ async function layoutState(page){
     JSON.stringify({strength:holeMinSignal.strength,generation:holeMinSignal.generation,dir:holeMinSignal.dir.map((v)=>+v.toFixed(3))}));
   // câmera na direção publicada (mesma conversão de forceVisible: dir é
   // local ao Sol, a âncora aplica rotY) e sustentação >3s de parede — o
-  // cartão LOCAL nasce com âncora coronal na tela. Um cartão global de
-  // mínimo pode ocupar o palco primeiro (prioridade 65>56): o emissor
-  // retenta a cada frame e o waitForFunction cobre a janela de leitura.
+  // cartão LOCAL nasce com âncora coronal na tela. O cartão global de
+  // mínimo (65>56) pode ter nascido durante o warp e, a speed=0.05, viver
+  // ~200s de parede — corrida flagrada no CI do PR-14 (estourou os 300s
+  // por segundos). Palco limpo determinístico: toggle edu off→on (padrão
+  // do forceCycleDiscovery); o mínimo NÃO re-dispara (eduCycleMinKey
+  // travada) e o buraco entra sem esperar ninguém morrer.
   await holePage.evaluate(()=>{
+    window.__solInfo.setControl('edu',0,{persist:false});
+    window.__solInfo.setControl('edu',1,{persist:false});
     const h=window.__solInfo.eduCoronaHoleState(),s=window.__solInfo.state();
     window.__solInfo.setView(Math.atan2(h.dir[2],h.dir[0])-s.rotY,Math.acos(Math.max(-1,Math.min(1,h.dir[1]))),s.fitDist*1.3);
   });

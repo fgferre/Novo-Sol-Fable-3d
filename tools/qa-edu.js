@@ -188,12 +188,18 @@ async function layoutState(page){
   const inert=await det.evaluate(()=>({info:__solInfo.eduInfo(),root:!!document.querySelector('#edu'),style:!!document.querySelector('#eduStyle'),
     panelSwitch:!!document.querySelector('#eduSwitchRow'),langControl:!!document.querySelector('#eduLangRow'),collectionRow:!!document.querySelector('#eduCollectionRow'),
     collection:__solInfo.eduCollectionInfo(),collectionStored:localStorage.getItem('solEduCollection.v1'),emit:__solInfo.eduEmit('flare'),force:__solInfo.forceFlarePair(0),
-    intro:__solInfo.introInfo(),introStyle:!!document.querySelector('#introStyle'),cinemaBtn:!!document.querySelector('#eduTourCinema')}));
+    intro:__solInfo.introInfo(),introStyle:!!document.querySelector('#introStyle'),cinemaBtn:!!document.querySelector('#eduTourCinema'),
+    postcardBtn:!!document.querySelector('#postcardBtn'),postcard:__solInfo.lastPostcard(),celebration:__solInfo.eduCollectionCelebration()}));
   check('det permanece totalmente sem camada educativa',!inert.info.enabled&&!inert.root&&!inert.style&&!inert.panelSwitch&&!inert.langControl&&!inert.collectionRow&&!inert.collection.available&&inert.collectionStored==='{"sentinel":true}'&&!inert.emit);
   // PR-5 — abertura e sessão de cinema também ausentes sob det (fábricas
   // nem rodam: hook responde available:false e nenhum DOM/classe existe).
   check('det permanece sem abertura e sem sessão de cinema',
     !inert.intro.available&&!inert.intro.active&&!inert.introStyle&&!inert.cinemaBtn,JSON.stringify(inert.intro));
+  // PR-12 — o botão do postal vive na seção experiência (ausente sob det) e
+  // a celebração da coleção nem define hooks: tudo inerte por construção.
+  check('det permanece sem postal e sem celebração de coleção',
+    !inert.postcardBtn&&inert.postcard===null&&!inert.celebration.available&&!inert.celebration.pending,
+    JSON.stringify({postcardBtn:inert.postcardBtn,celebration:inert.celebration}));
   await det.close();
 
   // GO-LIVE (série Museu, PR-3): a carga num contexto virgem de iPhone
@@ -319,6 +325,149 @@ async function layoutState(page){
   const collectionCleared=await collectionPage.evaluate(()=>({info:__solInfo.eduCollectionInfo(),store:localStorage.getItem('solEduCollection.v1'),knobs:localStorage.getItem('solKnobs')}));
   check('limpar coleção pede confirmação e preserva ajustes',collectionKept.items.flare.seen&&collectionCleared.info.discoveredFamilies===0&&collectionCleared.store===null&&collectionCleared.knobs===knobsBeforeClear);
   await collectionContext.close();
+
+  // ————— PR-12 · conclusão da coleção (cartão único por aparelho) —————
+  // Semeia 10 famílias no store (todas MENOS flare) e observa a 11ª DE
+  // VERDADE: um flare físico canônico. O registro da 11ª arma o latch em
+  // collection.js; o emissor do animate abre o cartão GLOBAL prioridade 110
+  // (que pode preemptar o próprio cartão do flare — comportamento desenhado:
+  // nada compete com um evento que acontece uma vez na vida do aparelho),
+  // persiste `celebrated:true` no MESMO store e nunca repete — nem no reload.
+  const doneContext=await browser.newContext({viewport:{width:960,height:600},deviceScaleFactor:1});
+  await doneContext.addInitScript(()=>{
+    // Semeia SÓ na primeira carga: o init script roda de novo no reload e
+    // sobrescreveria o store persistido (flare + celebrated) — o alvo da
+    // prova de persistência é justamente o que a página gravou.
+    if(localStorage.getItem('solEduCollection.v1'))return;
+    const families={surface:['surface'],granulation:['granulation'],spots:['spots'],loops:['loops'],
+      cme:['cme'],prominence:['prominence','filament'],spicules:['spicules'],
+      corona:['corona'],coronalHole:['coronalHole'],cycle:['cycleMaximum','cycleMinimum']};
+    const items={};
+    Object.keys(families).forEach((f)=>{items[f]={views:{}};families[f].forEach((v)=>{items[f].views[v]=true;});});
+    localStorage.setItem('solEduCollection.v1',JSON.stringify({v:1,items}));
+  });
+  const donePage=await doneContext.newPage();
+  donePage.setDefaultTimeout(240000);
+  donePage.on('pageerror',(e)=>errors.push('[complete] '+e.message));
+  donePage.on('console',(m)=>{if(m.type()==='error')errors.push('[complete] '+m.text());});
+  await donePage.goto(base+'?edu=1&lang=pt&tier=low&scale=0.25&speed=0.05&cycle=0&fprom=0&spots=0&cme=0&intro=0');
+  await donePage.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduCollectionCelebration&&window.__solInfo.eduInfo);
+  await donePage.evaluate(()=>{
+    window.__solInfo.setRotSpeed(0);
+    for(let j=0;j<window.__solInfo.promLife().length;j++)window.__solInfo.setPromLife(j,.01);
+  });
+  await frames(donePage,2);
+  const doneStart=await donePage.evaluate(()=>({collection:__solInfo.eduCollectionInfo(),celebration:__solInfo.eduCollectionCelebration()}));
+  check('conclusão: 10 de 11 famílias semeadas não armam a celebração',
+    doneStart.collection.discoveredFamilies===10&&!doneStart.collection.complete&&
+    doneStart.celebration.available&&!doneStart.celebration.pending&&!doneStart.celebration.celebrated,
+    JSON.stringify({families:doneStart.collection.discoveredFamilies,celebration:doneStart.celebration}));
+  // A 11ª família nasce de um flare físico visível (mesma mira do
+  // forceVisible; aqui a espera é pelo REGISTRO na coleção, porque o cartão
+  // do flare pode ser preemptado pelo cartão de conclusão no frame seguinte).
+  let doneFlare=false;
+  for(let i=0;i<4&&!doneFlare;i++){
+    await donePage.evaluate((n)=>{
+      const dir=window.__solInfo.eduSpotRegion(n).dir,state=window.__solInfo.state();
+      window.__solInfo.setView(Math.atan2(dir[2],dir[0])-state.rotY,Math.acos(Math.max(-1,Math.min(1,dir[1]))),state.fitDist*1.3);
+    },i);
+    await frames(donePage,2);
+    await donePage.evaluate((n)=>window.__solInfo.forceFlarePair(n),i);
+    try{
+      await donePage.waitForFunction(()=>window.__solInfo.eduCollectionInfo().items.flare.seen,null,{timeout:12000});
+      doneFlare=true;
+    }catch(_){}
+  }
+  check('conclusão: a 11ª família nasce de um flare físico visível',doneFlare);
+  await donePage.waitForFunction(()=>{const i=window.__solInfo.eduInfo().active[0];return !!(i&&i.type==='collectionComplete'&&i.global&&i.visible);},null,{timeout:120000});
+  const doneState=await donePage.evaluate(()=>({info:__solInfo.eduInfo(),celebration:__solInfo.eduCollectionCelebration(),
+    collection:__solInfo.eduCollectionInfo(),text:document.querySelector('.edu-label').textContent,
+    store:JSON.parse(localStorage.getItem('solEduCollection.v1'))}));
+  const doneItem=doneState.info.active[0];
+  check('conclusão: cartão global prioridade 110, texto sereno e celebrated persistido',
+    !!doneItem&&doneItem.priority===110&&doneItem.global&&doneItem.anchor===null&&!doneItem.haloVisible&&!doneItem.connectorVisible&&
+    doneState.collection.complete&&doneState.celebration.celebrated&&!doneState.celebration.pending&&
+    doneState.store.celebrated===true&&/VOCÊ OBSERVOU O SOL INTEIRO/.test(doneState.text)&&/Coleção completa/.test(doneState.text),
+    JSON.stringify({priority:doneItem&&doneItem.priority,celebrated:doneState.store.celebrated,text:doneState.text.slice(0,70)}));
+  const doneEnglish=await donePage.evaluate(()=>{window.__solInfo.setLang('en');return document.querySelector('.edu-label').textContent;});
+  check('conclusão troca para inglês ao vivo',
+    /YOU HAVE SEEN THE WHOLE SUN/.test(doneEnglish)&&/Collection complete/.test(doneEnglish),doneEnglish.slice(0,80));
+  // Painel: a linha do estado completo aparece junto do contador "11 de 11".
+  await donePage.evaluate(()=>window.__solInfo.setLang('pt'));
+  await donePage.click('#knobBtn');await donePage.waitForTimeout(650);
+  const donePanel=await donePage.evaluate(()=>{
+    const line=document.querySelector('#eduCollectionComplete');
+    return {present:!!line,hidden:!!(line&&line.hidden),text:line?line.textContent:'',
+      toggle:document.querySelector('#eduCollectionToggle').textContent};
+  });
+  check('painel reflete a coleção completa (linha via strings.js)',
+    donePanel.present&&!donePanel.hidden&&/Coleção completa/.test(donePanel.text)&&/11 de 11/.test(donePanel.toggle),
+    JSON.stringify(donePanel));
+  // Reload no MESMO contexto: celebrated sobrevive e o cartão não repete.
+  const donePage2=await doneContext.newPage();
+  donePage2.setDefaultTimeout(240000);
+  donePage2.on('pageerror',(e)=>errors.push('[complete-reload] '+e.message));
+  donePage2.on('console',(m)=>{if(m.type()==='error')errors.push('[complete-reload] '+m.text());});
+  await donePage2.goto(base+'?edu=1&lang=pt&tier=low&scale=0.25&speed=0.05&cycle=0&fprom=0&spots=0&cme=0&intro=0');
+  await donePage2.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduCollectionCelebration);
+  await frames(donePage2,30);
+  const doneReload=await donePage2.evaluate(()=>({celebration:__solInfo.eduCollectionCelebration(),
+    collection:__solInfo.eduCollectionInfo(),info:__solInfo.eduInfo()}));
+  check('conclusão: não repete após reload (celebrated sobrevive no aparelho)',
+    doneReload.collection.complete&&doneReload.collection.celebrated&&doneReload.celebration.celebrated&&
+    !doneReload.celebration.pending&&!doneReload.info.active.some((x)=>x.type==='collectionComplete'),
+    JSON.stringify(doneReload.celebration));
+  await doneContext.close();
+
+  // ————— PR-12 · postal "guardar esta vista" —————
+  // O clique captura o frame corrente (SEM preserveDrawingBuffer — os
+  // atributos reais do contexto provam), compõe a faixa da marca num canvas
+  // 2D offscreen e entrega por Web Share ou download. A prova decodifica o
+  // PNG composto do hook white-box: dimensões idênticas ao drawing buffer,
+  // peso real de imagem e a linha âmbar da faixa atravessando a base — e
+  // ausente no topo (espaço).
+  const postal=await browser.newPage({viewport:{width:640,height:400},deviceScaleFactor:1});
+  postal.setDefaultTimeout(240000);
+  postal.on('pageerror',(e)=>errors.push('[postal] '+e.message));
+  postal.on('console',(m)=>{if(m.type()==='error')errors.push('[postal] '+m.text());});
+  let postalDownloadName=null;
+  postal.on('download',(d)=>{postalDownloadName=d.suggestedFilename();});
+  await postal.goto(base+'?edu=1&lang=pt&tier=low&scale=0.5&speed=0.05&cycle=0&intro=0');
+  await postal.waitForFunction(()=>window.__solInfo&&window.__solInfo.lastPostcard&&document.querySelector('#postcardBtn'));
+  const postalBefore=await postal.evaluate(()=>({last:__solInfo.lastPostcard(),attrs:__solInfo.glAttributes()}));
+  check('postal: sem captura antes do clique e sem preserveDrawingBuffer',
+    postalBefore.last===null&&!!postalBefore.attrs&&postalBefore.attrs.preserveDrawingBuffer===false,
+    JSON.stringify(postalBefore.attrs));
+  await postal.click('#knobBtn');await postal.waitForTimeout(650);
+  await postal.click('#postcardBtn');
+  // captura no fim do frame corrente + composição assíncrona (Image.onload
+  // + toBlob); a entrega assenta o campo delivery por último.
+  await postal.waitForFunction(()=>{const p=__solInfo.lastPostcard();return !!(p&&p.delivery);},null,{timeout:180000});
+  const post=await postal.evaluate(()=>{const p=__solInfo.lastPostcard();
+    return {width:p.width,height:p.height,bytes:p.bytes,delivery:p.delivery,dataURL:p.dataURL,size:__solInfo.perf().size};});
+  check('postal: dimensões idênticas ao drawing buffer e peso de imagem real',
+    post.width===post.size[0]&&post.height===post.size[1]&&post.bytes>10000,
+    JSON.stringify({w:post.width,h:post.height,size:post.size,bytes:post.bytes}));
+  const postalPng=PNG.sync.read(Buffer.from(post.dataURL.split(',')[1],'base64'));
+  function warmRow(png,y){let n=0;for(let x=0;x<png.width;x++){const i=(y*png.width+x)*4;
+    const r=png.data[i],g=png.data[i+1],b=png.data[i+2];
+    if(r>=200&&g>=120&&g<=210&&b<140&&r>g+40)n++;}return n;}
+  // a mesma aritmética da composição (ui/postcard.js): a linha #ffaa5a
+  // começa exatamente em h-band e tem ~5% da faixa de espessura
+  const postalBand=Math.max(30,Math.round(postalPng.height*0.10));
+  const postalLineY=postalPng.height-postalBand;
+  let bandWarm=0;
+  for(let y=postalLineY;y<Math.min(postalPng.height,postalLineY+Math.max(1,Math.round(postalBand*0.05)));y++)
+    bandWarm=Math.max(bandWarm,warmRow(postalPng,y));
+  let topWarm=0;
+  for(let y=0;y<Math.min(8,postalPng.height);y++)topWarm=Math.max(topWarm,warmRow(postalPng,y));
+  check('postal: faixa da marca composta na base e ausente no topo',
+    bandWarm>postalPng.width*0.9&&topWarm<postalPng.width*0.05,
+    JSON.stringify({bandWarm,topWarm,width:postalPng.width,band:postalBand}));
+  check('postal: entrega por share ou download com o nome sol-postal.png',
+    post.delivery==='share'||(post.delivery==='download'&&(postalDownloadName===null||postalDownloadName==='sol-postal.png')),
+    JSON.stringify({delivery:post.delivery,download:postalDownloadName}));
+  await postal.close();
 
   const page=await browser.newPage({viewport:{width:960,height:600},deviceScaleFactor:1});
   page.setDefaultTimeout(240000);

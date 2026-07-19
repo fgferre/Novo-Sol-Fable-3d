@@ -91,6 +91,14 @@ export const EDU_CONTENT = {
       term: 'Ciclo solar',
       body: 'Em cerca de 11 anos, a atividade magnética do Sol cresce e diminui. Esse ritmo muda a frequência de manchas, flares e ejeções.'
     },
+    // PR-12 (Série Museu) — recompensa serena da coleção completa: aparece
+    // UMA vez na vida do aparelho, quando a 11ª família é observada. Sem
+    // gamificação: nenhuma pontuação, só o reconhecimento e um convite.
+    collectionComplete: {
+      headline: 'VOCÊ OBSERVOU O SOL INTEIRO',
+      term: 'Coleção completa',
+      body: 'Flares, ejeções, filamentos, o ciclo de 11 anos — tudo que esta estrela faz, você viu acontecer. O Sol continua; volte quando quiser.'
+    },
     tour: {
       label: 'VISITA GUIADA',
       chip: '▶ Visita guiada',
@@ -242,6 +250,12 @@ export const EDU_CONTENT = {
       headline: 'A MAGNETIC RHYTHM',
       term: 'Solar cycle',
       body: 'Over about 11 years, the Sun’s magnetic activity rises and falls. That rhythm changes how often sunspots, flares, and ejections occur.'
+    },
+    // PR-12 (Série Museu) — collection-complete reward (see PT note).
+    collectionComplete: {
+      headline: 'YOU HAVE SEEN THE WHOLE SUN',
+      term: 'Collection complete',
+      body: 'Flares, ejections, filaments, the 11-year cycle — everything this star does, you watched it happen. The Sun goes on; come back whenever you like.'
     },
     tour: {
       label: 'GUIDED VISIT',

@@ -149,8 +149,11 @@ export function createEdu(ctx){
   // volumétrica (o buraco é uma janela na coroa, não um ponto da superfície).
   // Prioridade 56: entre espículas (57) e coroa (55) — nunca rouba a leitura
   // de um evento localizado de plasma.
-  function isGlobal(type){ return type === 'cycleMaximum' || type === 'cycleMinimum' || type === 'corona' || type === 'granulation' || type === 'spicules'; }
-  function eventPriority(type){ return type === 'cme' ? 100 : type === 'flare' ? 90 : type === 'prominence' ? 70 : type === 'granulation' ? 58 : type === 'spicules' ? 57 : type === 'coronalHole' ? 56 : type === 'corona' ? 55 : isGlobal(type) ? 65 : 60; }
+  // PR-12: a conclusão da coleção é GLOBAL (fala do Sol inteiro, não de um
+  // ponto) e tem prioridade 110 — acima de tudo, inclusive da CME: acontece
+  // uma vez na vida do aparelho e nunca é interrompida depois de aberta.
+  function isGlobal(type){ return type === 'cycleMaximum' || type === 'cycleMinimum' || type === 'corona' || type === 'granulation' || type === 'spicules' || type === 'collectionComplete'; }
+  function eventPriority(type){ return type === 'collectionComplete' ? 110 : type === 'cme' ? 100 : type === 'flare' ? 90 : type === 'prominence' ? 70 : type === 'granulation' ? 58 : type === 'spicules' ? 57 : type === 'coronalHole' ? 56 : type === 'corona' ? 55 : isGlobal(type) ? 65 : 60; }
   function syncChrome(){
     // Marca única "SOL — uma estrela viva": ligar/desligar descobertas não
     // rebrandiza a página; só o idioma muda o chrome.
@@ -491,6 +494,10 @@ export function createEdu(ctx){
     // PR-9: descobertas por aproximação — globais (ver isGlobal). O emissor
     // de main.js retenta no frame seguinte se o palco estiver ocupado.
     if (name === 'granulation' || name === 'spicules') return startGlobalEvent(name,d,e);
+    // PR-12: conclusão da coleção — global, prioridade 110 (assume o palco
+    // de qualquer cartão em leitura); o latch em collection.js só desarma
+    // quando esta chamada aceita, então o emissor retenta a cada frame.
+    if (name === 'collectionComplete') return startGlobalEvent(name,d,e);
     // Um estado global vale somente enquanto ele está acontecendo. Ao
     // contrário de uma CME que emerge, máximo/mínimo não fica em fila:
     // o emissor físico tentará de novo no próximo frame ainda em hold.
@@ -529,7 +536,9 @@ export function createEdu(ctx){
     if (!active) return;
     age += rawDelta;
     if (eventGlobal){
-      if (age > 10){ finishEvent(); return; }
+      // PR-12: o cartão de conclusão tem corpo mais longo e acontece uma vez
+      // na vida do aparelho — janela de leitura maior que a dos globais comuns.
+      if (age > (eventType === 'collectionComplete' ? 14 : 10)){ finishEvent(); return; }
       // Defesa adicional contra qualquer reaplicação assíncrona do switch:
       // uma descoberta global não divide a leitura com o onboarding.
       intro.classList.remove('visible');

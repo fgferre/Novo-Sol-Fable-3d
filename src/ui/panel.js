@@ -4,6 +4,7 @@
 
 import { EDU_CONTENT } from '../edu/content.js';
 import { PANEL_STRINGS, CONTROL_LABELS_EN } from './strings.js';
+import { composePostcard, POSTCARD_FILE } from './postcard.js';
 
 export function createPanel(ctx){
   var hudEl = ctx.hudEl, TIER = ctx.TIER, TIER_ORDER = ctx.TIER_ORDER;
@@ -98,10 +99,13 @@ export function createPanel(ctx){
     '#knobReset{margin-top:22px;width:100%;padding:9px 0;border-radius:9px;cursor:pointer;',
     ' border:1px solid rgba(255,170,90,.3);background:transparent;color:#ffb877;font-size:12px;',
     ' letter-spacing:.05em;transition:background .25s}#knobReset:hover{background:rgba(255,140,50,.12)}',
-    '#lookBtn,#dirBtn,#eduTourBtn{margin-top:14px;width:100%;min-height:44px;padding:9px 0;border-radius:9px;cursor:pointer;',
+    '#lookBtn,#dirBtn,#eduTourBtn,#postcardBtn{margin-top:14px;width:100%;min-height:44px;padding:9px 0;border-radius:9px;cursor:pointer;',
     ' border:1px solid rgba(255,170,90,.45);background:rgba(255,140,50,.16);color:#ffd9a8;',
     ' font-size:12px;letter-spacing:.05em;transition:background .25s}',
-    '#lookBtn:hover,#dirBtn:hover,#eduTourBtn:hover{background:rgba(255,140,50,.28)}#dirBtn{margin-top:8px}#eduTourBtn{margin-top:3px}',
+    '#lookBtn:hover,#dirBtn:hover,#eduTourBtn:hover,#postcardBtn:hover{background:rgba(255,140,50,.28)}#dirBtn{margin-top:8px}#eduTourBtn{margin-top:3px}',
+    '#postcardBtn{margin-top:8px}#postcardBtn:disabled{opacity:.45;cursor:default}',
+    '#knobPanel .collectionComplete{margin:7px 0 0;font-size:10.5px;line-height:1.35;letter-spacing:.04em;color:#ffbf7d}',
+    '#knobPanel .collectionComplete[hidden]{display:none}',
     '#tierRow{display:flex;gap:6px;margin:8px 0 2px}',
     '#tierRow button{flex:1;padding:7px 0;border-radius:8px;cursor:pointer;font-size:11px;',
     ' border:1px solid rgba(255,170,90,.25);background:transparent;color:rgba(233,228,218,.75);',
@@ -162,6 +166,67 @@ export function createPanel(ctx){
     });
     ctx.onEduTourChange=syncTour;syncTour(ctx.eduTourInfo&&ctx.eduTourInfo());panel.appendChild(tourButton);
 
+    // PR-12 — postal "guardar esta vista". O clique agenda a captura para o
+    // FIM do frame corrente do animate (ctx.capturePostcard — o canvas WebGL
+    // não tem preserveDrawingBuffer, então o toDataURL só é válido logo após
+    // um render); a composição da faixa acontece num canvas 2D offscreen
+    // (ui/postcard.js). Saída: Web Share com arquivo quando o aparelho
+    // oferece (iPhone), senão download automático. Sob ?det este bloco
+    // inteiro não existe (seção experiência ausente) — paridade intacta.
+    var postcardBtn=document.createElement('button');postcardBtn.type='button';postcardBtn.id='postcardBtn';
+    reg(function(){
+      postcardBtn.textContent=S().postcard.button;
+      postcardBtn.setAttribute('aria-label',S().postcard.buttonAria);
+    });
+    function deliverPostcard(canvas,outURL){
+      function download(){
+        ctx.lastPostcard.delivery='download';
+        var a=document.createElement('a');
+        a.href=outURL;a.download=POSTCARD_FILE;
+        document.body.appendChild(a);a.click();a.remove();
+      }
+      // canShare({files}) é a detecção honesta: navegadores sem share de
+      // arquivo (desktop) caem direto no download, sem prompt quebrado.
+      var canShareFiles=false,file=null;
+      try {
+        if(canvas.blob&&navigator.canShare&&navigator.share&&typeof File==='function'){
+          file=new File([canvas.blob],POSTCARD_FILE,{type:'image/png'});
+          canShareFiles=navigator.canShare({files:[file]});
+        }
+      } catch(e){ canShareFiles=false; }
+      if(canShareFiles){
+        ctx.lastPostcard.delivery='share';
+        // Cancelar o share sheet é uma escolha do usuário, não um erro;
+        // qualquer falha real (NotAllowedError etc.) cai no download.
+        navigator.share({files:[file],title:S().postcard.brand}).catch(function(err){
+          if(!err||err.name!=='AbortError')download();
+        });
+      } else download();
+    }
+    postcardBtn.addEventListener('click',function(){
+      if(!ctx.capturePostcard||postcardBtn.disabled)return;
+      postcardBtn.disabled=true;
+      ctx.capturePostcard(function(sourceURL){
+        if(!sourceURL){postcardBtn.disabled=false;return;}
+        composePostcard(sourceURL,S().postcard.brand,function(canvas){
+          postcardBtn.disabled=false;
+          if(!canvas)return;
+          var outURL=canvas.toDataURL('image/png');
+          // Hook white-box (__solInfo.lastPostcard): dimensões, peso e o
+          // próprio dataURL composto — a prova decodifica o PNG e amostra a
+          // faixa sem interceptar rede/FS.
+          ctx.lastPostcard={width:canvas.width,height:canvas.height,
+            bytes:Math.floor((outURL.length-'data:image/png;base64,'.length)*3/4),
+            dataURL:outURL,delivery:''};
+          canvas.toBlob(function(blob){
+            canvas.blob=blob;
+            deliverPostcard(canvas,outURL);
+          },'image/png');
+        });
+      });
+    });
+    panel.appendChild(postcardBtn);
+
     var langRow=document.createElement('div'); langRow.className='choice'; langRow.id='eduLangRow';
     var langLabel=document.createElement('span');
     var langChoices=document.createElement('div'); langChoices.className='choiceBtns';
@@ -196,6 +261,9 @@ export function createPanel(ctx){
       var collectionSec=document.createElement('div'); collectionSec.className='sec'; collectionSec.id='eduCollectionSec'; panel.appendChild(collectionSec);
       var collectionRow=document.createElement('div'); collectionRow.id='eduCollectionRow';
       var collectionToggle=document.createElement('button'); collectionToggle.type='button'; collectionToggle.id='eduCollectionToggle'; collectionToggle.className='collectionToggle';
+      // PR-12: a linha do estado completo fica junto do contador (visível
+      // mesmo com a lista recolhida) — reconhecimento calmo, sem gamificação.
+      var collectionCompleteLine=document.createElement('div'); collectionCompleteLine.id='eduCollectionComplete'; collectionCompleteLine.className='collectionComplete'; collectionCompleteLine.hidden=true;
       var collectionList=document.createElement('div'); collectionList.id='eduCollectionList'; collectionList.hidden=true;
       collectionToggle.setAttribute('aria-expanded','false'); collectionToggle.setAttribute('aria-controls',collectionList.id);
       var collectionExpanded=false, collectionSelected='';
@@ -225,6 +293,8 @@ export function createPanel(ctx){
         collectionToggle.textContent=text.open+' · '+info.discoveredFamilies+' '+text.of+' '+info.totalFamilies+' '+text.observed;
         collectionToggle.setAttribute('aria-label',collectionToggle.textContent);
         collectionToggle.setAttribute('aria-expanded',String(collectionExpanded));
+        collectionCompleteLine.hidden=!info.complete;
+        collectionCompleteLine.textContent=info.complete?text.complete:'';
         collectionList.hidden=!collectionExpanded;
         collectionList.textContent='';
         info.order.forEach(function(id){
@@ -257,7 +327,7 @@ export function createPanel(ctx){
           renderCollection();
         }
       });
-      collectionRow.appendChild(collectionToggle);collectionRow.appendChild(collectionList);collectionRow.appendChild(collectionClear);panel.appendChild(collectionRow);
+      collectionRow.appendChild(collectionToggle);collectionRow.appendChild(collectionCompleteLine);collectionRow.appendChild(collectionList);collectionRow.appendChild(collectionClear);panel.appendChild(collectionRow);
       ctx.onEduCollectionChange=function(){ renderCollection(); };
       renderCollection();
     }

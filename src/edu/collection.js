@@ -33,8 +33,13 @@ var FAMILIES = {
   cycle:['cycleMaximum','cycleMinimum']
 };
 
+// PR-12 — `celebrated` vive DENTRO do próprio store da coleção (mesma chave,
+// mesmo merge multi-aba): o cartão de conclusão acontece uma vez na vida do
+// aparelho, e a flag sobrevive a gravações concorrentes porque mergeState a
+// propaga como qualquer vista verdadeira. Sem bump de versão: normalizedState
+// simplesmente preserva o booleano quando presente.
 function blankState(){
-  return {v:VERSION,order:ORDER.slice(),items:{}};
+  return {v:VERSION,order:ORDER.slice(),items:{},celebrated:false};
 }
 
 function storageForBrowser(){
@@ -53,6 +58,7 @@ function isKnownView(family,view){
 function normalizedState(raw){
   var next = blankState();
   if (!raw || raw.v !== VERSION || !raw.items || typeof raw.items !== 'object') return next;
+  next.celebrated = raw.celebrated === true;
   ORDER.forEach(function(family){
     var source = raw.items[family];
     if (!source || !source.views || typeof source.views !== 'object') return;
@@ -79,7 +85,9 @@ function loadState(storage){
 function mergeState(target, incoming){
   // Duas abas podem descobrir fenômenos diferentes antes de uma delas ser
   // fechada. Unir as vistas verdadeiras antes de salvar evita que uma gravação
-  // tardia apague a descoberta da outra.
+  // tardia apague a descoberta da outra. `celebrated` segue a mesma regra
+  // OR-monotônica: uma vez celebrada em qualquer aba, celebrada no aparelho.
+  if (incoming.celebrated) target.celebrated = true;
   ORDER.forEach(function(family){
     var source = incoming.items[family];
     if (!source || !source.views) return;
@@ -140,7 +148,7 @@ function discoveryFor(type,contentKey){
 
 function emptyInfo(){
   return Object.freeze({available:false,version:VERSION,order:Object.freeze([]),totalFamilies:0,
-    discoveredFamilies:0,totalViews:0,discoveredViews:0,complete:false,items:Object.freeze({})});
+    discoveredFamilies:0,totalViews:0,discoveredViews:0,complete:false,celebrated:false,items:Object.freeze({})});
 }
 
 export function createEduCollection(ctx){
@@ -190,6 +198,7 @@ export function createEduCollection(ctx){
       totalViews:totalViews,
       discoveredViews:discoveredViews,
       complete:discoveredViews === totalViews,
+      celebrated:!!state.celebrated,
       items:items
     };
   }
@@ -211,6 +220,41 @@ export function createEduCollection(ctx){
     try { ctx.onEduCollectionChange(snapshot()); } catch(e){}
   }
 
+  // PR-12 — conclusão da coleção. O ÚNICO ponto em que `complete` pode virar
+  // verdadeiro é uma gravação (recordEduDiscovery) ou uma carga já completa
+  // (semeada/outra aba). Nesses dois pontos armamos um LATCH barato
+  // (ctx.eduCollectionCelebrationPending, booleano puro): o emissor no
+  // animate só paga um if falsy por frame — nunca um refreshFromStorage
+  // (getItem+JSON.parse) no hot path. O emissor tenta ctx.eduEvent a cada
+  // frame (a arbitragem pode estar ocupada, a visita pode estar ativa) e só
+  // markEduCollectionCelebrated() — que persiste `celebrated` no store —
+  // desarma o latch: o cartão aparece UMA vez na vida do aparelho.
+  function stateComplete(){
+    for (var fi = 0; fi < ORDER.length; fi++){
+      var views = FAMILIES[ORDER[fi]];
+      for (var vi = 0; vi < views.length; vi++)
+        if (!hasView(ORDER[fi],views[vi])) return false;
+    }
+    return true;
+  }
+  function refreshCelebration(){
+    if (!state.celebrated && stateComplete()) ctx.eduCollectionCelebrationPending = true;
+  }
+  ctx.eduCollectionCelebrationPending = false;
+  ctx.markEduCollectionCelebrated = function(){
+    ctx.eduCollectionCelebrationPending = false;
+    refreshFromStorage();
+    if (state.celebrated) return false;
+    state.celebrated = true;
+    save();
+    notify();
+    return true;
+  };
+  ctx.eduCollectionCelebration = function(){
+    return { available:true, pending:!!ctx.eduCollectionCelebrationPending,
+             celebrated:!!state.celebrated };
+  };
+
   ctx.eduCollectionInfo = snapshot;
 
   ctx.recordEduDiscovery = function(type,contentKey){
@@ -229,11 +273,19 @@ export function createEduCollection(ctx){
     if (!changed) return false;
     save();
     notify();
+    // PR-12: a 11ª família acabou de entrar? Arma o latch do cartão de
+    // conclusão — o emissor do animate o consome fora desta pilha de
+    // chamadas (recordEduDiscovery roda DENTRO do startEvent do edu.js;
+    // emitir aqui seria reentrância na máquina de estados do cartão).
+    refreshCelebration();
     return true;
   };
 
   ctx.clearEduCollection = function(){
     refreshFromStorage();
+    // Limpar é um reset explícito do aparelho: a celebração pendente morre
+    // junto (uma coleção refeita do zero pode voltar a ser celebrada).
+    ctx.eduCollectionCelebrationPending = false;
     var hadDiscoveries = false;
     ORDER.forEach(function(family){
       FAMILIES[family].forEach(function(view){ if (hasView(family,view)) hadDiscoveries = true; });
@@ -251,4 +303,9 @@ export function createEduCollection(ctx){
     notify();
     return true;
   };
+
+  // PR-12: uma carga que JÁ chega completa mas nunca celebrada (a 11ª veio
+  // de outra aba, ou o store foi restaurado) arma o latch no boot — a
+  // primeira sessão que vê a coleção completa mostra o cartão, uma vez.
+  refreshCelebration();
 }

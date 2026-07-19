@@ -29,6 +29,14 @@ A coleção tem **11 famílias** (`surface`, `granulation`, `spots`, `loops`,
 escura logo após a própria coroa) desde o PR-10; o painel calcula
 "N de 11" dinamicamente a partir dessa ordem.
 
+**Coleção completa tem reconhecimento (PR-12):** quando a 11ª família é
+observada, um cartão sereno único ("Você observou o Sol inteiro / Coleção
+completa") aparece na exploração livre — UMA vez na vida do aparelho
+(`celebrated` persistido no próprio store da coleção, sobrevive a reload e
+a multi-aba pelo merge existente) — e o painel ganha a linha "Coleção
+completa". Sem gamificação: nenhuma pontuação, só o reconhecimento e um
+convite a voltar.
+
 Em todas as etapas, a prova `npm run qa:tour` roda em ambiente de iPhone de verdade (UA Safari, toques e arrastes de TOQUE genuínos, `tier=mid` — o tier real do aparelho) e verifica, POR ETAPA: botões visíveis ≥44 px, cartão expandido sem estourar a tela, colisão cartão/disco, fonte física visível e leitura recolhida a 8% do tempo. A pausa com relógio físico parado é medida em dupla janela em três etapas representativas; a caminhada completa repete em paisagem 844×390; um gate DPR3 cobre a transação de display; controles negativos provam que loops/CME/coroa sem física reportam o texto honesto de indisponível; e o contraste WCAG do cartão (≥4.5) é medido por screenshot. A evidência (JSON + screenshots-chave) vai para `out/qa-tour/` e sobe como artifact do CI também em sucesso.
 
 ## O que também foi corrigido na exploração livre

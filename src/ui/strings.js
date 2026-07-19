@@ -40,7 +40,16 @@ export const PANEL_STRINGS = {
       notSeen: 'Ainda não observada',
       views: 'vistas observadas',
       clear: 'Limpar descobertas observadas',
-      confirm: 'Limpar as descobertas observadas neste aparelho? Esta ação não pode ser desfeita.'
+      confirm: 'Limpar as descobertas observadas neste aparelho? Esta ação não pode ser desfeita.',
+      // PR-12: linha serena do estado completo (11 de 11 famílias).
+      complete: 'Coleção completa — você observou o Sol inteiro'
+    },
+    // PR-12 — postal: o botão vive na seção experiência; a marca da faixa
+    // segue o chrome do museu (brand + brandTag da língua corrente).
+    postcard: {
+      button: 'Guardar esta vista',
+      buttonAria: 'Guardar esta vista do Sol como imagem',
+      brand: '☉ SOL — uma estrela viva'
     },
     state: {
       'director-override': 'efetivo {value} durante o diretor',
@@ -125,7 +134,15 @@ export const PANEL_STRINGS = {
       notSeen: 'Not observed yet',
       views: 'views seen',
       clear: 'Clear observed discoveries',
-      confirm: 'Clear the discoveries observed on this device? This cannot be undone.'
+      confirm: 'Clear the discoveries observed on this device? This cannot be undone.',
+      // PR-12: serene complete-state line (11 of 11 families).
+      complete: 'Collection complete — you have seen the whole Sun'
+    },
+    // PR-12 — postcard (see PT note).
+    postcard: {
+      button: 'Save this view',
+      buttonAria: 'Save this view of the Sun as an image',
+      brand: '☉ SOL — a living star'
     },
     state: {
       'director-override': 'effective {value} while the director runs',

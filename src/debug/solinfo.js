@@ -622,6 +622,24 @@ export function createSolInfo(ctx){
       window.__solInfo.clearEduCollection = function(){
         return ctx.clearEduCollection ? ctx.clearEduCollection() : false;
       };
+      // PR-12 — celebração da coleção completa: latch pendente + flag
+      // persistida. Sob ?det a fábrica não define o hook — inerte.
+      window.__solInfo.eduCollectionCelebration = function(){
+        return ctx.eduCollectionCelebration ? ctx.eduCollectionCelebration()
+          : { available:false, pending:false, celebrated:false };
+      };
+      // PR-12 — postal: última composição {width,height,bytes,dataURL,
+      // delivery} (null antes da primeira captura; sob ?det o botão nem
+      // existe e o hook permanece null para sempre).
+      window.__solInfo.lastPostcard = function(){
+        return ctx.lastPostcard || null;
+      };
+      // PR-12 — prova de que a captura não comprou preserveDrawingBuffer
+      // (custo por frame): os atributos reais do contexto WebGL.
+      window.__solInfo.glAttributes = function(){
+        try { return renderer.getContext().getContextAttributes(); }
+        catch(e){ return null; }
+      };
       // Visita guiada: contrato pequeno para a prova mobile. Sob ?det a
       // fábrica não existe e todos os comandos seguem inertes.
       window.__solInfo.eduTourInfo = function(){

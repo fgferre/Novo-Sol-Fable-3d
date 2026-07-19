@@ -182,20 +182,27 @@ async function layoutState(page){
   await det.waitForFunction(()=>window.__solInfo&&window.__solInfo.frame>4);
   const inert=await det.evaluate(()=>({info:__solInfo.eduInfo(),root:!!document.querySelector('#edu'),style:!!document.querySelector('#eduStyle'),
     panelSwitch:!!document.querySelector('#eduSwitchRow'),langControl:!!document.querySelector('#eduLangRow'),collectionRow:!!document.querySelector('#eduCollectionRow'),
-    collection:__solInfo.eduCollectionInfo(),collectionStored:localStorage.getItem('solEduCollection.v1'),emit:__solInfo.eduEmit('flare'),force:__solInfo.forceFlarePair(0)}));
+    collection:__solInfo.eduCollectionInfo(),collectionStored:localStorage.getItem('solEduCollection.v1'),emit:__solInfo.eduEmit('flare'),force:__solInfo.forceFlarePair(0),
+    intro:__solInfo.introInfo(),introStyle:!!document.querySelector('#introStyle'),cinemaBtn:!!document.querySelector('#eduTourCinema')}));
   check('det permanece totalmente sem camada educativa',!inert.info.enabled&&!inert.root&&!inert.style&&!inert.panelSwitch&&!inert.langControl&&!inert.collectionRow&&!inert.collection.available&&inert.collectionStored==='{"sentinel":true}'&&!inert.emit);
+  // PR-5 — abertura e sessão de cinema também ausentes sob det (fábricas
+  // nem rodam: hook responde available:false e nenhum DOM/classe existe).
+  check('det permanece sem abertura e sem sessão de cinema',
+    !inert.intro.available&&!inert.intro.active&&!inert.introStyle&&!inert.cinemaBtn,JSON.stringify(inert.intro));
   await det.close();
 
-  // GO-LIVE (série Museu, PR-3): a carga SEM parâmetros, num contexto
-  // virgem de iPhone, chega com o museu de porta aberta — descobertas
-  // ligadas, intro visível, chip da visita no palco. URL/storage seguem
-  // vencendo: ?edu=0 desliga e storage desligado permanece desligado.
+  // GO-LIVE (série Museu, PR-3): a carga num contexto virgem de iPhone
+  // chega com o museu de porta aberta — descobertas ligadas, intro visível,
+  // chip da visita no palco. URL/storage seguem vencendo: ?edu=0 desliga e
+  // storage desligado permanece desligado. intro=0 (PR-5): a abertura
+  // cinematográfica esconderia o chip durante o plano-sequência — ela tem
+  // prova própria em qa-edu-tour; aqui isolamos o go-live das descobertas.
   const fresh=await browser.newContext({viewport:{width:390,height:844},deviceScaleFactor:1});
   const freshPage=await fresh.newPage();
   freshPage.setDefaultTimeout(240000);
   freshPage.on('pageerror',(e)=>errors.push('[fresh] '+e.message));
   freshPage.on('console',(m)=>{if(m.type()==='error')errors.push('[fresh] '+m.text());});
-  await freshPage.goto(base);
+  await freshPage.goto(base+'?intro=0');
   await freshPage.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduInfo&&window.__solInfo.eduTourInfo);
   const arrival=await freshPage.evaluate(()=>({info:__solInfo.eduInfo(),rootHidden:document.querySelector('#edu')&&document.querySelector('#edu').hidden,
     introVisible:!!document.querySelector('#edu .edu-intro.visible'),chip:__solInfo.eduTourInfo().chip}));
@@ -219,7 +226,7 @@ async function layoutState(page){
   museu.setDefaultTimeout(300000);
   museu.on('pageerror',(e)=>errors.push('[museu] '+e.message));
   museu.on('console',(m)=>{if(m.type()==='error')errors.push('[museu] '+m.text());});
-  await museu.goto(base+'?scale=0.25');
+  await museu.goto(base+'?scale=0.25&intro=0');
   await museu.waitForFunction(()=>window.__solInfo&&window.__solInfo.perf&&window.__solInfo.perf().frames>2);
   const freshDefaults=await museu.evaluate(()=>{
     const on={spots:1,loops:0.55,fprom:0.55,cme:0.9,cvol:0.5,burst:0.55,adapt:0.55,disp:0.4,hal:0.45,shimmer:0.45};
@@ -255,7 +262,7 @@ async function layoutState(page){
   collectionPage.setDefaultTimeout(240000);
   collectionPage.on('pageerror',(e)=>errors.push('[collection] '+e.message));
   collectionPage.on('console',(m)=>{if(m.type()==='error')errors.push('[collection] '+m.text());});
-  await collectionPage.goto(base+'?edu=0&lang=pt&tier=low&scale=0.25&speed=0.05&cycle=0&fprom=0&spots=0&cme=0');
+  await collectionPage.goto(base+'?edu=0&lang=pt&tier=low&scale=0.25&speed=0.05&cycle=0&fprom=0&spots=0&cme=0&intro=0');
   await collectionPage.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduCollectionInfo);
   await collectionPage.evaluate(()=>{
     localStorage.setItem('solKnobs',JSON.stringify({qaSentinel:17}));
@@ -292,7 +299,7 @@ async function layoutState(page){
   check('coleção troca a releitura para inglês sem duplicar descoberta',/Solar flare/.test(collectionEnglish.text)&&collectionEnglish.info.discoveredFamilies===1&&collectionEnglish.info.discoveredViews===1,JSON.stringify({text:collectionEnglish.text,info:collectionEnglish.info}));
   const collectionPersistedPage=await collectionContext.newPage();
   collectionPersistedPage.setDefaultTimeout(240000);
-  await collectionPersistedPage.goto(base+'?edu=0&lang=pt&tier=low&scale=0.25&speed=0.05&cycle=0&fprom=0&spots=0&cme=0');
+  await collectionPersistedPage.goto(base+'?edu=0&lang=pt&tier=low&scale=0.25&speed=0.05&cycle=0&fprom=0&spots=0&cme=0&intro=0');
   await collectionPersistedPage.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduCollectionInfo);
   const collectionPersisted=await collectionPersistedPage.evaluate(()=>({info:__solInfo.eduCollectionInfo(),active:__solInfo.eduInfo().active.length}));
   check('coleção persiste entre visitas sem reabrir um evento ao vivo',collectionPersisted.info.items.flare.seen&&collectionPersisted.active===0);
@@ -312,7 +319,7 @@ async function layoutState(page){
   page.setDefaultTimeout(240000);
   page.on('pageerror',(e)=>errors.push('[edu] '+e.message));
   page.on('console',(m)=>{if(m.type()==='error')errors.push('[edu] '+m.text());});
-  await page.goto(base+'?edu=1&lang=pt&tier=low&scale=0.25&speed=0.05&cycle=0');
+  await page.goto(base+'?edu=1&lang=pt&tier=low&scale=0.25&speed=0.05&cycle=0&intro=0');
   await page.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduInfo);
   await page.evaluate(()=>window.__solInfo.setRotSpeed(0));
   const fired=await forceVisible(page);
@@ -382,7 +389,7 @@ async function layoutState(page){
   lowCme.setDefaultTimeout(240000);
   lowCme.on('pageerror',(e)=>errors.push('[cme-low] '+e.message));
   lowCme.on('console',(m)=>{if(m.type()==='error')errors.push('[cme-low] '+m.text());});
-  await lowCme.goto(base+'?edu=1&tier=low&scale=0.25&speed=0.05&cycle=0&cme=1');
+  await lowCme.goto(base+'?edu=1&tier=low&scale=0.25&speed=0.05&cycle=0&cme=1&intro=0');
   await lowCme.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduInfo);
   await lowCme.evaluate(()=>window.__solInfo.setRotSpeed(0));
   const lowLaunch=await lowCme.evaluate(()=>({forced:__solInfo.forceCME(0),cme:__solInfo.cmeInfo()}));
@@ -395,7 +402,7 @@ async function layoutState(page){
   cmePage.setDefaultTimeout(240000);
   cmePage.on('pageerror',(e)=>errors.push('[cme] '+e.message));
   cmePage.on('console',(m)=>{if(m.type()==='error')errors.push('[cme] '+m.text());});
-  await cmePage.goto(base+'?edu=1&lang=pt&tier=high&scale=0.25&speed=0.05&cycle=0&cme=1');
+  await cmePage.goto(base+'?edu=1&lang=pt&tier=high&scale=0.25&speed=0.05&cycle=0&cme=1&intro=0');
   await cmePage.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduInfo);
   await cmePage.evaluate(()=>window.__solInfo.setRotSpeed(0));
   const cmeFired=await forceVisibleCme(cmePage);
@@ -415,7 +422,7 @@ async function layoutState(page){
   promPage.setDefaultTimeout(240000);
   promPage.on('pageerror',(e)=>errors.push('[prom] '+e.message));
   promPage.on('console',(m)=>{if(m.type()==='error')errors.push('[prom] '+m.text());});
-  await promPage.goto(base+'?edu=1&lang=pt&tier=high&scale=0.25&speed=0.05&cycle=0&fprom=1');
+  await promPage.goto(base+'?edu=1&lang=pt&tier=high&scale=0.25&speed=0.05&cycle=0&fprom=1&intro=0');
   await promPage.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduInfo);
   await promPage.evaluate(()=>window.__solInfo.setRotSpeed(0));
   const filament=await forceProminenceView(promPage,'filament');
@@ -446,7 +453,7 @@ async function layoutState(page){
   spotsPage.on('console',(m)=>{if(m.type()==='error')errors.push('[spots] '+m.text());});
   // Começa desligado: a prova habilita a experiência só depois de preparar
   // a região ativa física no máximo do ciclo.
-  await spotsPage.goto(base+'?edu=0&lang=pt&tier=high&scale=0.25&speed=0.05&cycle=1&spots=1');
+  await spotsPage.goto(base+'?edu=0&lang=pt&tier=high&scale=0.25&speed=0.05&cycle=1&spots=1&intro=0');
   await spotsPage.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduSpotRegion);
   const spots=await forceSpotDiscovery(spotsPage);
   const spotsLineClear=spots&&!spots.item.connectorVisible||!!(spots&&segmentDistance(spots.item.disk.x,spots.item.disk.y,spots.item.anchor.x,spots.item.anchor.y,spots.item.lineEnd.x,spots.item.lineEnd.y)>spots.item.disk.r+6);
@@ -470,7 +477,7 @@ async function layoutState(page){
   maxPage.setDefaultTimeout(240000);
   maxPage.on('pageerror',(e)=>errors.push('[cycle-max] '+e.message));
   maxPage.on('console',(m)=>{if(m.type()==='error')errors.push('[cycle-max] '+m.text());});
-  await maxPage.goto(base+'?edu=0&lang=pt&tier=high&scale=0.25&speed=0.05&cycle=1&spots=1&fprom=0&cme=0');
+  await maxPage.goto(base+'?edu=0&lang=pt&tier=high&scale=0.25&speed=0.05&cycle=1&spots=1&fprom=0&cme=0&intro=0');
   await maxPage.waitForFunction(()=>window.__solInfo&&window.__solInfo.cycleInfo);
   const maximum=await forceCycleDiscovery(maxPage,'maximum');
   const maxItem=maximum&&maximum.info.active[0];
@@ -506,7 +513,7 @@ async function layoutState(page){
   minPage.setDefaultTimeout(240000);
   minPage.on('pageerror',(e)=>errors.push('[cycle-min] '+e.message));
   minPage.on('console',(m)=>{if(m.type()==='error')errors.push('[cycle-min] '+m.text());});
-  await minPage.goto(base+'?edu=0&lang=pt&tier=high&scale=0.25&speed=0.05&cycle=1&spots=1&fprom=0&cme=0');
+  await minPage.goto(base+'?edu=0&lang=pt&tier=high&scale=0.25&speed=0.05&cycle=1&spots=1&fprom=0&cme=0&intro=0');
   await minPage.waitForFunction(()=>window.__solInfo&&window.__solInfo.cycleInfo);
   const minimum=await forceCycleDiscovery(minPage,'minimum');
   const minItem=minimum&&minimum.info.active[0];
@@ -521,7 +528,7 @@ async function layoutState(page){
   reduced.setDefaultTimeout(240000);
   reduced.on('pageerror',(e)=>errors.push('[reduce] '+e.message));
   reduced.on('console',(m)=>{if(m.type()==='error')errors.push('[reduce] '+m.text());});
-  await reduced.goto(base+'?edu=1&tier=low&scale=0.25&speed=0.05&cycle=0');
+  await reduced.goto(base+'?edu=1&tier=low&scale=0.25&speed=0.05&cycle=0&intro=0');
   await reduced.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduInfo);
   await reduced.evaluate(()=>window.__solInfo.setRotSpeed(0));
   const reducedFired=await forceVisible(reduced);

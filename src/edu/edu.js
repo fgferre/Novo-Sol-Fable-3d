@@ -477,7 +477,11 @@ export function createEdu(ctx){
 
   ctx.eduTick = function(rawDelta){
     if (!enabled) return;
-    if (ctx.eduTourActive){ root.hidden = true; return; }
+    // A visita guiada tem narrativa E halo próprios. Esconder só o DOM
+    // deixava o hotspot 3D de um evento em leitura congelado na cena
+    // (PR-5): hideVisual() apaga também o sprite; quando a visita termina,
+    // um evento ainda vivo reabre normalmente pelo showVisual do tick.
+    if (ctx.eduTourActive){ root.hidden = true; hideVisual(); return; }
     if (root.hidden) root.hidden = false;
     sinceEvent += rawDelta;
     if (pendingCme){

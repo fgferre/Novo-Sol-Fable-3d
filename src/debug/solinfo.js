@@ -605,6 +605,11 @@ export function createSolInfo(ctx){
       window.__solInfo.eduHealth = function(){
         return { faults: ctx.eduFaults ? ctx.eduFaults.slice() : [] };
       };
+      // PR-5 — abertura cinematográfica: sob ?det a factory nem roda e o
+      // hook responde available:false (o QA afirma a inércia de graça).
+      window.__solInfo.introInfo = function(){
+        return ctx.introInfo ? ctx.introInfo() : { available:false, active:false };
+      };
       // FASE 5 — QA do foco raso: override do plano de foco (0 centro,
       // 1 limbo; -1 volta ao automático) + estado corrente
       window.__solInfo.setDofFocus = function(x){

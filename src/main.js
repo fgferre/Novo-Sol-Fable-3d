@@ -20,6 +20,7 @@ import { createLoops } from './atmosphere/loops.js';
 import { createStars } from './scene/stars.js';
 import { createPipeline } from './post/pipeline.js';
 import { createControls } from './camera/controls.js';
+import { createIntro } from './camera/intro.js';
 import { createPerf } from './core/perf.js';
 import { createFlares } from './surface/flares.js';
 import { createDirector } from './camera/director.js';
@@ -365,13 +366,21 @@ function init(){
     var hintCopy = EDU_CONTENT[ctx.eduLang === 'en' ? 'en' : 'pt'];
     hintEl.textContent = hasTouch ? hintCopy.touchHint : hintCopy.desktopHint;
   }
-  setTimeout(function(){ if(hintEl) hintEl.style.opacity='0'; }, 6000);
+  // PR-5: o fade-out do hint vive em ctx para a abertura cinematográfica
+  // poder rearmá-lo (o hint só conta os 6s DEPOIS de aparecer). Sem a
+  // abertura (det/retorno) o comportamento é byte-idêntico ao histórico.
+  ctx.hideHint = function(){ if(hintEl) hintEl.style.opacity='0'; };
+  ctx.hintHideTimer = setTimeout(ctx.hideHint, 6000);
 
   // Camada educativa opt-in. Sob ?det=1 a fábrica retorna antes de criar
   // DOM, textura, listener ou tick; ?edu=1 habilita a primeira fatia.
   createEdu(ctx);
 
   createDirector(ctx);
+  // PR-5 — abertura cinematográfica do primeiro acesso. Depois do director
+  // (a abertura cede a câmera se ele estiver ativo) e ANTES da visita: o
+  // chip do palco consulta ctx.introActive já no primeiro syncChip.
+  createIntro(ctx);
   // A visita guiada é separada das descobertas espontâneas e do diretor:
   // cartão persistente/tátil, tempo de leitura e enquadramento consentido.
   createEduTour(ctx);
@@ -732,6 +741,18 @@ function init(){
       cvolFrame(cvolOn, rawDelta, held);
     }
 
+    // PR-5 — abertura cinematográfica: beat único de câmera do primeiro
+    // acesso. Sob ?det a factory nem roda (hook undefined — if falsy, o
+    // mesmo custo dos gates de knob). Mesma blindagem PR-2 dos ticks edu:
+    // a 1ª falha desliga a abertura, registra no ring e revela o chrome
+    // (o skip é só DOM/estado — nunca deixa o título invisível para sempre).
+    if (ctx.introTick){
+      try { ctx.introTick(rawDelta); }
+      catch(e){
+        ctx.introTick = null; ctx.eduFault('tick-intro', e);
+        try { if (ctx.introUserSkip) ctx.introUserSkip(); } catch(_){}
+      }
+    }
     // A visita pode ajustar a pose-alvo antes da inércia/zoom. Um gesto do
     // usuário desliga apenas esta assistência (controls.js), não a visita.
     // PR-2 (Museu): uma exceção na camada edu não pode derrubar o frame.

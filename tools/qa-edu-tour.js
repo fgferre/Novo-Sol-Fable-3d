@@ -29,12 +29,72 @@ async function cardState(page){
 (async()=>{
   fs.mkdirSync(outDir,{recursive:true});
   browser=await chromium.launch({args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
+
+  // ————— PR-5 · Abertura cinematográfica —————
+  // (a) primeiro acesso forçado (?intro=1, storage limpo): nasce ativa e em
+  // close-up, o chip cede o palco, termina no fit, grava introSeen e o
+  // retorno SEM ?intro chega direto no fit.
+  const introErrors=[];
+  const introCtx=await browser.newContext({viewport:{width:390,height:844},deviceScaleFactor:1,isMobile:true,hasTouch:true});
+  const ip=await introCtx.newPage();ip.setDefaultTimeout(240000);
+  ip.on('pageerror',(e)=>introErrors.push('[intro] '+e.message));ip.on('console',(m)=>{if(m.type()==='error')introErrors.push('[intro] '+m.text());});
+  await ip.goto(base+'?intro=1&scale=0.25');
+  await ip.waitForFunction(()=>window.__solInfo&&window.__solInfo.introInfo);
+  const introStart=await ip.evaluate(()=>({intro:__solInfo.introInfo(),state:__solInfo.state(),chip:__solInfo.eduTourInfo().chip}));
+  check('abertura começa ativa, em close-up e com o chip fora do palco',
+    introStart.intro.available&&introStart.intro.active&&introStart.state.camDist<introStart.state.fitDist*.6&&!introStart.chip.visible,
+    JSON.stringify({active:introStart.intro.active,camDist:+introStart.state.camDist.toFixed(3),fit:+introStart.state.fitDist.toFixed(3),chip:introStart.chip.visible}));
+  await ip.waitForFunction(()=>!window.__solInfo.introInfo().active,null,{timeout:240000});
+  await ip.waitForFunction(()=>window.__solInfo.eduTourInfo().chip.visible,null,{timeout:60000});
+  const introEnd=await ip.evaluate(()=>({state:__solInfo.state(),chip:__solInfo.eduTourInfo().chip,
+    seen:JSON.parse(localStorage.getItem('solKnobs')||'{}').introSeen}));
+  check('abertura termina no fit, devolve o chip e grava introSeen',
+    Math.abs(introEnd.state.camDist-introEnd.state.fitDist)<=introEnd.state.fitDist*.05&&introEnd.chip.visible&&introEnd.seen===true,
+    JSON.stringify({camDist:+introEnd.state.camDist.toFixed(3),fit:+introEnd.state.fitDist.toFixed(3),seen:introEnd.seen}));
+  await ip.goto(base+'?scale=0.25');
+  await ip.waitForFunction(()=>window.__solInfo&&window.__solInfo.introInfo);
+  const introReload=await ip.evaluate(()=>({intro:__solInfo.introInfo(),state:__solInfo.state()}));
+  check('retorno sem ?intro chega direto no fit',
+    !introReload.intro.active&&Math.abs(introReload.state.camDist-introReload.state.fitDist)<=introReload.state.fitDist*.05,
+    JSON.stringify(introReload.intro));
+  await introCtx.close();
+
+  // (b) prefers-reduced-motion abre direto no fit mesmo com ?intro=1:
+  // acessibilidade vence a demonstração.
+  const reducedIntroCtx=await browser.newContext({viewport:{width:390,height:844},deviceScaleFactor:1,isMobile:true,hasTouch:true,reducedMotion:'reduce'});
+  const rp=await reducedIntroCtx.newPage();rp.setDefaultTimeout(240000);
+  await rp.goto(base+'?intro=1&scale=0.25');
+  await rp.waitForFunction(()=>window.__solInfo&&window.__solInfo.introInfo);
+  const reducedIntro=await rp.evaluate(()=>({intro:__solInfo.introInfo(),state:__solInfo.state()}));
+  check('reduced-motion abre direto no fit mesmo com ?intro=1',
+    !reducedIntro.intro.active&&Math.abs(reducedIntro.state.camDist-reducedIntro.state.fitDist)<=reducedIntro.state.fitDist*.05,
+    JSON.stringify(reducedIntro.intro));
+  await reducedIntroCtx.close();
+
+  // (c) gesto no meio da abertura pula direto — os mesmos listeners de
+  // câmera que devolvem o controle na visita/diretor.
+  const skipCtx=await browser.newContext({viewport:{width:390,height:844},deviceScaleFactor:1,isMobile:true,hasTouch:true});
+  const sp=await skipCtx.newPage();sp.setDefaultTimeout(240000);
+  await sp.goto(base+'?intro=1&scale=0.25');
+  await sp.waitForFunction(()=>window.__solInfo&&window.__solInfo.introInfo&&window.__solInfo.introInfo().active);
+  const skipCanvas=await sp.locator('#canvas-container canvas').boundingBox();
+  await sp.mouse.move(skipCanvas.x+skipCanvas.width*.5,skipCanvas.y+skipCanvas.height*.5);
+  await sp.mouse.down();
+  await sp.mouse.move(skipCanvas.x+skipCanvas.width*.5+24,skipCanvas.y+skipCanvas.height*.5+10,{steps:3});
+  await sp.mouse.up();
+  const skipped=await sp.evaluate(()=>window.__solInfo.introInfo());
+  check('gesto no meio da abertura pula direto',!skipped.active,JSON.stringify(skipped));
+  await skipCtx.close();
+  check('console permanece limpo na abertura',introErrors.length===0,introErrors.slice(0,3).join(' | '));
+
   const context=await browser.newContext({viewport:{width:390,height:844},deviceScaleFactor:1,isMobile:true,hasTouch:true});
   const page=await context.newPage();page.setDefaultTimeout(240000);
   const errors=[];page.on('pageerror',(e)=>errors.push(e.message));page.on('console',(m)=>{if(m.type()==='error')errors.push(m.text());});
   // speed=3 só comprime o relógio da prova; cada capítulo continua usando
   // os emissores físicos de produção e o cartão reduz/pausa esse ritmo.
-  await page.goto(base+'?edu=1&lang=pt&tier=high&scale=0.25&speed=3&cycle=1');
+  // intro=0 (PR-5): esta suíte navega com storage limpo e assume a câmera
+  // no fit — a abertura tem prova própria acima e fica fora daqui.
+  await page.goto(base+'?edu=1&lang=pt&tier=high&scale=0.25&speed=3&cycle=1&intro=0');
   await page.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduTourInfo);
 
   // PR-1 — porta e placa: a marca é única e o convite à visita vive no
@@ -77,6 +137,9 @@ async function cardState(page){
   const initialSafe=finiteRect(ui.card)&&finiteRect(ui.expand)&&ui.expand.height>=44&&ui.expand.width>=44&&
     ui.aria==='false'&&ui.bodyHidden&&!overlap(ui.card,first.tour.diskRect)&&!overlap(ui.card,ui.gear);
   check('iPhone inicia com cartão recolhido, tocável e sem cobrir o Sol',initialSafe,JSON.stringify({card:ui.card,button:ui.expand,disk:first.tour.diskRect}));
+  // PR-5 — a sessão de cinema pertence só à última sala.
+  const cinemaEarly=await page.evaluate(()=>{const b=document.querySelector('#eduTourCinema');return {present:!!b,hidden:b?b.hidden:null};});
+  check('sessão de cinema não é oferecida antes da última sala',cinemaEarly.present&&cinemaEarly.hidden===true,JSON.stringify(cinemaEarly));
 
   await page.click('#eduTourExpand');await page.waitForFunction(()=>{const t=window.__solInfo.eduTourInfo(),a=t.cardRect,b=t.diskRect;const clear=!(a.x<b.x+b.width&&a.x+a.width>b.x&&a.y<b.y+b.height&&a.y+a.height>b.y);return t.timeFactor===0&&t.settled&&clear;});
   // O clique pode atravessar um frame já em voo. Medimos DEPOIS desse
@@ -109,17 +172,42 @@ async function cardState(page){
     const layout=finiteRect(ui.card)&&!overlap(ui.card,data.tour.diskRect)&&!overlap(ui.card,ui.gear);
     check('etapa '+(i+1)+'/'+steps.length+' '+id+' usa fonte física visível',visible&&layout,
       JSON.stringify({source:source,card:ui.card,disk:data.tour.diskRect,cycle:data.cycle.phase}));
+    // PR-5 — halo da visita: aceso na etapa ancorada, apagado nas globais.
+    if(id==='active-region')check('halo da visita destaca a fonte na etapa ancorada',
+      data.tour.halo&&data.tour.halo.visible&&data.tour.halo.opacity>0,JSON.stringify(data.tour.halo));
+    if(id==='surface'||id==='maximum')check('halo fica apagado na etapa global '+id,
+      data.tour.halo&&!data.tour.halo.visible,JSON.stringify(data.tour.halo));
     evidence.push({step:id,index:data.tour.index,source:source,card:ui.card,disk:data.tour.diskRect,
       cycle:{phase:data.cycle.phase,amp:data.cycle.amp,event:data.cycle.event},flare:{t:data.flare.t,amp:data.flare.amp},
       cme:{t:data.cme.t,front:data.cme.front},loops:{amb:data.loops.amb,arc:data.loops.arc}});
     if(i<steps.length-1)await page.click('#eduTourNext');
   }
 
-  await page.click('#eduTourExit');await page.waitForFunction(()=>!window.__solInfo.eduTourInfo().active);
+  // PR-5 — sessão de cinema: a última sala oferece o botão (tocável ≥44px);
+  // clicar encerra a visita e entrega ao director; um gesto devolve o
+  // controle e o fim é limpo (nenhum empréstimo da visita OU do diretor).
+  const cinemaUi=await page.evaluate(()=>{const b=document.querySelector('#eduTourCinema');if(!b)return null;
+    const r=b.getBoundingClientRect();return {hidden:b.hidden,width:r.width,height:r.height,text:b.textContent};});
+  check('última sala oferece a sessão de cinema tocável',!!cinemaUi&&!cinemaUi.hidden&&cinemaUi.width>=44&&cinemaUi.height>=44,JSON.stringify(cinemaUi));
+  await page.click('#eduTourCinema');
+  await page.waitForFunction(()=>window.__solInfo.directorInfo().active&&!window.__solInfo.eduTourInfo().active);
+  const cinemaState=await page.evaluate(()=>({director:window.__solInfo.directorInfo(),tour:window.__solInfo.eduTourInfo()}));
+  check('cinema encerra a visita e entrega a câmera ao diretor',cinemaState.director.active&&!cinemaState.tour.active,
+    JSON.stringify(cinemaState.director));
+  const cinemaCanvas=await page.locator('#canvas-container canvas').boundingBox();
+  if(cinemaCanvas){
+    await page.mouse.move(cinemaCanvas.x+cinemaCanvas.width*.5,cinemaCanvas.y+cinemaCanvas.height*.5);await page.mouse.down();
+    await page.mouse.move(cinemaCanvas.x+cinemaCanvas.width*.5+26,cinemaCanvas.y+cinemaCanvas.height*.5+10,{steps:3});await page.mouse.up();
+  }
+  await page.waitForFunction(()=>!window.__solInfo.directorInfo().active);
   const finished=await page.evaluate(()=>({tour:window.__solInfo.eduTourInfo(),cycle:window.__solInfo.cycleInfo(),
-    spots:window.__solInfo.controls('spots'),cme:window.__solInfo.controls('cme'),loops:window.__solInfo.controls('loops')}));
-  check('sair devolve o modo livre e limpa os empréstimos temporários',!finished.tour.active&&!finished.cycle.event.on&&
-    !finished.spots.overrideOwner&&!finished.cme.overrideOwner&&!finished.loops.overrideOwner,JSON.stringify(finished));
+    director:window.__solInfo.directorInfo(),spots:window.__solInfo.controls('spots'),cme:window.__solInfo.controls('cme'),
+    loops:window.__solInfo.controls('loops'),dof:window.__solInfo.controls('dof')}));
+  check('fim limpo: modo livre sem empréstimos da visita nem do diretor',
+    !finished.tour.active&&!finished.director.active&&!finished.cycle.event.on&&
+    !finished.spots.overrideOwner&&!finished.cme.overrideOwner&&!finished.loops.overrideOwner&&!finished.dof.overrideOwner,
+    JSON.stringify({spots:finished.spots.overrideOwner,cme:finished.cme.overrideOwner,loops:finished.loops.overrideOwner,
+      dof:finished.dof.overrideOwner,cycle:finished.cycle.event.on}));
   check('console permanece limpo na visita',errors.length===0,errors.slice(0,3).join(' | '));
   // PR-2 — telemetria: nenhuma exceção de física pode ter sido engolida em
   // silêncio durante a caminhada inteira (ring agregado em core/config.js).
@@ -131,7 +219,7 @@ async function cardState(page){
   // mobile (nunca o desktop de width 330/left 22) e ficar fora do disco.
   const land=await browser.newContext({viewport:{width:844,height:390},deviceScaleFactor:1,isMobile:true,hasTouch:true});
   const lp=await land.newPage();lp.setDefaultTimeout(240000);
-  await lp.goto(base+'?edu=1&lang=pt&tier=high&scale=0.25&speed=3&cycle=1');
+  await lp.goto(base+'?edu=1&lang=pt&tier=high&scale=0.25&speed=3&cycle=1&intro=0');
   await lp.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduTourInfo);
   await lp.evaluate(()=>window.__solInfo.eduTourStart());
   await lp.waitForFunction(()=>{const t=window.__solInfo.eduTourInfo();return t.active&&t.stepId==='surface'&&t.settled;});

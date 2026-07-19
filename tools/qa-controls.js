@@ -12,7 +12,9 @@ let browser;
   const msgs = [];
   page.on('console', (m) => { if (m.type() === 'error') msgs.push(m.text()); });
   page.on('pageerror', (e) => msgs.push('pageerror: ' + e.message));
-  await page.goto(url);
+  // intro=0 (PR-5): a suíte navega sem storage e assume a câmera no fit —
+  // a abertura cinematográfica do 1º acesso tem prova própria (qa-edu-tour).
+  await page.goto(url + '?intro=0');
   await page.waitForFunction(() => window.__solInfo && window.__solInfo.state, null, { timeout: 20000 });
   await page.waitForTimeout(1500);
   const st = () => page.evaluate(() => window.__solInfo.state());

@@ -31,6 +31,7 @@ import { createSolInfo } from './debug/solinfo.js';
 import { createGpuProfile } from './debug/gpuprofile.js';
 import { createDiag } from './debug/diag.js';
 import { createRenderer, createRenderInfra, createRTType } from './core/renderer.js';
+import { createKiosk } from './core/kiosk.js';
 import { createEdu } from './edu/edu.js';
 import { EDU_CONTENT } from './edu/content.js';
 import { createEduCollection } from './edu/collection.js';
@@ -410,6 +411,11 @@ function init(){
   // A visita guiada é separada das descobertas espontâneas e do diretor:
   // cartão persistente/tátil, tempo de leitura e enquadramento consentido.
   createEduTour(ctx);
+  // PR-13 — modo quiosque (?kiosk=1): DEPOIS de visita/diretor/abertura —
+  // ele dirige os três pelos hooks públicos. Sem a query (ou sob ?det) a
+  // factory retorna sem definir ctx.kioskTick e o guard no animate é um if
+  // falsy por frame (a mesma convenção dos gates de knob).
+  createKiosk(ctx);
   var directorTick = ctx.directorTick, directorActive = ctx.directorActive,
       directorStart = ctx.directorStart;
 
@@ -829,6 +835,14 @@ function init(){
     if (ctx.eduTourTick){
       try { ctx.eduTourTick(rawDelta); }
       catch(e){ ctx.eduTourTick = null; ctx.eduFault('tick-tour', e); }
+    }
+    // PR-13 — quiosque: o condutor lê o snapshot da visita RECÉM atualizado
+    // pelo tick acima (ready/phase deste frame) antes de decidir avançar.
+    // Mesma blindagem PR-2: a 1ª falha desliga o modo e registra no ring —
+    // a instalação degrada para o modo livre, nunca derruba a cena.
+    if (ctx.kioskTick){
+      try { ctx.kioskTick(rawDelta); }
+      catch(e){ ctx.kioskTick = null; ctx.eduFault('tick-kiosk', e); }
     }
     // Museu Solar — grupo de manchas: a descoberta nasce da região ativa
     // magnética real (as cargas lead/foll), não dos slots virtuais usados

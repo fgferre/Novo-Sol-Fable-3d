@@ -60,6 +60,16 @@ Safari de verdade).
    só me dizer o número.
    - *Se falhar* (número não aparece): sem problema, pule.
 
+9. **Opcional (modo quiosque, num tablet se tiver):** abra o site com
+   `?kiosk=1&lang=pt` no fim do endereço e deixe o aparelho quieto na mesa.
+   Em menos de 1 minuto a visita guiada começa SOZINHA e vai trocando de
+   sala sem ninguém tocar; ao fim das 10 salas, a câmera passeia sozinha
+   (sessão de cinema) e depois tudo recomeça. Toque na tela a qualquer
+   momento: o controle é seu; largue o aparelho de novo e o loop volta.
+   Repare que a engrenagem ⚙ some — no quiosque ninguém configura nada.
+   - *Se falhar* (visita não começa sozinha, toque não devolve o controle,
+     loop não volta): print + em que passo parou.
+
 ---
 
 Qualquer coisa estranha fora do roteiro (aviso de erro, tela congelada,

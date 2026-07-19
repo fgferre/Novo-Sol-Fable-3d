@@ -340,6 +340,8 @@ export function createControlState(ctx, options){
     return r.applied;
   }
   function persist(){
+    // PR-13: aparelho de quiosque é compartilhado — nada persiste.
+    if (ctx.KIOSK) return;
     try { localStorage.setItem('solKnobs', JSON.stringify(saved)); } catch(e){}
   }
   function setControl(key, value, opts){

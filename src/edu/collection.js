@@ -163,7 +163,11 @@ export function createEduCollection(ctx){
     return;
   }
 
-  var storage = storageForBrowser();
+  // PR-13: sob ?kiosk=1 o storage é null POR DECISÃO — a coleção da sessão
+  // vive só em memória (aparelho compartilhado; cada visitante começa do
+  // zero e nada é gravado). Todo o módulo já tolera storage nulo: loadState
+  // devolve o estado em branco, save() vira no-op e clear opera na memória.
+  var storage = ctx.KIOSK ? null : storageForBrowser();
   var state = loadState(storage);
 
   function refreshFromStorage(){

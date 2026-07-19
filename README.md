@@ -49,6 +49,24 @@ quando você retoma a câmera). As URLs são atalhos/deep-links e o
 caminho das ferramentas de QA; o painel é o caminho principal (salvo
 em localStorage).
 
+## Quiosque (instalação de museu)
+
+O arquivo único vira uma instalação física que roda sozinha:
+
+1. Baixe `sol-3d.html` (o download do Pages; a fonte é
+   `dist-single/index.html` do `npm run build:single`).
+2. Abra no navegador do tablet/totem com `?kiosk=1&lang=pt` no endereço
+   (funciona offline, direto do disco via `file://`).
+3. Coloque o navegador em tela cheia.
+
+Pronto: após ~45s sem ninguém tocar, a visita guiada roda em loop sozinha,
+intercalada com a sessão de cinema. Qualquer toque devolve o controle ao
+visitante; nova inatividade retoma o loop. No quiosque o painel ⚙ e o gesto
+de HUD ficam desligados e NADA é gravado no aparelho (cada visitante recebe
+a experiência limpa — a coleção da sessão vive só em memória). O idioma é o
+da URL (`?lang=pt` ou `?lang=en`); `?tier=` pina a qualidade se o operador
+quiser.
+
 ## QA
 
 ```bash
@@ -60,6 +78,8 @@ npm run qa:phase3      # Fase 3: ciclo de 11 anos + filamento↔proeminência
 npm run qa:phase4      # Fase 4: coroa volumétrica raymarched + arcada escura
 npm run qa:phase5      # Fase 5: CME/erupção + foco raso + modo diretor
 npm run qa:phase6      # Fase 6: manchas (spots) + plumas/cúspide + estrias/cavidade
+npm run qa:kiosk       # Museu PR-13: modo quiosque (?kiosk=1) — auto-start,
+                       # loop visita↔cinema, persistência OFF, negativos
 npm run qa:motion2     # rodada de movimento: flicker/strobo/coerência por região em
                        # sequências determinísticas + tiras de filme (gate de RODADA,
                        # ~19 min — não roda em CI; ver docs/rodada-movimento.md)

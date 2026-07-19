@@ -660,6 +660,12 @@ export function createSolInfo(ctx){
       window.__solInfo.introInfo = function(){
         return ctx.introInfo ? ctx.introInfo() : { available:false, active:false };
       };
+      // PR-13 — modo quiosque: estado do ciclo de atração (idle/tour/
+      // cinema) + relógios efetivos. Sem ?kiosk=1 (ou sob ?det) a factory
+      // não instala o hook — available:false prova a inércia de graça.
+      window.__solInfo.kioskInfo = function(){
+        return ctx.kioskInfo ? ctx.kioskInfo() : { available:false, mode:'' };
+      };
       // FASE 5 — QA do foco raso: override do plano de foco (0 centro,
       // 1 limbo; -1 volta ao automático) + estado corrente
       window.__solInfo.setDofFocus = function(x){

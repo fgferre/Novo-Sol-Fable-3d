@@ -26,6 +26,14 @@ export function createConfig(ctx){
   // Math.random internamente (UUIDs) em quantidades que variam por versão
   // e contaminaria o stream. Sem ?det=1, srand === Math.random.
   var DET = urlQ.det === '1';
+  // PR-13 — modo quiosque (?kiosk=1): instalação de museu físico em
+  // aparelho COMPARTILHADO. O flag nasce aqui, antes de qualquer leitura de
+  // storage, porque persistência é OFF no quiosque: os pontos de gravação
+  // de solKnobs/solTier/coleção retornam antes de gravar/ler e cada
+  // visitante recebe a experiência limpa (a coleção da sessão vive só em
+  // memória). Sob ?det o quiosque é inerte por construção (flag false —
+  // caminho determinístico byte-idêntico ao histórico).
+  ctx.KIOSK = !DET && urlQ.kiosk === '1';
   // Achado 11 (PR7) — deriva idle determinística. markInteraction() é o
   // relógio ÚNICO da última interação, escrito por todo listener de câmera
   // (controls.js) e por setView (solinfo.js). No modo normal continua
@@ -61,10 +69,12 @@ export function createConfig(ctx){
   // default). A reatribuição no fim do módulo é idempotente.
   ctx.DET = DET;
   ctx.savedKnobs = {};
-  try { ctx.savedKnobs = JSON.parse(localStorage.getItem('solKnobs') || '{}') || {}; } catch(e){}
+  // PR-13: o quiosque não LÊ solKnobs (resíduos de uso pré-quiosque não
+  // contaminam a instalação — a configuração vive na URL do operador).
+  try { if (!ctx.KIOSK) ctx.savedKnobs = JSON.parse(localStorage.getItem('solKnobs') || '{}') || {}; } catch(e){}
   var savedMigration = migrateSavedControls(ctx.savedKnobs);
   ctx.savedKnobs = savedMigration.values;
-  if (savedMigration.changed){
+  if (savedMigration.changed && !ctx.KIOSK){
     try { localStorage.setItem('solKnobs', JSON.stringify(ctx.savedKnobs)); } catch(e){}
   }
   var LOOK_SUNSHINE = getControlPreset();

@@ -60,7 +60,19 @@ export var PHEN_T = {
   // -- ciclo de 11 anos ----------------------------------------------------
   CYCLE_PHASE_WIN: .04,       // janela de fase em torno do máximo/mínimo
   CYCLE_MAX_AMP: 1.12,        // amplitude mínima p/ "máximo solar"
-  CYCLE_MIN_AMP: .5           // amplitude máxima p/ "mínimo solar"
+  CYCLE_MIN_AMP: .5,          // amplitude máxima p/ "mínimo solar"
+  // -- vista / aproximação (PR-9, NOVOS — nascem já nomeados) ---------------
+  // Calibração medida na geometria real (SUN_RADIUS=2.2, fov 42°, R_FIT
+  // 1.15R, minDist 1.5R): no fit closeness=1.00 e limbFraction≈0.88–0.92
+  // (qualquer aspecto) — nenhum dos dois limiares dispara sem gesto de
+  // aproximação. CLOSEUP_RATIO 1.6 ⇒ camDist<fitDist/1.6 (≈1.87R em
+  // paisagem; o zoom máximo chega a 1.5R ⇒ closeness máx ≈2.0 — alcançável
+  // em todo aspecto). LIMB_FILL 1.15 ⇒ o raio projetado do disco estoura a
+  // menor dimensão do quadro em 15% (paisagem: d≈2.48R, closeness≈1.21;
+  // retrato 390×844: d≈5.0R, closeness≈1.30) — cruza ANTES do close-up no
+  // zoom contínuo: primeiro a franja do limbo, depois só superfície.
+  CLOSEUP_RATIO: 1.6,         // granulação: camDist < fitDist/1.6 sustentado
+  LIMB_FILL: 1.15             // espículas: disco estoura o quadro em 15%+
 };
 
 export function createPhenomena(ctx){
@@ -197,6 +209,31 @@ export function createPhenomena(ctx){
         return (ctx.cyclePhase01 < PHEN_T.CYCLE_PHASE_WIN ||
                 ctx.cyclePhase01 > 1 - PHEN_T.CYCLE_PHASE_WIN) &&
                ctx.cycleAmpK < PHEN_T.CYCLE_MIN_AMP;
+      }
+    },
+    view: {
+      // PR-9 — sinais de APROXIMAÇÃO (geometria de câmera, não física do
+      // plasma; entram aqui porque são a CONDIÇÃO observável das descobertas
+      // de close-up — a mesma régua "o que está na tela agora" do resto do
+      // módulo). closeness: razão fitDist/camDist — 1 = enquadramento cheio,
+      // >1 = mais perto que o fit (a MESMA conta do LOD dos strands e do DOF
+      // em main.js). Leitura pura: nada de DOM/estado.
+      closeness: function(){ return ctx.fitDist / Math.max(1e-6, ctx.camDist); },
+      // limbFraction: raio PROJETADO do disco (px) sobre metade da MENOR
+      // dimensão do viewport — a mesma matemática do diskRect da visita
+      // (tour.stateSnapshot): raio_px = tan(asin(R/d))/tan(fov/2)·h/2 (fov é
+      // vertical ⇒ h). >1 = o disco não cabe na menor dimensão; o limbo
+      // cruza o quadro. Número (não booleano): o consumidor escolhe o limiar
+      // (PHEN_T.LIMB_FILL) e o QA lê o valor cru. Dimensões: as CSS já
+      // aplicadas ao render (ctx.dispCssW/H, achado 9), com fallback ao
+      // window para leituras antes da 1ª aplicação.
+      limbFraction: function(){
+        var w = ctx.dispCssW || window.innerWidth || 1;
+        var h = ctx.dispCssH || window.innerHeight || 1;
+        var dist = Math.max(ctx.camDist, ctx.SUN_RADIUS*1.001);
+        var half = (ctx.camera.fov || 42) * Math.PI / 360;
+        var radius = Math.tan(Math.asin(Math.min(1, ctx.SUN_RADIUS/dist))) / Math.tan(half) * h * .5;
+        return radius / (Math.min(w, h) * .5);
       }
     }
   };

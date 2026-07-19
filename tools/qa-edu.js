@@ -598,6 +598,142 @@ async function layoutState(page){
     JSON.stringify(coronaNeg.state));
   await coronaOff.close();
 
+  // ————— PR-9 · Onda 2: granulação por APROXIMAÇÃO —————
+  // Página DEFAULT do museu (nenhum knob de física pinado — só scale p/ o
+  // SwiftShader, speed p/ acalmar eventos concorrentes e intro=0 como em
+  // todas as provas). O cartão é recompensa pelo gesto: primeiro o controle
+  // negativo (30s parado no fit, relógios white-box parados), depois o reset
+  // ao afastar antes de 2s, e só então a descoberta. Calibração da distância
+  // de prova (geometria real, 960×600): fit=2.996R ⇒ fitDist/1.8=1.66R
+  // (>minDist 1.5R) dá closeness=1.8>1.6 e limbFraction≈1.96.
+  const gran=await browser.newPage({viewport:{width:960,height:600},deviceScaleFactor:1});
+  gran.setDefaultTimeout(300000);
+  gran.on('pageerror',(e)=>errors.push('[granulation] '+e.message));
+  gran.on('console',(m)=>{if(m.type()==='error')errors.push('[granulation] '+m.text());});
+  await gran.goto(base+'?scale=0.25&speed=0.05&intro=0');
+  await gran.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduCloseupState);
+  await gran.evaluate(()=>{window.__solInfo.setRotSpeed(0);for(let j=0;j<window.__solInfo.promLife().length;j++)window.__solInfo.setPromLife(j,.01);});
+  // NEGATIVO: sem o gesto de aproximar, 30s no enquadramento cheio NUNCA
+  // armam os relógios nem emitem os cartões de aproximação (outras
+  // descobertas do museu podem acontecer — não são o alvo deste check).
+  await gran.waitForTimeout(30000);
+  const closeupNeg=await gran.evaluate(()=>({closeup:window.__solInfo.eduCloseupState(),info:window.__solInfo.eduInfo(),collection:window.__solInfo.eduCollectionInfo()}));
+  check('aproximação: 30s no fit nunca emitem granulação/espículas (relógios parados)',
+    closeupNeg.closeup.closeness<1.05&&closeupNeg.closeup.limbFraction<1.15&&
+    closeupNeg.closeup.closeT===0&&closeupNeg.closeup.limbT===0&&
+    !closeupNeg.closeup.granulationExplained&&!closeupNeg.closeup.spiculesExplained&&closeupNeg.info.enabled&&
+    !closeupNeg.info.active.some((x)=>x.type==='granulation'||x.type==='spicules')&&
+    !closeupNeg.collection.items.granulation.seen&&!closeupNeg.collection.items.spicules.seen,
+    JSON.stringify(closeupNeg.closeup));
+  // RESET: aproxima, deixa o relógio andar MENOS de 2s e afasta — o relógio
+  // zera e nada foi emitido. A leitura e o afastamento acontecem no MESMO
+  // evaluate (nenhum frame entre ler t<2 e afastar).
+  await gran.evaluate(()=>{const s=window.__solInfo.state();window.__solInfo.setView(s.theta,s.phi,s.fitDist/1.8);});
+  await gran.waitForFunction(()=>window.__solInfo.eduCloseupState().closeT>0.15,null,{timeout:120000});
+  const granReset=await gran.evaluate(()=>{
+    const before=window.__solInfo.eduCloseupState();
+    const s=window.__solInfo.state();
+    window.__solInfo.setView(s.theta,s.phi,s.fitDist);
+    return before;
+  });
+  await frame(gran);await frame(gran);
+  const granAfterReset=await gran.evaluate(()=>window.__solInfo.eduCloseupState());
+  check('granulação: afastar antes de 2s reseta o relógio sem emitir',
+    granReset.closeT>0&&granReset.closeT<2&&!granReset.granulationExplained&&
+    granAfterReset.closeT===0&&!granAfterReset.granulationExplained,
+    JSON.stringify({antes:granReset.closeT,depois:granAfterReset.closeT}));
+  // POSITIVO: aproximação sustentada >2s abre o cartão GLOBAL (a granulação
+  // está em todo lugar — sem âncora/halo/linha) e grava a coleção.
+  const granApproach=await gran.evaluate(()=>{const s=window.__solInfo.state();window.__solInfo.setView(s.theta,s.phi,s.fitDist/1.8);return window.__solInfo.eduCloseupState();});
+  check('granulação: distância de prova cruza o limiar de close-up',granApproach.closeness>1.6,'closeness='+granApproach.closeness.toFixed(3));
+  await gran.waitForFunction(()=>{const i=window.__solInfo.eduInfo().active[0];return !!(i&&i.type==='granulation'&&i.global&&i.visible);},null,{timeout:180000});
+  const granState=await gran.evaluate(()=>({info:window.__solInfo.eduInfo(),closeup:window.__solInfo.eduCloseupState(),
+    collection:window.__solInfo.eduCollectionInfo(),text:document.querySelector('.edu-label').textContent}));
+  const granItem=granState.info.active[0];
+  check('granulação: cartão global após >2s sustentados, sem âncora/halo/linha',
+    !!granItem&&granItem.type==='granulation'&&granItem.global&&granItem.anchor===null&&granItem.lineEnd===null&&
+    !granItem.haloVisible&&!granItem.connectorVisible&&granState.closeup.closeT>2&&granState.closeup.granulationExplained&&
+    /Granulação e fibrilas/.test(granState.text),
+    JSON.stringify({closeT:granState.closeup.closeT,global:granItem&&granItem.global,text:granState.text.slice(0,60)}));
+  check('granulação: coleção registra a família nova',granState.collection.items.granulation.seen&&granState.collection.items.granulation.views.granulation===true);
+  const granEnglish=await gran.evaluate(()=>{window.__solInfo.setLang('en');return document.querySelector('.edu-label').textContent;});
+  check('granulação troca para inglês',/Granulation and fibrils/.test(granEnglish));
+  await gran.evaluate(()=>{window.__solInfo.setControl('edu',0,{persist:false});window.__solInfo.setControl('edu',1,{persist:false});});
+  await frames(gran,3);
+  const granReplay=await gran.evaluate(()=>({info:window.__solInfo.eduInfo(),collection:window.__solInfo.eduCollectionInfo(),closeup:window.__solInfo.eduCloseupState()}));
+  check('granulação: uma explicação por sessão mesmo continuando perto',
+    granReplay.closeup.closeness>1.6&&!granReplay.info.active.some((x)=>x.type==='granulation')&&
+    granReplay.collection.items.granulation.discoveredViews===1,
+    JSON.stringify({closeness:granReplay.closeup.closeness,active:granReplay.info.active.map((x)=>x.type)}));
+  await gran.close();
+
+  // ————— PR-9 · Onda 2: espículas por MIRA NO LIMBO —————
+  // Página default museu, distância INTERMEDIÁRIA: o disco estoura o quadro
+  // (limbFraction>1.15) sem cruzar o limiar de close-up (closeness<1.6) —
+  // isola o emissor de espículas e prova que o relógio de granulação nem
+  // arma. Calibração (960×600): d=2.2R ⇒ limbFraction≈1.33, closeness≈1.36.
+  const spic=await browser.newPage({viewport:{width:960,height:600},deviceScaleFactor:1});
+  spic.setDefaultTimeout(300000);
+  spic.on('pageerror',(e)=>errors.push('[spicules] '+e.message));
+  spic.on('console',(m)=>{if(m.type()==='error')errors.push('[spicules] '+m.text());});
+  await spic.goto(base+'?scale=0.25&speed=0.05&intro=0');
+  await spic.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduCloseupState);
+  await spic.evaluate(()=>{window.__solInfo.setRotSpeed(0);for(let j=0;j<window.__solInfo.promLife().length;j++)window.__solInfo.setPromLife(j,.01);});
+  await spic.evaluate(()=>{const s=window.__solInfo.state(),R=s.minDist/1.5;window.__solInfo.setView(s.theta,s.phi,2.2*R);});
+  await frame(spic);
+  const spicSignals=await spic.evaluate(()=>window.__solInfo.eduCloseupState());
+  check('espículas: distância de prova cruza LIMB_FILL sem cruzar o close-up',
+    spicSignals.limbFraction>1.15&&spicSignals.closeness<1.6,
+    JSON.stringify({limbFraction:spicSignals.limbFraction,closeness:spicSignals.closeness}));
+  // RESET: mirar o limbo por menos de 2s e afastar zera o relógio.
+  await spic.waitForFunction(()=>window.__solInfo.eduCloseupState().limbT>0.15,null,{timeout:120000});
+  const spicReset=await spic.evaluate(()=>{
+    const before=window.__solInfo.eduCloseupState();
+    const s=window.__solInfo.state();
+    window.__solInfo.setView(s.theta,s.phi,s.fitDist);
+    return before;
+  });
+  await frame(spic);await frame(spic);
+  const spicAfterReset=await spic.evaluate(()=>window.__solInfo.eduCloseupState());
+  check('espículas: afastar antes de 2s reseta o relógio sem emitir',
+    spicReset.limbT>0&&spicReset.limbT<2&&!spicReset.spiculesExplained&&
+    spicAfterReset.limbT===0&&!spicAfterReset.spiculesExplained,
+    JSON.stringify({antes:spicReset.limbT,depois:spicAfterReset.limbT}));
+  // NEGATIVO de honestidade: com a franja OCULTA (toggle de QA), mirar o
+  // limbo não arma o relógio — o cartão jamais prometeria o que não está
+  // desenhado.
+  await spic.evaluate(()=>{window.__solInfo.toggle('spicules',false);const s=window.__solInfo.state(),R=s.minDist/1.5;window.__solInfo.setView(s.theta,s.phi,2.2*R);});
+  await frames(spic,8);
+  const spicHidden=await spic.evaluate(()=>({closeup:window.__solInfo.eduCloseupState(),toggles:window.__solInfo.perf().toggles}));
+  check('espículas: franja oculta nunca arma o relógio (honestidade)',
+    !spicHidden.toggles.spicules&&spicHidden.closeup.limbFraction>1.15&&spicHidden.closeup.limbT===0&&!spicHidden.closeup.spiculesExplained,
+    JSON.stringify({limbT:spicHidden.closeup.limbT,limbFraction:spicHidden.closeup.limbFraction}));
+  // POSITIVO: franja de volta, mira sustentada >2s ⇒ cartão GLOBAL (as
+  // espículas são a franja INTEIRA — apontar uma seria mentira; decisão
+  // documentada em edu.js/MUSEU_SOL_COBERTURA.md) + coleção.
+  await spic.evaluate(()=>window.__solInfo.toggle('spicules',true));
+  await spic.waitForFunction(()=>{const i=window.__solInfo.eduInfo().active[0];return !!(i&&i.type==='spicules'&&i.global&&i.visible);},null,{timeout:180000});
+  const spicState=await spic.evaluate(()=>({info:window.__solInfo.eduInfo(),closeup:window.__solInfo.eduCloseupState(),
+    collection:window.__solInfo.eduCollectionInfo(),text:document.querySelector('.edu-label').textContent}));
+  const spicItem=spicState.info.active[0];
+  check('espículas: cartão global após >2s de limbo no quadro, sem âncora/halo/linha',
+    !!spicItem&&spicItem.type==='spicules'&&spicItem.global&&spicItem.anchor===null&&spicItem.lineEnd===null&&
+    !spicItem.haloVisible&&!spicItem.connectorVisible&&spicState.closeup.limbT>2&&spicState.closeup.spiculesExplained&&
+    /Espículas/.test(spicState.text),
+    JSON.stringify({limbT:spicState.closeup.limbT,global:spicItem&&spicItem.global,text:spicState.text.slice(0,60)}));
+  check('espículas: relógio de granulação nunca armou na distância de limbo',
+    spicState.closeup.closeT===0&&!spicState.closeup.granulationExplained&&!spicState.collection.items.granulation.seen,
+    JSON.stringify({closeT:spicState.closeup.closeT}));
+  check('espículas: coleção registra a família nova',spicState.collection.items.spicules.seen&&spicState.collection.items.spicules.views.spicules===true);
+  const spicEnglish=await spic.evaluate(()=>{window.__solInfo.setLang('en');return document.querySelector('.edu-label').textContent;});
+  check('espículas trocam para inglês',/Spicules/.test(spicEnglish));
+  await spic.evaluate(()=>{window.__solInfo.setControl('edu',0,{persist:false});window.__solInfo.setControl('edu',1,{persist:false});});
+  await frames(spic,3);
+  const spicReplay=await spic.evaluate(()=>({info:window.__solInfo.eduInfo(),collection:window.__solInfo.eduCollectionInfo()}));
+  check('espículas: uma explicação por sessão, sem duplicar coleção',
+    !spicReplay.info.active.some((x)=>x.type==='spicules')&&spicReplay.collection.items.spicules.discoveredViews===1);
+  await spic.close();
+
   // ————— PR-8 · surface via visita + painel "de 8" —————
   // Caminhada mínima (chip → etapa 1 → next → exit) num contexto virgem:
   // a etapa surface grava a família 'surface' (source.physical), repetir a
@@ -628,22 +764,24 @@ async function layoutState(page){
   await surfacePage.evaluate(()=>window.__solInfo.eduTourExit());
   await surfacePage.waitForFunction(()=>!window.__solInfo.eduTourInfo().active);
   const surfaceRepeat=await surfacePage.evaluate(()=>window.__solInfo.eduCollectionInfo());
-  check('repetir a visita não duplica a coleção',surfaceRepeat.items.surface.discoveredViews===1&&surfaceRepeat.totalFamilies===8);
-  // painel: "N de 8", ordem narrativa e as três famílias novas na lista
+  check('repetir a visita não duplica a coleção',surfaceRepeat.items.surface.discoveredViews===1&&surfaceRepeat.totalFamilies===10);
+  // painel: "N de 10" (PR-9), ordem narrativa e as famílias novas na lista
   await surfacePage.click('#knobBtn');await surfacePage.waitForTimeout(650);
   await surfacePage.click('#eduCollectionToggle');
   const surfacePanel=await surfacePage.evaluate(()=>{
     const info=window.__solInfo.eduCollectionInfo();
     const row=(id)=>{const e=document.querySelector('#eduCollectionItem-'+id);return e?{present:true,disabled:e.disabled,title:e.querySelector('.collectionItemTitle').textContent}:{present:false};};
     return {toggle:document.querySelector('#eduCollectionToggle').textContent,order:info.order.join(','),total:info.totalFamilies,
-      surface:row('surface'),loops:row('loops'),corona:row('corona')};
+      surface:row('surface'),loops:row('loops'),corona:row('corona'),granulation:row('granulation'),spicules:row('spicules')};
   });
-  check('painel da coleção mostra "de 8" com as famílias novas listadas',
-    / de 8 /.test(surfacePanel.toggle)&&surfacePanel.total===8&&
-    surfacePanel.order==='surface,spots,loops,flare,cme,prominence,corona,cycle'&&
+  check('painel da coleção mostra "de 10" com as famílias novas listadas',
+    / de 10 /.test(surfacePanel.toggle)&&surfacePanel.total===10&&
+    surfacePanel.order==='surface,granulation,spots,loops,flare,cme,prominence,spicules,corona,cycle'&&
     surfacePanel.surface.present&&!surfacePanel.surface.disabled&&/Fotosfera e granulação/.test(surfacePanel.surface.title)&&
     surfacePanel.loops.present&&surfacePanel.loops.disabled&&/Loops coronais/.test(surfacePanel.loops.title)&&
-    surfacePanel.corona.present&&surfacePanel.corona.disabled&&/Coroa e streamers/.test(surfacePanel.corona.title),
+    surfacePanel.corona.present&&surfacePanel.corona.disabled&&/Coroa e streamers/.test(surfacePanel.corona.title)&&
+    surfacePanel.granulation.present&&surfacePanel.granulation.disabled&&/Granulação e fibrilas/.test(surfacePanel.granulation.title)&&
+    surfacePanel.spicules.present&&surfacePanel.spicules.disabled&&/Espículas/.test(surfacePanel.spicules.title),
     JSON.stringify(surfacePanel));
   await surfaceContext.close();
 

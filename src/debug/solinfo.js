@@ -275,6 +275,17 @@ export function createSolInfo(ctx){
                  t: ctx.eduCoronaPhotonT || 0,
                  explained: !!ctx.eduCoronaExplained };
       };
+      // PR-9 — adaptador de QA dos emissores de aproximação, na fonte única:
+      // sinais crus (closeness/limbFraction), relógios de sustentação de 2s
+      // (rawDelta; resetam ao afastar) e latches por sessão.
+      window.__solInfo.eduCloseupState = function(){
+        return { closeness: ctx.phenomena.view.closeness(),
+                 limbFraction: ctx.phenomena.view.limbFraction(),
+                 closeT: ctx.eduCloseupT || 0,
+                 limbT: ctx.eduLimbT || 0,
+                 granulationExplained: !!ctx.eduGranulationExplained,
+                 spiculesExplained: !!ctx.eduSpiculesExplained };
+      };
       // FASE 3 — QA do ciclo de 11 anos: fase/índice/sinais correntes...
       window.__solInfo.cycleInfo = function(){
         var mul=cycleMultiplier();

@@ -22,9 +22,11 @@ O modo determinístico (`?det=1`) não cria nenhuma das duas camadas.
 | 9 | Máximo solar | relógio físico acelerado até fase 0,5 | fase, amplitude e `hold` reais | `cycle` (vista `cycleMaximum`) |
 | 10 | Mínimo solar | relógio físico acelerado até fase 0/1 | fase, amplitude e `hold` reais | `cycle` (vista `cycleMinimum`) |
 
-A coleção tem **8 famílias** (`surface`, `spots`, `loops`, `flare`, `cme`,
-`prominence`, `corona`, `cycle` — ordem narrativa da visita) desde o PR-8;
-o painel calcula "N de 8" dinamicamente a partir dessa ordem.
+A coleção tem **10 famílias** (`surface`, `granulation`, `spots`, `loops`,
+`flare`, `cme`, `prominence`, `spicules`, `corona`, `cycle` — ordem
+narrativa da visita, com o close-up da fotosfera logo após `surface` e a
+franja do limbo junto das estruturas de borda) desde o PR-9; o painel
+calcula "N de 10" dinamicamente a partir dessa ordem.
 
 Em todas as etapas, a prova `npm run qa:tour` roda em ambiente de iPhone de verdade (UA Safari, toques e arrastes de TOQUE genuínos, `tier=mid` — o tier real do aparelho) e verifica, POR ETAPA: botões visíveis ≥44 px, cartão expandido sem estourar a tela, colisão cartão/disco, fonte física visível e leitura recolhida a 8% do tempo. A pausa com relógio físico parado é medida em dupla janela em três etapas representativas; a caminhada completa repete em paisagem 844×390; um gate DPR3 cobre a transação de display; controles negativos provam que loops/CME/coroa sem física reportam o texto honesto de indisponível; e o contraste WCAG do cartão (≥4.5) é medido por screenshot. A evidência (JSON + screenshots-chave) vai para `out/qa-tour/` e sobe como artifact do CI também em sucesso.
 
@@ -42,6 +44,24 @@ arbitragem) após mais de 8 segundos contínuos de fótons reais no anel
 `?loops=0` e `halo=0&ray=0` nunca emitem. A fotosfera (`surface`) entra na
 coleção pela etapa 1 da visita.
 
+**Granulação e espículas (PR-9, Onda 2):** as duas primeiras descobertas por
+APROXIMAÇÃO — o cartão é recompensa pelo gesto de chegar perto e nunca
+aparece sem ele. Os sinais vêm da fonte única (`phenomena.view`):
+`closeness` (razão `fitDist/camDist`; granulação exige >1.6 — a "vista de
+aproximação" que a tabela de lacunas pedia) e `limbFraction` (raio projetado
+do disco sobre metade da menor dimensão do quadro, a mesma matemática do
+`diskRect` da visita; espículas exigem >1.15 — o disco estoura o quadro e o
+limbo o cruza). Cada limiar precisa ser SUSTENTADO por mais de 2 segundos de
+relógio de parede (imune a `?speed`); afastar antes disso zera o relógio.
+Os dois cartões são GLOBAIS por decisão consciente: a granulação está em toda
+a superfície e as espículas são a franja inteira do limbo — ancorar uma
+célula ou um jato específico apontaria algo que o shader não individualiza
+(quebraria a regra "nada prometido que não está na tela"). O emissor de
+espículas ainda exige a franja de fato desenhada (`spiculeMesh` visível).
+Controles negativos provados: 30 s parado no enquadramento cheio nunca emite
+(relógios white-box em `__solInfo.eduCloseupState`); afastar antes de 2 s
+reseta. Uma explicação por sessão cada (latch do padrão PR-8).
+
 ## Lacunas assumidas — não vender como pronto ainda
 
 Estas partes visuais existem, mas ainda não têm a cadeia completa “fonte identificável → texto PT/EN → coleção → prova iPhone”:
@@ -49,15 +69,13 @@ Estas partes visuais existem, mas ainda não têm a cadeia completa “fonte ide
 | Família | Próximo trabalho necessário |
 |---|---|
 | Buracos coronais e plumas | expor um marcador semântico no volume coronal antes de criar um cartão |
-| Espículas | escolher um ponto de interesse no limbo e testar sua legibilidade no celular |
-| Granulação detalhada, cromosfera e fibrilas | criar uma vista de aproximação, em vez de tentar apontar uma célula aleatória |
 | P-modes | tratar como experimento de laboratório avançado, não como descoberta automática |
 | Áudio reativo | **cortado de vez** — decisão do dono (2026-07-18); não é mais uma lacuna a fechar, ver não-objetivos abaixo |
 
-As demais lacunas desta tabela têm PR planejado na série Museu (ver
-`docs/SERIE-MUSEU.md`): buracos coronais e plumas no PR-10, espículas e
-granulação/cromosfera/fibrilas no PR-9, p-modes fica como não-objetivo
-consciente (tabela abaixo).
+Espículas e granulação/fibrilas saíram desta tabela no PR-9 (cobertas pela
+descoberta por aproximação — ver acima). A lacuna restante tem PR planejado
+na série Museu (ver `docs/SERIE-MUSEU.md`): buracos coronais e plumas no
+PR-10; p-modes fica como não-objetivo consciente (tabela abaixo).
 
 ## Regra para ampliar o acervo
 

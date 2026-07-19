@@ -867,6 +867,33 @@ function init(){
           ctx.eduCoronaExplained = true;
       } else ctx.eduCoronaPhotonT = 0;
     }
+    // Museu Solar (PR-9) — descobertas por APROXIMAÇÃO: o cartão é uma
+    // recompensa pelo GESTO de chegar perto — nunca aparece sem ele. Os dois
+    // relógios correm em rawDelta (janela de 2s é tempo de parede, imune a
+    // ?speed) e RESETAM ao afastar; o gesto precisa ser sustentado, não um
+    // pinch acidental. Cartões GLOBAIS por decisão consciente (ver edu.js):
+    // a granulação está em todo lugar e as espículas são a franja inteira —
+    // apontar uma âncora seria mentira. Latch por sessão cada (padrão PR-8).
+    // Granulação: sem gate físico além do gesto — a superfície granulada é o
+    // próprio disco, sempre desenhada por construção em todo tier.
+    if (!DET && ctx.EDU_K > .5 && !ctx.eduGranulationExplained){
+      if (ctx.phenomena.view.closeness() > PHEN_T.CLOSEUP_RATIO){
+        ctx.eduCloseupT = (ctx.eduCloseupT || 0) + rawDelta;
+        if (ctx.eduCloseupT > 2 && ctx.eduEvent('granulation',0,0,0,1,-1))
+          ctx.eduGranulationExplained = true;
+      } else ctx.eduCloseupT = 0;
+    }
+    // Espículas: o limbo precisa CRUZAR o quadro (disco maior que a menor
+    // dimensão do viewport — phenomena.view.limbFraction, a matemática do
+    // diskRect da visita) E a franja estar de fato desenhada (spiculeMesh
+    // visível — honestidade contra o toggle de QA).
+    if (!DET && ctx.EDU_K > .5 && !ctx.eduSpiculesExplained){
+      if (ctx.phenomena.view.limbFraction() > PHEN_T.LIMB_FILL && spiculeMesh.visible){
+        ctx.eduLimbT = (ctx.eduLimbT || 0) + rawDelta;
+        if (ctx.eduLimbT > 2 && ctx.eduEvent('spicules',0,0,0,1,-1))
+          ctx.eduSpiculesExplained = true;
+      } else ctx.eduLimbT = 0;
+    }
     // PR-2: mesma blindagem — a descoberta espontânea nunca derruba a cena.
     if (ctx.eduTick){
       try { ctx.eduTick(rawDelta); }

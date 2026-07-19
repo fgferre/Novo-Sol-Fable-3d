@@ -5,6 +5,7 @@
 import { EDU_CONTENT } from '../edu/content.js';
 import { PANEL_STRINGS, CONTROL_LABELS_EN } from './strings.js';
 import { composePostcard, POSTCARD_FILE } from './postcard.js';
+import { createPanelHelp } from './help.js';
 
 export function createPanel(ctx){
   var hudEl = ctx.hudEl, TIER = ctx.TIER, TIER_ORDER = ctx.TIER_ORDER;
@@ -115,7 +116,34 @@ export function createPanel(ctx){
     '#tierApply{display:none;margin-top:7px;width:100%;padding:7px 0;border-radius:8px;cursor:pointer;',
     ' border:1px solid rgba(255,170,90,.32);background:rgba(255,140,50,.10);color:#ffd9a8;font-size:10.5px}',
     '#knobPanel button:focus-visible,#knobBtn:focus-visible,#knobPanel input:focus-visible{',
-    ' outline:2px solid rgba(255,190,125,.9);outline-offset:3px}'
+    ' outline:2px solid rgba(255,190,125,.9);outline-offset:3px}',
+    // PR-14 — ajuda "?": círculo ~20px em pseudo-elemento (SEM nó de texto —
+    // QA lê `.lab span` como o nome puro do controle), hit area 32px.
+    '#knobPanel .labWrap{display:inline-flex;align-items:center;gap:2px;min-width:0}',
+    '#knobPanel .helpRow{display:flex;align-items:center;gap:7px}',
+    '#knobPanel .helpRow>button:first-child{flex:1 1 0%;min-width:0;margin:0}',
+    '#knobPanel .helpBtn{flex:0 0 auto;width:32px;height:32px;margin:-6px 0;padding:0;border:0;',
+    ' background:transparent;display:inline-flex;align-items:center;justify-content:center;cursor:help;',
+    ' user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:manipulation}',
+    '#knobPanel .helpBtn::before{content:"?";display:flex;align-items:center;justify-content:center;',
+    ' width:20px;height:20px;border-radius:50%;border:1px solid rgba(255,170,90,.38);',
+    ' background:rgba(255,140,50,.07);color:rgba(255,190,130,.72);font:600 11px/1 inherit;',
+    ' transition:background .25s,color .25s}',
+    '#knobPanel .helpBtn:hover::before,#knobPanel .helpBtn:focus-visible::before{',
+    ' background:rgba(255,140,50,.22);color:#ffd9a8}',
+    '#helpTip{position:absolute;left:12px;width:min(300px,calc(100% - 24px));box-sizing:border-box;z-index:6;',
+    ' padding:11px 13px 12px;border-radius:10px;border:1px solid rgba(255,179,103,.42);',
+    ' background:linear-gradient(165deg,rgba(34,24,14,.97),rgba(15,10,6,.97));',
+    ' box-shadow:0 10px 34px rgba(0,0,0,.55);color:#f4ecdf;opacity:0;transition:opacity .2s ease}',
+    '#helpTip.on{opacity:1}#helpTip[hidden]{display:none}',
+    '#helpTip .helpWhat{font-size:11.5px;line-height:1.45;color:rgba(255,244,229,.92)}',
+    '#helpTip .helpVisualHead{display:block;margin-top:7px;font-size:8.5px;font-weight:700;',
+    ' letter-spacing:.18em;text-transform:uppercase;color:rgba(255,170,90,.68)}',
+    '#helpTip .helpVisualBody{display:block;margin-top:2px;font-size:11px;line-height:1.4;color:rgba(244,233,219,.82)}',
+    '#helpTip .helpEdu{margin-top:8px;padding-top:7px;border-top:1px solid rgba(255,179,103,.2);',
+    ' font-size:10.5px;line-height:1.45;color:rgba(255,214,166,.8)}',
+    '#helpTip .helpEdu[hidden]{display:none}',
+    '@media(prefers-reduced-motion:reduce){#helpTip{transition:none}}'
   ].join('\n');
   document.head.appendChild(css);
 
@@ -132,6 +160,29 @@ export function createPanel(ctx){
   reg(function(){ panel.setAttribute('lang', panelLang()==='en'?'en':'pt-BR'); });
   panel.appendChild(head); panel.appendChild(sub);
 
+  // PR-14 — ajuda "?" por controle: um tooltip compartilhado (ui/help.js).
+  // Completude cobrada em código (console.warn por linha sem HELP) e por
+  // tools/qa-panel-help.js. A troca de idioma re-renderiza o tooltip aberto
+  // pelo mesmo pipeline i18nApply do resto do painel.
+  var help = createPanelHelp(panel, {
+    lang: panelLang,
+    aria: function(){ return S().helpAria; },
+    visualHead: function(){ return S().helpVisualHead; },
+    register: reg
+  });
+  reg(function(){ help.applyLanguage(); });
+  function labelWithHelp(labelEl, key, labelFn){
+    var wrap = document.createElement('span'); wrap.className = 'labWrap';
+    wrap.appendChild(labelEl); wrap.appendChild(help.button(key, labelFn));
+    return wrap;
+  }
+  function buttonWithHelp(btn, key, labelFn, marginTop){
+    var wrap = document.createElement('div'); wrap.className = 'helpRow';
+    if (marginTop !== undefined) wrap.style.marginTop = marginTop + 'px';
+    wrap.appendChild(btn); wrap.appendChild(help.button(key, labelFn));
+    return wrap;
+  }
+
   if(!ctx.DET){
     var eduSec=document.createElement('div'); eduSec.className='sec'; panel.appendChild(eduSec);
     var eduRow=document.createElement('div'); eduRow.className='switch'; eduRow.id='eduSwitchRow';
@@ -147,7 +198,8 @@ export function createPanel(ctx){
     syncEdu(ctx.getControl('edu')>.5);
     eduSwitch.addEventListener('click',function(){ ctx.setControl('edu',ctx.getControl('edu')>.5?0:1); });
     ctx.subscribeControls(function(key,info){ if(key==='edu')syncEdu(info.applied>.5); });
-    eduRow.appendChild(eduLabel);eduRow.appendChild(eduSwitch);panel.appendChild(eduRow);
+    eduRow.appendChild(labelWithHelp(eduLabel,'switch-edu',function(){return S().eduSwitch;}));
+    eduRow.appendChild(eduSwitch);panel.appendChild(eduRow);
 
     // A visita guiada é opt-in e não substitui a exploração livre. Ela fica
     // junto da camada educativa, antes de idioma/coleção, para ser achada
@@ -164,7 +216,8 @@ export function createPanel(ctx){
       if(info&&info.active){setPanelOpen(false);return;}
       if(ctx.eduTourStart){ctx.eduTourStart();setPanelOpen(false);}
     });
-    ctx.onEduTourChange=syncTour;syncTour(ctx.eduTourInfo&&ctx.eduTourInfo());panel.appendChild(tourButton);
+    ctx.onEduTourChange=syncTour;syncTour(ctx.eduTourInfo&&ctx.eduTourInfo());
+    panel.appendChild(buttonWithHelp(tourButton,'btn-tour',function(){return S().tourStart;},3));
 
     // PR-12 — postal "guardar esta vista". O clique agenda a captura para o
     // FIM do frame corrente do animate (ctx.capturePostcard — o canvas WebGL
@@ -225,7 +278,7 @@ export function createPanel(ctx){
         });
       });
     });
-    panel.appendChild(postcardBtn);
+    panel.appendChild(buttonWithHelp(postcardBtn,'btn-postcard',function(){return S().postcard.button;},8));
 
     var langRow=document.createElement('div'); langRow.className='choice'; langRow.id='eduLangRow';
     var langLabel=document.createElement('span');
@@ -252,7 +305,8 @@ export function createPanel(ctx){
     var renderCollection=function(){};
     syncLanguage(ctx.eduLang==='en'?'en':'pt');
     ctx.onEduLanguageChange=function(code){ syncLanguage(code); renderCollection(); syncTour(ctx.eduTourInfo&&ctx.eduTourInfo()); };
-    langRow.appendChild(langLabel);langRow.appendChild(langChoices);panel.appendChild(langRow);
+    langRow.appendChild(labelWithHelp(langLabel,'btn-lang',function(){return S().langLabel;}));
+    langRow.appendChild(langChoices);panel.appendChild(langRow);
 
     // A coleção é deliberadamente uma leitura calma dentro dos ajustes: ela
     // não reaponta a câmera, não recria o fenômeno e não revela o que ainda
@@ -327,7 +381,8 @@ export function createPanel(ctx){
           renderCollection();
         }
       });
-      collectionRow.appendChild(collectionToggle);collectionRow.appendChild(collectionCompleteLine);collectionRow.appendChild(collectionList);collectionRow.appendChild(collectionClear);panel.appendChild(collectionRow);
+      collectionRow.appendChild(buttonWithHelp(collectionToggle,'collection',function(){return collectionText().open;},8));
+      collectionRow.appendChild(collectionCompleteLine);collectionRow.appendChild(collectionList);collectionRow.appendChild(collectionClear);panel.appendChild(collectionRow);
       ctx.onEduCollectionChange=function(){ renderCollection(); };
       renderCollection();
     }
@@ -348,7 +403,8 @@ export function createPanel(ctx){
     var name = document.createElement('span');
     reg(function(){ name.textContent = controlLabel(d); });
     var val = document.createElement('span'); val.className = 'val';
-    lab.appendChild(name); lab.appendChild(val);
+    lab.appendChild(labelWithHelp(name,d.key,function(){return controlLabel(d);}));
+    lab.appendChild(val);
     var input = document.createElement('input');
     input.type = 'range'; input.className = 'kn'; input.id = 'control-' + d.key;
     input.min = d.min; input.max = d.max; input.step = d.step;
@@ -526,14 +582,16 @@ export function createPanel(ctx){
   function syncIdle(){ idleSwitch.classList.toggle('on',ctx.IDLE_CINE); idleSwitch.setAttribute('aria-checked',String(!!ctx.IDLE_CINE)); }
   syncIdle();
   idleSwitch.addEventListener('click',function(){ if(ctx.directorUserExit)ctx.directorUserExit(); ctx.IDLE_CINE=!ctx.IDLE_CINE; syncIdle(); saveIdle(); });
-  idleRow.appendChild(idleLabel); idleRow.appendChild(idleSwitch); panel.appendChild(idleRow);
+  idleRow.appendChild(labelWithHelp(idleLabel,'switch-idle',function(){return S().idleSwitch;}));
+  idleRow.appendChild(idleSwitch); panel.appendChild(idleRow);
 
   var lookSec=document.createElement('div'); lookSec.className='sec'; panel.appendChild(lookSec);
   var lookBtn=document.createElement('button'); lookBtn.id='lookBtn';
   lookBtn.addEventListener('click',function(){ if(ctx.directorUserExit)ctx.directorUserExit(); ctx.applyControlPreset('sunshine'); });
-  panel.appendChild(lookBtn);
+  panel.appendChild(buttonWithHelp(lookBtn,'btn-look',function(){return S().lookApply;},14));
   var dirBtn=document.createElement('button'); dirBtn.id='dirBtn';
-  dirBtn.addEventListener('click',function(){ ctx.directorStart(); setPanelOpen(false); }); panel.appendChild(dirBtn);
+  dirBtn.addEventListener('click',function(){ ctx.directorStart(); setPanelOpen(false); });
+  panel.appendChild(buttonWithHelp(dirBtn,'btn-director',function(){return S().director;},8));
   reg(function(){
     lookSec.textContent=S().sections['look'];
     lookBtn.textContent=S().lookApply;
@@ -551,10 +609,16 @@ export function createPanel(ctx){
   });
   function syncHud(on){ hudSwitch.classList.toggle('on',on); hudSwitch.setAttribute('aria-checked',String(!!on)); }
   syncHud(ctx.hudOn); hudSwitch.addEventListener('click',function(){ ctx.setHudState(!ctx.hudOn); });
-  ctx.onHudStateChange=syncHud; hudRow.appendChild(hudLabel); hudRow.appendChild(hudSwitch); panel.appendChild(hudRow);
+  ctx.onHudStateChange=syncHud;
+  hudRow.appendChild(labelWithHelp(hudLabel,'switch-hud',function(){return S().hudSwitch;}));
+  hudRow.appendChild(hudSwitch); panel.appendChild(hudRow);
 
+  // PR-14: UMA ajuda para o grupo de qualidade, ao lado do título da seção
+  // (o nome do grupo é o rótulo natural dos quatro botões de tier).
   var tierSec=document.createElement('div'); tierSec.className='sec'; panel.appendChild(tierSec);
-  reg(function(){ tierSec.textContent=S().sections['qualidade']; });
+  var tierSecName=document.createElement('span');
+  reg(function(){ tierSecName.textContent=S().sections['qualidade']; });
+  tierSec.appendChild(labelWithHelp(tierSecName,'tier',function(){return S().sections['qualidade'];}));
   var tierRow=document.createElement('div'); tierRow.id='tierRow';
   function reloadWithoutTier(){
     var q=(location.search||'').replace(/^\?/,'').split('&').filter(function(kv){return kv&&kv.indexOf('tier=')!==0;}).join('&');
@@ -587,7 +651,8 @@ export function createPanel(ctx){
     var keys=ctx.CONTROL_SCHEMA.map(function(d){return d.key;}).concat(['look','idle','director','hud','tier','tune','scale']);
     try{var target=new URL(location.href);keys.forEach(function(k){target.searchParams.delete(k);});location.replace(target.href);}catch(e){location.reload();}
   });
-  panel.appendChild(reset); document.body.appendChild(panel);
+  panel.appendChild(buttonWithHelp(reset,'btn-reset',function(){return S().reset;},22));
+  document.body.appendChild(panel);
 
   var gear=document.createElement('button'); gear.id='knobBtn'; gear.type='button'; gear.title=S().gearTitle;
   gear.setAttribute('aria-label',S().gearOpen); gear.setAttribute('aria-controls',panel.id); gear.setAttribute('aria-expanded','false'); gear.textContent='⚙';
@@ -608,6 +673,7 @@ export function createPanel(ctx){
     gear.setAttribute('aria-label',(open?s.gearClose:s.gearOpen)+(attention?s.gearAttention+attention:''));
   }
   function setPanelOpen(open){
+    if(!open)help.close();
     if(!open&&panel.contains(document.activeElement))gear.focus();
     panel.classList.toggle('open',open);gear.classList.toggle('open',open);gear.setAttribute('aria-expanded',String(open));
     panel.setAttribute('aria-hidden',String(!open)); panel.inert=!open;

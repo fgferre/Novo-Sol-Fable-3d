@@ -22,7 +22,7 @@ O modo determinístico (`?det=1`) não cria nenhuma das duas camadas.
 | 9 | Máximo solar | relógio físico acelerado até fase 0,5 | fase, amplitude e `hold` reais |
 | 10 | Mínimo solar | relógio físico acelerado até fase 0/1 | fase, amplitude e `hold` reais |
 
-Em todas as etapas, a prova `npm run qa:tour` verifica viewport de 390×844, cartão recolhido, botão `+` de ao menos 44 px, pausa do relógio durante a leitura, gesto que devolve a câmera, ausência de colisão cartão/disco e limpeza dos overrides ao sair. Ela grava a evidência em `out/qa-tour/evidence.json`.
+Em todas as etapas, a prova `npm run qa:tour` roda em ambiente de iPhone de verdade (UA Safari, toques e arrastes de TOQUE genuínos, `tier=mid` — o tier real do aparelho) e verifica, POR ETAPA: botões visíveis ≥44 px, cartão expandido sem estourar a tela, colisão cartão/disco, fonte física visível e leitura recolhida a 8% do tempo. A pausa com relógio físico parado é medida em dupla janela em três etapas representativas; a caminhada completa repete em paisagem 844×390; um gate DPR3 cobre a transação de display; controles negativos provam que loops/CME/coroa sem física reportam o texto honesto de indisponível; e o contraste WCAG do cartão (≥4.5) é medido por screenshot. A evidência (JSON + screenshots-chave) vai para `out/qa-tour/` e sobe como artifact do CI também em sucesso.
 
 ## O que também foi corrigido na exploração livre
 

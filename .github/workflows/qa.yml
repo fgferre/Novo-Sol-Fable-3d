@@ -1,11 +1,18 @@
 name: QA
 
-# QA automatizado: build Vite + regressão de paridade visual (modo
-# determinístico ?det=1 comparado pixel a pixel contra os baselines
-# commitados em qa/baselines) + QA de controles. O render usa SwiftShader
-# (software), então as imagens são reprodutíveis entre runs.
-# PR-5 (Museu): push só dispara no main — em branches de PR o gatilho
-# pull_request já cobre; antes cada PR pagava 2 runs idênticos.
+# QA automatizado em JOBS PARALELOS (PR-6 da série Museu):
+#   build        → npm ci + builds + lint de conteúdo + artifacts
+#   qa-core      → controles, estado, bloom, tempo, eventos, sutis, edu e
+#                  as DUAS paridades visuais (histórica + museu) a 0 px
+#   qa-mobile    → visita guiada em retrato (tier=mid, toque real, DPR3,
+#                  controles negativos, legibilidade)
+#   qa-landscape → caminhada completa da visita em 844×390
+# O render usa SwiftShader (software), então as imagens são reprodutíveis
+# entre runs. O pages.yml gateia pela conclusão do WORKFLOW inteiro: o
+# artifact `builds` sobe no job build sem risco — só é consumido se TODOS
+# os jobs ficarem verdes. Push só dispara no main (PRs pagam 1 run via
+# pull_request). O nightly (DPR3 completo, EN, autoteste A/B) vive em
+# nightly.yml e não bloqueia nada.
 on:
   push:
     branches: [main]
@@ -17,7 +24,43 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  qa:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build (normal + arquivo único)
+        run: |
+          npm run build
+          npm run build:single
+      - name: Lint do conteúdo educativo (PT↔EN, sem browser)
+        run: node tools/lint-content.js
+      # PR0: builds TESTADOS viram artifact. O workflow Pages (workflow_run,
+      # gateado pela conclusão VERDE do workflow inteiro) baixa este artifact
+      # e publica exatamente o SHA que passou — nada de rebuild paralelo.
+      - name: Upload dos builds testados (consumidos pelo Pages)
+        uses: actions/upload-artifact@v4
+        with:
+          name: builds
+          retention-days: 7
+          path: |
+            dist/
+            dist-single/index.html
+      # Artifact interno: o arquivo único que os jobs de teste consomem.
+      - name: Upload do dist-single (consumido pelos jobs de teste)
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-single
+          retention-days: 1
+          path: dist-single/index.html
+
+  qa-core:
+    needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -28,10 +71,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
-      - name: Build (normal + arquivo único)
-        run: |
-          npm run build
-          npm run build:single
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-single
+          path: dist-single
       - name: QA de controles
         run: node tools/qa-controls.js dist-single/index.html
       - name: QA de estado dos controles
@@ -46,24 +89,23 @@ jobs:
         run: node tools/qa-subtle-controls.js dist-single/index.html qa-subtle
       - name: QA da camada educativa
         run: node tools/qa-edu.js dist-single/index.html
-      - name: QA da visita guiada no iPhone
-        run: node tools/qa-edu-tour.js dist-single/index.html
       # As máscaras excluem as duas faixas de texto DOM (título e base):
       # fontes rasterizam diferente por SO e não são o objeto deste gate —
       # o render da estrela continua comparado pixel a pixel, sem máscara.
+      # PR-6: --max-frac 0 — o SwiftShader é determinístico e as duas
+      # famílias provaram 0 px run-a-run e cross-platform; qualquer pixel
+      # fora das máscaras agora é vermelho.
       - name: Paridade visual vs baselines
         run: |
           node tools/parity.js qa-out --file dist-single/index.html
-          node tools/imgdiff.js qa/baselines qa-out --max-frac 0.001 --out qa-diff --mask 0,0,620,130 --mask 0,-90,9999,90
+          node tools/imgdiff.js qa/baselines qa-out --max-frac 0 --out qa-diff --mask 0,0,620,130 --mask 0,-90,9999,90
       # Museu (PR-4): segunda família de baselines com os knobs do museu
-      # LIGADOS por cima do det (a query vence os pins do parity). Protege a
-      # cena que o visitante realmente vê — a paridade histórica acima só
-      # cobre o Sol "cru". Baselines canônicas = capturas deste gate via
-      # workflow regen-baselines (input `query`); ver qa/baselines-museu/BASELINE.md.
+      # LIGADOS por cima do det (a query vence os pins do parity). Baselines
+      # canônicas = capturas deste gate via workflow regen-baselines.
       - name: Paridade museu (defaults ligados sob det)
         run: |
           node tools/parity.js qa-out-museu --file dist-single/index.html --query "spots=1&loops=0.55&fprom=0.55&cme=0.9&cvol=0.5&burst=0.55&adapt=0.55&disp=0.4&hal=0.45&shimmer=0.45"
-          node tools/imgdiff.js qa/baselines-museu qa-out-museu --max-frac 0.001 --out qa-diff-museu --mask 0,0,620,130 --mask 0,-90,9999,90
+          node tools/imgdiff.js qa/baselines-museu qa-out-museu --max-frac 0 --out qa-diff-museu --mask 0,0,620,130 --mask 0,-90,9999,90
       - name: Anexar diffs em caso de falha
         if: failure()
         uses: actions/upload-artifact@v4
@@ -75,16 +117,59 @@ jobs:
             qa-out-museu/
             qa-diff-museu/
             qa-subtle/
+            out/qa-edu-corona/
           if-no-files-found: ignore
-      # PR0: builds TESTADOS viram artifact (só chega aqui com o QA verde;
-      # steps posteriores a uma falha são pulados). O workflow Pages
-      # (workflow_run) baixa este artifact e publica exatamente o SHA
-      # que passou — nada de rebuild paralelo não testado.
-      - name: Upload dos builds testados (consumidos pelo Pages)
+
+  qa-mobile:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-single
+          path: dist-single
+      - name: Visita guiada no iPhone (retrato mid + DPR3 + negativos + legibilidade)
+        run: node tools/qa-edu-tour.js dist-single/index.html out/qa-tour --mode portrait
+      # PR-6: a evidência (JSON + 2 screenshots-chave + contraste) sobe
+      # TAMBÉM em sucesso — o dono pode olhar o cartão do último run verde.
+      - name: Evidência da visita (sempre)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: builds
-          retention-days: 7
-          path: |
-            dist/
-            dist-single/index.html
+          name: qa-tour-evidencia
+          path: out/qa-tour/
+          if-no-files-found: ignore
+
+  qa-landscape:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-single
+          path: dist-single
+      - name: Visita guiada em paisagem (caminhada completa 844×390)
+        run: node tools/qa-edu-tour.js dist-single/index.html out/qa-tour-landscape --mode landscape
+      - name: Evidência em caso de falha
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-tour-landscape
+          path: out/qa-tour-landscape/
+          if-no-files-found: ignore

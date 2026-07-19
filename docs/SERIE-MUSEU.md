@@ -32,11 +32,11 @@ Legenda status: ⬜ pendente · 🚧 em andamento · ⏸️ aguardando aceite do
 | PR | Título | Escopo | Gate 🟢 | Aceite 🟣 | Status |
 |----|--------|--------|---------|-----------|--------|
 | 1 | Porta e placa | Marca única no HTML ("SOL — uma estrela viva"), chip "▶ Visita guiada" no palco, hint em fonte única, meta/OG | baselines regeneradas por decisão de marca com prova cirúrgica (0 px de diff fora das regiões de título/hint nos 5 shots — o Sol é bit-idêntico); chip visível em 390×844, ≥44px, sem intersectar o disco, some ao iniciar a visita e não insiste depois da 1ª visita | "Abra em aba anônima no iPhone: título 'SOL — uma estrela viva'; chip 'Visita guiada' embaixo; um toque inicia a visita sem abrir a engrenagem." | ✅ merged (PR #61 + correção #PR-1b; ver Incidentes) |
-| 2 | Blindagem | Try/catch com telemetria nos ticks edu, memoização do cartão, fix de landscape, fix da deriva idle na visita, prévias do painel desligadas durante a visita, restauração suave de pose, safe-area | qa:tour verde + checks novos (`faults===0`; pose restaurada); qa-ab base-vs-head pixel-0 | "Faça a visita e saia no meio: a câmera volta suave para onde estava." | ⬜ pendente |
-| 3 | Go-live das descobertas | Default de `edu` passa a ligado fora de `det` (função det-aware, padrão `cycle`); URL/storage continuam vencendo | parity intacta por construção (edu inerte sob det); qa:edu/qa:tour verdes | "Abra em aba anônima: em 1-2 min um cartão de descoberta aparece sozinho quando algo acontece no Sol." | ⬜ pendente |
-| 4 | O Sol completo por default | Defaults det-aware para física (spots/loops/fprom/cme/cvol) e para o cinema acoplado a eventos (burst/adapt/disp/hal/shimmer); blindagem de baselines (knobs visuais pinados na URL do parity) | baselines históricas intocadas; nova família de baselines "museu" estável; asserts de default atualizados | "Abra no iPhone e só observe 2 min: manchas com plages, arcos magnéticos e coroa aparecem sozinhos; quando vier um flare, a tela explode num starburst e a exposição respira." | ⬜ pendente |
-| 5 | Abertura cinematográfica | Plano-sequência de ~5s no primeiro acesso, cinematografia da visita (ease + halo 3D de destaque), sessão de cinema oferecida ao fim da visita | parity intacta (intro inerte sob det); qa:tour com checks de transição (pose converge, sem overshoot); reduced-motion pula a abertura | "Abra em aba anônima no iPhone: o site COMEÇA com um plano-sequência que revela o Sol; na visita, um brilho marca o que o texto descreve; ao terminar, a sessão de cinema é oferecida." | ⬜ pendente |
-| 6 | Prova mobile + CI reorganizado | qa:tour com touch real + UA iPhone, 44px e pausa por etapa, passada em `tier=mid`, landscape completo no gate, DPR3, gate de coroa por fótons, controles negativos por gate, legibilidade, CI em jobs paralelos + nightly + `regen-baselines`, checklist iPhone | checks novos + wall do workflow ≤30 min por job | "kicker ≥10px aprovado + primeira execução do checklist iPhone." | ⬜ pendente |
+| 2 | Blindagem | Try/catch com telemetria nos ticks edu, memoização do cartão, fix de landscape, fix da deriva idle na visita, prévias do painel desligadas durante a visita, restauração suave de pose, safe-area | qa:tour verde + checks novos (`faults===0`; pose restaurada); qa-ab base-vs-head pixel-0 | "Faça a visita e saia no meio: a câmera volta suave para onde estava." | ✅ merged (PR #63) |
+| 3 | Go-live das descobertas | Default de `edu` passa a ligado fora de `det` (função det-aware, padrão `cycle`); URL/storage continuam vencendo | parity intacta por construção (edu inerte sob det); qa:edu/qa:tour verdes | "Abra em aba anônima: em 1-2 min um cartão de descoberta aparece sozinho quando algo acontece no Sol." | ✅ merged (PR #64 + endurecimento do gate #65) |
+| 4 | O Sol completo por default | Defaults det-aware para física (spots/loops/fprom/cme/cvol) e para o cinema acoplado a eventos (burst/adapt/disp/hal/shimmer); blindagem de baselines (knobs visuais pinados na URL do parity) | baselines históricas intocadas; nova família de baselines "museu" estável; asserts de default atualizados | "Abra no iPhone e só observe 2 min: manchas com plages, arcos magnéticos e coroa aparecem sozinhos; quando vier um flare, a tela explode num starburst e a exposição respira." | ✅ merged (PR #66) |
+| 5 | Abertura cinematográfica | Plano-sequência de ~5s no primeiro acesso, cinematografia da visita (ease + halo 3D de destaque), sessão de cinema oferecida ao fim da visita | parity intacta (intro inerte sob det); qa:tour com checks de transição (pose converge, sem overshoot); reduced-motion pula a abertura | "Abra em aba anônima no iPhone: o site COMEÇA com um plano-sequência que revela o Sol; na visita, um brilho marca o que o texto descreve; ao terminar, a sessão de cinema é oferecida." | ✅ merged (PR #67) |
+| 6 | Prova mobile + CI reorganizado | qa:tour com touch real + UA iPhone, 44px e pausa por etapa, passada em `tier=mid`, landscape completo no gate, DPR3, gate de coroa por fótons, controles negativos por gate, legibilidade, CI em jobs paralelos + nightly + `regen-baselines`, checklist iPhone | checks novos + wall do workflow ≤30 min por job | "kicker ≥10px aprovado + primeira execução do checklist iPhone." | 🚧 em andamento |
 | 7 | `phenomena.js` | Módulo único da física observável (`flare/cme/spots/prominence/loops/corona/cycle`), construído sempre (inclusive sob det); migração de `tour.js` e dos emissores de `main.js` | qa-ab pixel-0 (criar o módulo não muda um LSB); `faults===0`; suíte completa verde | sem aceite visual próprio — é refactor interno; verificado pelo gate 🟢 e pelos PRs 8-10 que passam a consumir o módulo | ⬜ pendente |
 | 8 | Onda 1 — loops e coroa | Emissor espontâneo de loops coronais, emissor de coroa via `phenomena.corona`, famílias novas na coleção (5→8), controles negativos | qa:edu estendido + idempotência | "Explore até um cartão 'Loops coronais' aparecer sozinho; a coleção mostra 8 famílias." | ⬜ pendente |
 | 9 | Onda 2 — granulação e espículas | Descoberta por aproximação (`camDist` cruza limiar), POI de espículas no limbo | legibilidade em 390×844 + regras de âncora + controles negativos | "Aproxime bem: um cartão explica a granulação; chegue à borda: espículas." | ⬜ pendente |
@@ -97,14 +97,33 @@ obrigatório no branch main.
 
 ## Como acompanhar
 
-- **Local:** `npm test` (roda `qa:ci` — build normal + arquivo único,
-  controles, funcionais rápidos, paridade estática).
-- **CI:** [`.github/workflows/qa.yml`](../.github/workflows/qa.yml) roda em
-  todo push/PR (build Vite + regressão de paridade visual em SwiftShader +
-  QA de controles).
+- **Local:** `npm test` (roda `qa:ci` — build normal + arquivo único, lint
+  de conteúdo, controles, funcionais rápidos, visita guiada completa,
+  paridade estática a 0 px). Rode as suítes SEQUENCIALMENTE (nunca duas
+  SwiftShader pesadas juntas); `npm run qa:clean` mata headless órfãos de
+  um run interrompido.
+- **CI (PR-6):** [`.github/workflows/qa.yml`](../.github/workflows/qa.yml)
+  roda em todo push/PR como JOBS PARALELOS, cada um com wall de 30 min:
+  - `build` — npm ci, builds, lint de conteúdo, artifacts (`builds` para o
+    Pages; `dist-single` interno para os jobs de teste);
+  - `qa-core` — controles/estado/bloom/tempo/eventos/sutis/edu + paridade
+    histórica E museu com `--max-frac 0` (máscaras só nas faixas de texto);
+  - `qa-mobile` — visita guiada em retrato `tier=mid` com toque genuíno +
+    UA de iPhone, gate DPR3, controles negativos e legibilidade; a
+    evidência (JSON + screenshots) sobe como artifact TAMBÉM em sucesso;
+  - `qa-landscape` — caminhada completa das 10 salas em 844×390.
+- **Nightly:** [`.github/workflows/nightly.yml`](../.github/workflows/nightly.yml)
+  (07:00 UTC + dispatch) roda o que é caro ou informativo: caminhada
+  completa em DPR3, caminhada completa em inglês e o autoteste do
+  comparador A/B (base==head ⇒ 0 px). Falha do nightly NÃO bloqueia nada;
+  melhoria futura anotada: issue automática em falha.
+- **Baselines:** regeneração SÓ pelo workflow `regen-baselines.yml`
+  (dispatch), nunca de máquina local — ver Incidentes (PR-1).
 - **Deploy:** GitHub Pages publica automaticamente `dist/` + `dist-single/`
-  do SHA testado sempre que o QA fica verde em `main` (workflow
-  `pages.yml`, disparado via `workflow_run` do QA).
+  do SHA testado sempre que o workflow QA INTEIRO (todos os jobs) fica
+  verde em `main` (workflow `pages.yml`, disparado via `workflow_run`).
+- **Aceite manual:** [`docs/CHECKLIST-IPHONE.md`](CHECKLIST-IPHONE.md) — o
+  checklist de 5 min que o dono roda num iPhone real a cada marco.
 
 Cobertura de fenômenos é atualizada em paralelo em
 [`docs/MUSEU_SOL_COBERTURA.md`](MUSEU_SOL_COBERTURA.md) a cada PR de

@@ -61,12 +61,14 @@ export function createEduTour(ctx){
     ' padding:12px 13px 12px 14px;border:1px solid rgba(255,183,104,.42);border-left-color:rgba(255,198,137,.88);border-radius:13px;',
     ' background:linear-gradient(128deg,rgba(8,11,18,.94),rgba(17,15,18,.84));box-shadow:0 15px 38px rgba(0,0,0,.46);',
     ' backdrop-filter:blur(15px) saturate(1.2);-webkit-backdrop-filter:blur(15px) saturate(1.2);pointer-events:auto}',
-    '#eduTour .tour-kicker{font-size:9px;font-weight:700;letter-spacing:.18em;color:#ffc17d}',
+    // PR-6 — legibilidade mobile: kicker/headline sobem de 9px para 10px
+    // (piso aprovado pela régua do gate: todo texto do cartão ≥10px).
+    '#eduTour .tour-kicker{font-size:10px;font-weight:700;letter-spacing:.18em;color:#ffc17d}',
     '#eduTour .tour-progress{display:flex;gap:4px;margin:8px 0 9px}',
     '#eduTour .tour-dot{width:5px;height:5px;border-radius:999px;background:rgba(255,244,225,.24)}',
     '#eduTour .tour-dot.done{background:rgba(255,184,104,.72)}#eduTour .tour-dot.current{width:17px;background:#ffc17d}',
     '#eduTour .tour-term{font-size:19px;line-height:1.08;font-weight:560;letter-spacing:-.018em;color:#fff8ef}',
-    '#eduTour .tour-headline{margin-top:4px;font-size:9px;line-height:1.25;font-weight:700;letter-spacing:.15em;color:rgba(255,197,131,.9)}',
+    '#eduTour .tour-headline{margin-top:4px;font-size:10px;line-height:1.25;font-weight:700;letter-spacing:.15em;color:rgba(255,197,131,.9)}',
     '#eduTour .tour-status{margin-top:8px;font-size:11px;line-height:1.38;color:rgba(255,239,219,.72)}',
     '#eduTour .tour-body{margin:10px 0 1px;font-size:13px;line-height:1.48;color:rgba(255,244,229,.92)}',
     '#eduTour .tour-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:11px}',
@@ -302,6 +304,17 @@ export function createEduTour(ctx){
     for(var i=0;i<ctx.loopStatesA.length;i++)if(ctx.loopStatesA[i].ok)return true;
     return false;
   }
+  // PR-6 — gate da coroa por FÓTONS, não por objeto. O antigo
+  // `physical=!!ctx.coronaRays` era tautológico (o mesh existe em todo
+  // tier). Físico de verdade = o plano de raias está no draw E os uniforms
+  // que produzem luz no anel (uHalo/uRayBoost, alimentados pelos overrides
+  // halo/ray do configure) são positivos. Se o subsistema estiver desligado
+  // ou os overrides não produzirem fótons, a etapa reporta indisponível com
+  // o texto honesto — nada de prometer uma coroa que não está na tela.
+  function coronaPhotons(){
+    var u=ctx.coronaRaysUniforms;
+    return !!(ctx.coronaRays&&ctx.coronaRays.visible&&u&&u.uHalo&&u.uHalo.value>0&&u.uRayBoost&&u.uRayBoost.value>0);
+  }
   function desiredDistance(){
     // O cartão expandido cresce para cima no retrato. Abrimos espaço de
     // verdade (em vez de deixar o texto cobrir a borda do disco), e a câmera
@@ -333,7 +346,7 @@ export function createEduTour(ctx){
       }else if(step.id==='prominence'){
         var prom=ctx.promStates[state.source.sourceId];
         state.source.physical=!!(prom&&Math.max(prom.meshes[0].material.uniforms.uIntensity.value,prom.meshes[1].material.uniforms.uIntensity.value)>.04);
-      }else if(step.id==='corona')state.source.physical=!!ctx.coronaRays;
+      }else if(step.id==='corona')state.source.physical=coronaPhotons();
       else if(step.id==='maximum')state.source.physical=Math.abs(ctx.cyclePhase01-.5)<.04&&ctx.cycleAmpK>1.12;
       else if(step.id==='minimum')state.source.physical=(ctx.cyclePhase01<.04||ctx.cyclePhase01>.96)&&ctx.cycleAmpK<.5;
     }catch(e){state.source.physical=false;ctx.eduFault('source-visibility',e);}
@@ -370,7 +383,10 @@ export function createEduTour(ctx){
       if(ctx.CME_STEPS<=0||ctx.cmeKilled)state.source.unavailable=true;
     }
     if(id==='filament'||id==='prominence'){setOverride('fprom',.9);matureProm();}
-    if(id==='corona'){setOverride('halo',.9);setOverride('ray',1.15);setOverride('cact',.7);state.source.physical=!!ctx.coronaRays;}
+    // PR-6: o físico da coroa é lido DEPOIS dos overrides — são eles que
+    // garantem fótons mesmo com halo/ray zerados pelo visitante (a visita
+    // re-ilumina por empréstimo e devolve tudo no clearOverrides do fim).
+    if(id==='corona'){setOverride('halo',.9);setOverride('ray',1.15);setOverride('cact',.7);state.source.physical=coronaPhotons();}
     if(id==='maximum'||id==='minimum'){setOverride('cycle',1);state.source.kind=id==='maximum'?'cycleMaximum':'cycleMinimum';}
     if(id==='surface'){state.source.physical=!!ctx.sunMesh;}
     syncFactor();render();notify();
@@ -384,8 +400,17 @@ export function createEduTour(ctx){
   function tickStep(){
     var id=current().id;
     if(state.source.unavailable){if(state.entered>.15)ready();return;}
-    if(id==='surface'||id==='corona'){
+    if(id==='surface'){
       if(state.entered>.22)ready();return;
+    }
+    if(id==='corona'){
+      // PR-6: só libera com fótons de verdade no anel; os overrides são
+      // síncronos, então 2.5s sem luz significa subsistema desligado —
+      // a etapa assume o texto honesto de indisponível.
+      state.source.physical=coronaPhotons();
+      if(state.source.physical){if(state.entered>.22)ready();}
+      else if(state.entered>2.5){state.source.unavailable=true;ready();}
+      return;
     }
     if(id==='active-region'){
       if(state.source.sourceId>=0&&state.entered>.32)ready();return;

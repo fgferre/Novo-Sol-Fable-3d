@@ -34,10 +34,12 @@ export function createPanelHelp(panel, opts){
   panel.appendChild(tip);
 
   var openBtn = null, closeTimer = 0, press = null, openedAt = 0;
-  // O toque sintetiza um 'click' depois do pointerup; sem esta janela, o
+  // O toque sintetiza um 'click' depois do pointerup; sem supressão, o
   // click emendado no long-press/tap alternaria e FECHARIA o tooltip que o
-  // próprio gesto acabou de abrir (flagrado pelo qa:help no touch).
-  var suppressClickUntil = 0;
+  // próprio gesto acabou de abrir. A supressão é ONE-SHOT (consome o
+  // próximo click), não temporal: num runner carregado o click sintetizado
+  // pode chegar depois de qualquer janela de ms (flagrado 2× no CI).
+  var swallowNextClick = false;
 
   function entryFor(key){
     var lang = opts.lang();
@@ -136,9 +138,10 @@ export function createPanelHelp(panel, opts){
                  ev.clientY >= r.top && ev.clientY <= r.bottom;
     if (!p.canceled && inside) open(p.btn);          // tap curto = bônus
     else if (openBtn === p.btn && !inside) close();  // soltar fora fecha
-    if (ev.pointerType === 'touch') suppressClickUntil = performance.now() + 500;
+    if (ev.pointerType === 'touch') swallowNextClick = true;
   }, true);
   window.addEventListener('pointercancel', function(){
+    swallowNextClick = false;
     if (press){ clearTimeout(press.timer); press = null; }
   }, true);
 
@@ -158,12 +161,13 @@ export function createPanelHelp(panel, opts){
     btn.addEventListener('blur', function(){ if (openBtn === btn) close(); });
     btn.addEventListener('click', function(ev){
       ev.preventDefault();
-      if (performance.now() < suppressClickUntil){ open(btn); return; }
+      if (swallowNextClick){ swallowNextClick = false; if (openBtn !== btn) open(btn); return; }
       if (openBtn === btn) close(); else open(btn);
     });
     btn.addEventListener('contextmenu', function(ev){ ev.preventDefault(); });
     btn.addEventListener('pointerdown', function(ev){
       if (ev.pointerType !== 'touch') return;
+      swallowNextClick = false; // gesto novo: nunca herdar supressão órfã
       if (press) clearTimeout(press.timer);
       press = { btn:btn, x:ev.clientX, y:ev.clientY, canceled:false,
         timer: setTimeout(function(){ open(btn); }, 450) };

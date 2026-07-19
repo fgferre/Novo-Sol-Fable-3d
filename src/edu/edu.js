@@ -135,8 +135,11 @@ export function createEdu(ctx){
     recordedDiscoveryKey = key;
     if (ctx.recordEduDiscovery) ctx.recordEduDiscovery(eventType,eventContentKey);
   }
-  function isGlobal(type){ return type === 'cycleMaximum' || type === 'cycleMinimum'; }
-  function eventPriority(type){ return type === 'cme' ? 100 : type === 'flare' ? 90 : type === 'prominence' ? 70 : isGlobal(type) ? 65 : 60; }
+  // PR-8: a coroa também é GLOBAL (envolve o disco inteiro — sem âncora nem
+  // halo, como máximo/mínimo), mas com prioridade 55: ela nunca rouba a
+  // leitura de um fenômeno localizado; espera o palco vazio.
+  function isGlobal(type){ return type === 'cycleMaximum' || type === 'cycleMinimum' || type === 'corona'; }
+  function eventPriority(type){ return type === 'cme' ? 100 : type === 'flare' ? 90 : type === 'prominence' ? 70 : type === 'corona' ? 55 : isGlobal(type) ? 65 : 60; }
   function syncChrome(){
     // Marca única "SOL — uma estrela viva": ligar/desligar descobertas não
     // rebrandiza a página; só o idioma muda o chrome.
@@ -461,6 +464,11 @@ export function createEdu(ctx){
     if (name === 'cme') return queueCme(a,b,c,d);
     if (name === 'prominence') return queueProminence(a,b,c,d,e,f);
     if (name === 'spots') return startEvent('spots',a,b,c,d,e,f);
+    // PR-8: loops usam o MESMO caminho local de manchas (halo + linha na
+    // âncora real); a coroa usa o caminho global (sem âncora — o fenômeno é
+    // o anel inteiro em volta do disco).
+    if (name === 'loops') return startEvent('loops',a,b,c,d,e,f);
+    if (name === 'corona') return startGlobalEvent(name,d,e);
     // Um estado global vale somente enquanto ele está acontecendo. Ao
     // contrário de uma CME que emerge, máximo/mínimo não fica em fila:
     // o emissor físico tentará de novo no próximo frame ainda em hold.
@@ -509,7 +517,10 @@ export function createEdu(ctx){
     }
     if (eventType === 'cme'){
       if (age > 16 || ctx.cmeT >= 900 || ctx.cmeT > 18){ finishEvent(); return; }
-    } else if (eventType === 'prominence' || eventType === 'spots') {
+    } else if (eventType === 'prominence' || eventType === 'spots' || eventType === 'loops') {
+      // PR-8: loops entram na janela conceitual de manchas/proeminências —
+      // o ramo do flare abaixo amarra a vida do cartão a surfFlareT, que
+      // não descreve um arco ambiente.
       if (age > 9.5){ finishEvent(); return; }
     } else if (age > 7.5 || ctx.surfFlareT > 12){ finishEvent(); return; }
     syncEventContent();
@@ -518,7 +529,7 @@ export function createEdu(ctx){
     halo.position.copy(eventDir).multiplyScalar(anchorDistance);
     showVisual(); placeLabel(); rememberCurrentDiscovery();
     var pulse = reducedMotion ? 1 : 1 + .16*Math.sin(age*7.5)*Math.exp(-age*.22);
-    var haloScale = eventType === 'cme' ? .72 : eventType === 'prominence' ? .56 : eventType === 'spots' ? .52 : .48;
+    var haloScale = eventType === 'cme' ? .72 : eventType === 'prominence' ? .56 : eventType === 'spots' || eventType === 'loops' ? .52 : .48;
     halo.scale.setScalar(haloScale*pulse);
     haloMaterial.opacity = reducedMotion ? .62 : Math.max(.32,(eventType === 'cme' ? .72 : .80)-age*.045);
   };

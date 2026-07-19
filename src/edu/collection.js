@@ -7,13 +7,21 @@
 // e de vista são estáveis entre idiomas; o painel escolhe os rótulos PT/EN.
 
 var STORAGE_KEY = 'solEduCollection.v1';
+// PR-8 — 5→8 famílias, SEM bump de versão: a mudança é aditiva por
+// construção (normalizedState só copia pares família/vista conhecidos, e um
+// store antigo simplesmente não tem as famílias novas — elas nascem "ainda
+// não observadas"). A ordem é a narrativa da visita guiada: da camada que se
+// enxerga primeiro até o ritmo de 11 anos.
 var VERSION = 1;
-var ORDER = ['flare','cme','prominence','spots','cycle'];
+var ORDER = ['surface','spots','loops','flare','cme','prominence','corona','cycle'];
 var FAMILIES = {
+  surface:['surface'],
+  spots:['spots'],
+  loops:['loops'],
   flare:['flare'],
   cme:['cme'],
   prominence:['prominence','filament'],
-  spots:['spots'],
+  corona:['corona'],
   cycle:['cycleMaximum','cycleMinimum']
 };
 
@@ -84,6 +92,10 @@ function discoveryFor(type,contentKey){
   if (type === 'flare') return {family:'flare',views:['flare']};
   if (type === 'cme') return {family:'cme',views:['cme']};
   if (type === 'spots') return {family:'spots',views:['spots']};
+  // PR-8: famílias de vista única — o tipo do emissor É a família.
+  if (type === 'surface') return {family:'surface',views:['surface']};
+  if (type === 'loops') return {family:'loops',views:['loops']};
+  if (type === 'corona') return {family:'corona',views:['corona']};
   if (type === 'cycleMaximum') return {family:'cycle',views:['cycleMaximum']};
   if (type === 'cycleMinimum') return {family:'cycle',views:['cycleMinimum']};
   if (type === 'cycle'){
@@ -101,6 +113,9 @@ function discoveryFor(type,contentKey){
   if (key === 'flare') return {family:'flare',views:['flare']};
   if (key === 'cme') return {family:'cme',views:['cme']};
   if (key === 'spots') return {family:'spots',views:['spots']};
+  if (key === 'surface') return {family:'surface',views:['surface']};
+  if (key === 'loops') return {family:'loops',views:['loops']};
+  if (key === 'corona') return {family:'corona',views:['corona']};
   if (key === 'cycleMaximum') return {family:'cycle',views:['cycleMaximum']};
   if (key === 'cycleMinimum') return {family:'cycle',views:['cycleMinimum']};
   if (key === 'prominence' || key === 'filament' || key === 'prominenceFilament'){

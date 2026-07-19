@@ -13,6 +13,7 @@ function check(name,ok,detail){if(!ok)fails++;console.log((ok?'PASS  ':'FAIL  ')
 function overlap(a,b){return a.x<b.x+b.width&&a.x+a.width>b.x&&a.y<b.y+b.height&&a.y+a.height>b.y;}
 function segmentDistance(px,py,x1,y1,x2,y2){const dx=x2-x1,dy=y2-y1,d=dx*dx+dy*dy;if(d<.01)return Math.hypot(px-x1,py-y1);const t=Math.max(0,Math.min(1,((px-x1)*dx+(py-y1)*dy)/d));return Math.hypot(px-(x1+t*dx),py-(y1+t*dy));}
 async function frame(page){await page.evaluate(()=>new Promise((resolve)=>requestAnimationFrame(()=>resolve())));}
+async function frames(page,n){for(let i=0;i<n;i++)await frame(page);}
 async function waitForLabelSettled(page){
   await page.waitForFunction(()=>{
     const item=window.__solInfo.eduInfo().active[0],label=document.querySelector('#edu .edu-label');
@@ -473,6 +474,178 @@ async function layoutState(page){
   const spotsCollection=await spotsPage.evaluate(()=>window.__solInfo.eduCollectionInfo());
   check('coleção registra o grupo de manchas observado',!!spots&&spotsCollection.items.spots.seen);
   await spotsPage.close();
+
+  // ————— PR-8 · Onda 1: loops coronais espontâneos —————
+  // O cartão nasce de uma linha de campo REALMENTE traçada (loopStatesA.ok,
+  // via fonte única phenomena.loops) com o knob no DEFAULT do museu — a
+  // página não pina `loops`. halo/ray/spots/fprom/cme/cycle ficam fora da
+  // disputa para a prova isolar o emissor novo.
+  const loopsPage=await browser.newPage({viewport:{width:960,height:600},deviceScaleFactor:1});
+  loopsPage.setDefaultTimeout(300000);
+  loopsPage.on('pageerror',(e)=>errors.push('[loops] '+e.message));
+  loopsPage.on('console',(m)=>{if(m.type()==='error')errors.push('[loops] '+m.text());});
+  await loopsPage.goto(base+'?edu=0&lang=pt&tier=high&scale=0.25&speed=0.05&cycle=0&spots=0&fprom=0&cme=0&halo=0&ray=0&intro=0');
+  await loopsPage.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduLoopAnchor);
+  const loopsDefault=await loopsPage.evaluate(()=>{
+    window.__solInfo.setRotSpeed(0);
+    for(let j=0;j<window.__solInfo.promLife().length;j++)window.__solInfo.setPromLife(j,.01);
+    return window.__solInfo.controls('loops');
+  });
+  check('loops chegam LIGADOS por default (museu)',loopsDefault.nominal===0.55&&loopsDefault.source==='default',JSON.stringify({nominal:loopsDefault.nominal,source:loopsDefault.source}));
+  // espera o traçador publicar uma linha real; a âncora educativa é a MESMA
+  // semente do traçado que o emissor usa (fonte única).
+  await loopsPage.waitForFunction(()=>window.__solInfo.loopInfo().amb>0,null,{timeout:300000});
+  await loopsPage.waitForFunction(()=>!!window.__solInfo.eduLoopAnchor(),null,{timeout:120000});
+  await loopsPage.evaluate(()=>{
+    const a=window.__solInfo.eduLoopAnchor(),state=window.__solInfo.state();
+    // salto de fase do QA (hook existente): o arco recém-nascido pula para o
+    // platô do envelope — a prova não espera minutos de relógio simulado.
+    window.__solInfo.setLoopLife(a.slot,.3);
+    // mesma conversão de forceVisible: dir é local ao Sol, a âncora aplica rotY.
+    window.__solInfo.setView(Math.atan2(a.dir[2],a.dir[0])-state.rotY,Math.acos(Math.max(-1,Math.min(1,a.dir[1]))),state.fitDist*1.3);
+  });
+  await frame(loopsPage);await frame(loopsPage);
+  await loopsPage.evaluate(()=>window.__solInfo.setControl('edu',1,{persist:false}));
+  await loopsPage.waitForFunction(()=>{const i=window.__solInfo.eduInfo().active[0];return !!(i&&i.type==='loops'&&i.visible);},null,{timeout:180000});
+  await waitForLabelSettled(loopsPage);
+  const loopsState=await loopsPage.evaluate(()=>({info:window.__solInfo.eduInfo(),anchor:window.__solInfo.eduLoopAnchor(),loop:window.__solInfo.loopInfo(),
+    collection:window.__solInfo.eduCollectionInfo(),text:document.querySelector('.edu-label').textContent,viewport:{w:innerWidth,h:innerHeight}}));
+  const loopsItem=loopsState.info.active[0];
+  const loopsOnScreen=!!(loopsItem&&loopsItem.anchor&&loopsItem.anchor.x>=0&&loopsItem.anchor.x<=loopsState.viewport.w&&loopsItem.anchor.y>=0&&loopsItem.anchor.y<=loopsState.viewport.h);
+  check('loops coronais: cartão espontâneo nasce de linha de campo real com âncora na tela',
+    !!loopsItem&&loopsItem.type==='loops'&&loopsItem.visible&&loopsItem.haloVisible&&loopsOnScreen&&loopsState.loop.amb>0&&/Loops coronais/.test(loopsState.text),
+    JSON.stringify({amb:loopsState.loop.amb,anchor:loopsItem&&loopsItem.anchor,halo:loopsItem&&loopsItem.haloVisible}));
+  check('loops coronais: coleção registra a família nova',loopsState.collection.items.loops.seen&&loopsState.collection.items.loops.views.loops===true);
+  const loopsEnglish=await loopsPage.evaluate(()=>{window.__solInfo.setLang('en');return document.querySelector('.edu-label').textContent;});
+  check('loops coronais trocam para inglês',/Coronal loops/.test(loopsEnglish));
+  // uma explicação por sessão: religar a experiência não repete o cartão
+  // nem duplica a coleção (idempotência do store).
+  await loopsPage.evaluate(()=>{window.__solInfo.setControl('edu',0,{persist:false});window.__solInfo.setControl('edu',1,{persist:false});});
+  await frames(loopsPage,3);
+  const loopsReplay=await loopsPage.evaluate(()=>({info:window.__solInfo.eduInfo(),collection:window.__solInfo.eduCollectionInfo()}));
+  check('loops coronais: uma explicação por sessão, sem duplicar coleção',
+    !loopsReplay.info.active.some((x)=>x.type==='loops')&&loopsReplay.collection.items.loops.discoveredViews===1);
+  await loopsPage.close();
+
+  // Controle NEGATIVO: com ?loops=0 nenhuma linha é traçada — sem sinal
+  // físico não existe âncora, cartão nem item de coleção.
+  const loopsOff=await browser.newPage({viewport:{width:960,height:600},deviceScaleFactor:1});
+  loopsOff.setDefaultTimeout(240000);
+  loopsOff.on('pageerror',(e)=>errors.push('[loops-neg] '+e.message));
+  loopsOff.on('console',(m)=>{if(m.type()==='error')errors.push('[loops-neg] '+m.text());});
+  await loopsOff.goto(base+'?edu=1&lang=pt&tier=high&scale=0.25&speed=0.05&cycle=0&spots=0&fprom=0&cme=0&halo=0&ray=0&loops=0&intro=0');
+  await loopsOff.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduLoopAnchor);
+  await loopsOff.evaluate(()=>{window.__solInfo.setRotSpeed(0);for(let j=0;j<window.__solInfo.promLife().length;j++)window.__solInfo.setPromLife(j,.01);});
+  await frames(loopsOff,30);
+  const loopsNeg=await loopsOff.evaluate(()=>({loop:window.__solInfo.loopInfo(),anchor:window.__solInfo.eduLoopAnchor(),info:window.__solInfo.eduInfo(),collection:window.__solInfo.eduCollectionInfo()}));
+  check('loops=0 nunca emite: sem linha traçada, sem âncora, sem cartão, sem coleção',
+    loopsNeg.loop.amb===0&&loopsNeg.anchor===null&&loopsNeg.info.enabled&&!loopsNeg.info.active.some((x)=>x.type==='loops')&&!loopsNeg.collection.items.loops.seen,
+    JSON.stringify({amb:loopsNeg.loop.amb,anchor:loopsNeg.anchor,active:loopsNeg.info.active.map((x)=>x.type)}));
+  await loopsOff.close();
+
+  // ————— PR-8 · Onda 1: coroa espontânea (cartão GLOBAL) —————
+  // halo/ray ficam nos DEFAULTS (0.55/0.9 — fótons reais no anel); tudo o
+  // mais sai da disputa. O cartão só nasce após >8s CONTÍNUOS de fótons
+  // (relógio branco: __solInfo.eduCoronaState) e sem âncora/halo/linha.
+  const coronaPage=await browser.newPage({viewport:{width:960,height:600},deviceScaleFactor:1});
+  coronaPage.setDefaultTimeout(300000);
+  coronaPage.on('pageerror',(e)=>errors.push('[corona-edu] '+e.message));
+  coronaPage.on('console',(m)=>{if(m.type()==='error')errors.push('[corona-edu] '+m.text());});
+  await coronaPage.goto(base+'?edu=1&lang=pt&tier=high&scale=0.25&speed=0.05&cycle=0&spots=0&fprom=0&cme=0&loops=0&intro=0');
+  await coronaPage.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduCoronaState);
+  const coronaEarly=await coronaPage.evaluate(()=>{
+    window.__solInfo.setRotSpeed(0);
+    for(let j=0;j<window.__solInfo.promLife().length;j++)window.__solInfo.setPromLife(j,.01);
+    return {state:window.__solInfo.eduCoronaState(),active:window.__solInfo.eduInfo().active.map((x)=>x.type)};
+  });
+  // A janela é respeitada: com o relógio ainda abaixo de 8s não pode haver
+  // cartão de coroa (se a página demorou e t já passou de 8, o check vale).
+  check('coroa: fótons presentes por default e janela de 8s respeitada',
+    coronaEarly.state.photons&&(coronaEarly.state.t>=8||coronaEarly.active.indexOf('corona')===-1),
+    JSON.stringify(coronaEarly));
+  await coronaPage.waitForFunction(()=>{const i=window.__solInfo.eduInfo().active[0];return !!(i&&i.type==='corona'&&i.global&&i.visible);},null,{timeout:300000});
+  const coronaState=await coronaPage.evaluate(()=>({info:window.__solInfo.eduInfo(),state:window.__solInfo.eduCoronaState(),
+    collection:window.__solInfo.eduCollectionInfo(),text:document.querySelector('.edu-label').textContent}));
+  const coronaItem=coronaState.info.active[0];
+  check('coroa: cartão global após >8s de fótons, sem âncora/halo/linha',
+    !!coronaItem&&coronaItem.type==='corona'&&coronaItem.global&&coronaItem.anchor===null&&coronaItem.lineEnd===null&&!coronaItem.haloVisible&&!coronaItem.connectorVisible&&
+    coronaState.state.t>8&&coronaState.state.explained&&/Coroa e streamers/.test(coronaState.text),
+    JSON.stringify({t:coronaState.state.t,global:coronaItem&&coronaItem.global,text:coronaState.text.slice(0,60)}));
+  check('coroa: coleção registra a família nova',coronaState.collection.items.corona.seen&&coronaState.collection.items.corona.views.corona===true);
+  const coronaEnglish=await coronaPage.evaluate(()=>{window.__solInfo.setLang('en');return document.querySelector('.edu-label').textContent;});
+  check('coroa troca para inglês',/Corona and streamers/.test(coronaEnglish));
+  await coronaPage.evaluate(()=>{window.__solInfo.setControl('edu',0,{persist:false});window.__solInfo.setControl('edu',1,{persist:false});});
+  await frames(coronaPage,3);
+  const coronaReplay=await coronaPage.evaluate(()=>({info:window.__solInfo.eduInfo(),collection:window.__solInfo.eduCollectionInfo()}));
+  check('coroa: uma explicação por sessão, sem duplicar coleção',
+    !coronaReplay.info.active.some((x)=>x.type==='corona')&&coronaReplay.collection.items.corona.discoveredViews===1);
+  await coronaPage.close();
+
+  // Controle NEGATIVO: halo=0&ray=0 apaga os fótons do anel — o relógio de
+  // 8s nunca inicia e o cartão nunca nasce.
+  const coronaOff=await browser.newPage({viewport:{width:960,height:600},deviceScaleFactor:1});
+  coronaOff.setDefaultTimeout(240000);
+  coronaOff.on('pageerror',(e)=>errors.push('[corona-neg] '+e.message));
+  coronaOff.on('console',(m)=>{if(m.type()==='error')errors.push('[corona-neg] '+m.text());});
+  await coronaOff.goto(base+'?edu=1&lang=pt&tier=high&scale=0.25&speed=0.05&cycle=0&spots=0&fprom=0&cme=0&loops=0&halo=0&ray=0&intro=0');
+  await coronaOff.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduCoronaState);
+  await coronaOff.evaluate(()=>{window.__solInfo.setRotSpeed(0);for(let j=0;j<window.__solInfo.promLife().length;j++)window.__solInfo.setPromLife(j,.01);});
+  await frames(coronaOff,30);
+  const coronaNeg=await coronaOff.evaluate(()=>({state:window.__solInfo.eduCoronaState(),info:window.__solInfo.eduInfo(),collection:window.__solInfo.eduCollectionInfo()}));
+  check('halo=0&ray=0 nunca emite coroa: sem fótons o relógio não anda',
+    !coronaNeg.state.photons&&coronaNeg.state.t===0&&!coronaNeg.state.explained&&coronaNeg.info.enabled&&
+    !coronaNeg.info.active.some((x)=>x.type==='corona')&&!coronaNeg.collection.items.corona.seen,
+    JSON.stringify(coronaNeg.state));
+  await coronaOff.close();
+
+  // ————— PR-8 · surface via visita + painel "de 8" —————
+  // Caminhada mínima (chip → etapa 1 → next → exit) num contexto virgem:
+  // a etapa surface grava a família 'surface' (source.physical), repetir a
+  // visita não duplica, e o painel da coleção mostra as 8 famílias.
+  const surfaceContext=await browser.newContext({viewport:{width:960,height:600},deviceScaleFactor:1});
+  const surfacePage=await surfaceContext.newPage();
+  surfacePage.setDefaultTimeout(240000);
+  surfacePage.on('pageerror',(e)=>errors.push('[surface] '+e.message));
+  surfacePage.on('console',(m)=>{if(m.type()==='error')errors.push('[surface] '+m.text());});
+  await surfacePage.goto(base+'?edu=0&lang=pt&tier=low&scale=0.25&speed=0.05&cycle=0&spots=0&fprom=0&cme=0&intro=0');
+  await surfacePage.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduTourInfo&&window.__solInfo.eduCollectionInfo);
+  const surfaceStart=await surfacePage.evaluate(()=>window.__solInfo.eduCollectionInfo());
+  await surfacePage.click('#eduTourChip');
+  await surfacePage.waitForFunction(()=>{const t=window.__solInfo.eduTourInfo();return t.active&&t.stepId==='surface'&&t.phase==='reading';});
+  const surfaceReading=await surfacePage.evaluate(()=>({tour:window.__solInfo.eduTourInfo(),collection:window.__solInfo.eduCollectionInfo()}));
+  await surfacePage.click('#eduTourNext');
+  await surfacePage.waitForFunction(()=>window.__solInfo.eduTourInfo().index===1);
+  await surfacePage.click('#eduTourExit');
+  await surfacePage.waitForFunction(()=>!window.__solInfo.eduTourInfo().active);
+  const surfaceAfter=await surfacePage.evaluate(()=>window.__solInfo.eduCollectionInfo());
+  check('visita mínima grava a fotosfera na coleção',
+    surfaceStart.discoveredFamilies===0&&surfaceReading.tour.source.physical&&surfaceReading.collection.items.surface.seen&&
+    surfaceAfter.items.surface.seen&&surfaceAfter.items.surface.discoveredViews===1,
+    JSON.stringify({start:surfaceStart.discoveredFamilies,physical:surfaceReading.tour.source.physical,after:surfaceAfter.items.surface}));
+  // repetir a caminhada não duplica a vista gravada
+  await surfacePage.evaluate(()=>window.__solInfo.eduTourStart());
+  await surfacePage.waitForFunction(()=>{const t=window.__solInfo.eduTourInfo();return t.active&&t.stepId==='surface'&&t.phase==='reading';});
+  await surfacePage.evaluate(()=>window.__solInfo.eduTourExit());
+  await surfacePage.waitForFunction(()=>!window.__solInfo.eduTourInfo().active);
+  const surfaceRepeat=await surfacePage.evaluate(()=>window.__solInfo.eduCollectionInfo());
+  check('repetir a visita não duplica a coleção',surfaceRepeat.items.surface.discoveredViews===1&&surfaceRepeat.totalFamilies===8);
+  // painel: "N de 8", ordem narrativa e as três famílias novas na lista
+  await surfacePage.click('#knobBtn');await surfacePage.waitForTimeout(650);
+  await surfacePage.click('#eduCollectionToggle');
+  const surfacePanel=await surfacePage.evaluate(()=>{
+    const info=window.__solInfo.eduCollectionInfo();
+    const row=(id)=>{const e=document.querySelector('#eduCollectionItem-'+id);return e?{present:true,disabled:e.disabled,title:e.querySelector('.collectionItemTitle').textContent}:{present:false};};
+    return {toggle:document.querySelector('#eduCollectionToggle').textContent,order:info.order.join(','),total:info.totalFamilies,
+      surface:row('surface'),loops:row('loops'),corona:row('corona')};
+  });
+  check('painel da coleção mostra "de 8" com as famílias novas listadas',
+    / de 8 /.test(surfacePanel.toggle)&&surfacePanel.total===8&&
+    surfacePanel.order==='surface,spots,loops,flare,cme,prominence,corona,cycle'&&
+    surfacePanel.surface.present&&!surfacePanel.surface.disabled&&/Fotosfera e granulação/.test(surfacePanel.surface.title)&&
+    surfacePanel.loops.present&&surfacePanel.loops.disabled&&/Loops coronais/.test(surfacePanel.loops.title)&&
+    surfacePanel.corona.present&&surfacePanel.corona.disabled&&/Coroa e streamers/.test(surfacePanel.corona.title),
+    JSON.stringify(surfacePanel));
+  await surfaceContext.close();
 
   // Máximo e mínimo pertencem à mesma coleção local; usamos explicitamente
   // o mesmo contexto de navegador para provar que as duas vistas coexistem.

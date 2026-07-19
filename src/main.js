@@ -342,6 +342,8 @@ function init(){
   ctx.camDirN = camDirN;
   var promNormal = new THREE.Vector3();
   var promWorldTmp = new THREE.Vector3();
+  // PR-8: scratch do emissor de loops (facing do arco mais forte)
+  var eduLoopWorldTmp = new THREE.Vector3();
   var camRightTmp = new THREE.Vector3();
   var camUpTmp = new THREE.Vector3();
   // PR9 — scratch p/ montar a rotação do Sol a partir da quaternion fresca
@@ -832,6 +834,38 @@ function init(){
           break;
         }
       }
+    }
+    // Museu Solar (PR-8) — loops coronais: a descoberta espontânea nasce de
+    // uma linha de campo REALMENTE traçada (fonte única: phenomena.loops.best
+    // só devolve slot ok com envelope aceso — camada ligada e desenhada) e só
+    // quando o arco mais forte está no hemisfério visível. Uma explicação por
+    // sessão (mesmo latch de manchas); loops não têm geração — o conceito é
+    // um só e a coleção persistente permite reler. Prioridade 60 no edu.js:
+    // nunca disputa com flare/CME em leitura.
+    if (!DET && ctx.EDU_K > .5 && !ctx.eduLoopsExplained && ctx.LOOP_K > PHEN_T.LOOP_KNOB_MIN){
+      var eduLoop = ctx.phenomena.loops.best();
+      if (eduLoop && eduLoop.env > PHEN_T.LOOP_EMIT_ENV_MIN){
+        var eduLoopFacing = eduLoopWorldTmp.set(eduLoop.dir[0],eduLoop.dir[1],eduLoop.dir[2])
+          .applyQuaternion(sunMesh.quaternion).dot(camDirN);
+        // Hemisfério visível: o teste fino de horizonte/projeção fica no
+        // startEvent do edu.js — falhou lá, tenta de novo no próximo frame.
+        if (eduLoopFacing > 0 &&
+            ctx.eduEvent('loops',eduLoop.dir[0],eduLoop.dir[1],eduLoop.dir[2],eduLoop.env,eduLoop.slot,-1))
+          ctx.eduLoopsExplained = true;
+      }
+    }
+    // Museu Solar (PR-8) — coroa: cartão GLOBAL (o fenômeno envolve o disco
+    // inteiro — sem âncora nem halo, como máximo/mínimo). Só depois de >8s
+    // CONTÍNUOS de fótons reais no anel (phenomena.corona.photons — o gate do
+    // PR-6) e uma vez por sessão. Prioridade 55: a arbitragem do edu.js
+    // recusa enquanto qualquer outro cartão está em leitura e o emissor
+    // simplesmente tenta de novo no frame seguinte, sem fila.
+    if (!DET && ctx.EDU_K > .5 && !ctx.eduCoronaExplained){
+      if (ctx.phenomena.corona.photons()){
+        ctx.eduCoronaPhotonT = (ctx.eduCoronaPhotonT || 0) + rawDelta;
+        if (ctx.eduCoronaPhotonT > 8 && ctx.eduEvent('corona',0,0,0,1,-1))
+          ctx.eduCoronaExplained = true;
+      } else ctx.eduCoronaPhotonT = 0;
     }
     // PR-2: mesma blindagem — a descoberta espontânea nunca derruba a cena.
     if (ctx.eduTick){

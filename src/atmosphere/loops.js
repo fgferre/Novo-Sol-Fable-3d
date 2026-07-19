@@ -490,7 +490,11 @@ export function createLoops(ctx){
   var loopStatesA = [];
   (function initLoopStates(){
     for (var i = 0; i < LOOP_AMB; i++){
-      loopStatesA.push({ age: 0, period: 34 + loopRand()*36, ok: false });
+      // PR-8: `dir` = semente REAL do último traçado publicado no slot
+      // (espaço do objeto, normalizada) — atualizada JUNTO do writeLoopSlot,
+      // então sempre corresponde à geometria em cena. É o sinal que
+      // sim/phenomena.js expõe para a descoberta espontânea de loops.
+      loopStatesA.push({ age: 0, period: 34 + loopRand()*36, ok: false, dir: [0, 0, 1] });
     }
   })();
   var loopSeedOut = new THREE.Vector3();
@@ -533,6 +537,9 @@ export function createLoops(ctx){
       writeLoopSlot(job.slot, nP);
       var st = loopStatesA[job.slot];
       st.ok = true; st.age = 0; st.period = 34 + loopRand()*36;
+      // PR-8: a âncora educativa segue a MESMA publicação da geometria — um
+      // retraço que falha preserva dir antiga junto com o arco antigo em cena.
+      st.dir[0] = job.cx; st.dir[1] = job.cy; st.dir[2] = job.cz;
       endAmbientJob();
       return 'trace';
     }

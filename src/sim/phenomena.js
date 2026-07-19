@@ -53,6 +53,10 @@ export var PHEN_T = {
   // -- loops coronais ------------------------------------------------------
   LOOP_KNOB_MIN: .01,         // tour.js: knob de loops efetivamente ligado
   LOOP_ARC_ENV_MIN: .004,     // envelope mínimo p/ contar arco pós-flare vivo
+  // PR-8 (NOVO, não herdado — nasce já nomeado): brilho mínimo do loop mais
+  // forte p/ a descoberta espontânea. Um arco recém-nascido ou quase apagado
+  // não sustenta um cartão de museu ("nada prometido que não está na tela").
+  LOOP_EMIT_ENV_MIN: .06,
   // -- ciclo de 11 anos ----------------------------------------------------
   CYCLE_PHASE_WIN: .04,       // janela de fase em torno do máximo/mínimo
   CYCLE_MAX_AMP: 1.12,        // amplitude mínima p/ "máximo solar"
@@ -148,6 +152,21 @@ export function createPhenomena(ctx){
         for (i = 0; i < ctx.LOOP_ARC; i++)
           if (ctx.arcStates[i].ok && ctx.loopEnvArr[ctx.LOOP_AMB + i] > PHEN_T.LOOP_ARC_ENV_MIN) arc++;
         return { amb: amb, arc: arc };
+      },
+      // PR-8 — âncora observável do emissor espontâneo: o loop ambiente ok de
+      // maior envelope corrente. `dir` é a SEMENTE real do traçado (nasce em
+      // atmosphere/loops.js no sucesso do RK4 — sinal novo no módulo dono,
+      // exposto aqui), espaço do objeto (consumidor aplica a quaternion do
+      // Sol). env>0 implica camada ligada e desenhada (updateLoops zera os
+      // envelopes ambientes com loops desligados) — best() nunca aponta para
+      // um arco que não está na tela.
+      best: function(){
+        var bi = -1, be = 0;
+        for (var i = 0; i < ctx.LOOP_AMB; i++){
+          var st = ctx.loopStatesA[i];
+          if (st.ok && ctx.loopEnvArr[i] > be){ be = ctx.loopEnvArr[i]; bi = i; }
+        }
+        return bi < 0 ? null : { slot: bi, env: be, dir: ctx.loopStatesA[bi].dir };
       }
     },
     corona: {

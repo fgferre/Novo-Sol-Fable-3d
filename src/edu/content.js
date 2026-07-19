@@ -38,6 +38,24 @@ export const EDU_CONTENT = {
       term: 'Grupo de manchas solares',
       body: 'Campos magnéticos fortes reduzem a chegada de calor à superfície. As manchas parecem escuras só porque o entorno é ainda mais brilhante.'
     },
+    // PR-8 (Série Museu) — versões de DESCOBERTA espontânea das famílias que
+    // a visita já narra: mesma essência, tom do momento em que a pessoa
+    // encontra o fenômeno sozinha (o painel da coleção também lê estas chaves).
+    surface: {
+      headline: 'A CAMADA QUE ENXERGAMOS',
+      term: 'Fotosfera e granulação',
+      body: 'De perto, a “superfície” do Sol fervilha em grãos de gás quente. Cada grão claro é calor subindo; nas bordas escuras, o gás esfria e desce.'
+    },
+    loops: {
+      headline: 'ARQUITETURA MAGNÉTICA',
+      term: 'Loops coronais',
+      body: 'Esses arcos brilhantes são plasma quente preso a linhas de campo magnético. Eles ligam os dois lados de uma região ativa, acima da superfície.'
+    },
+    corona: {
+      headline: 'A ATMOSFERA EXTERNA',
+      term: 'Coroa e streamers',
+      body: 'O brilho suave ao redor do disco é a coroa, a atmosfera quente e rarefeita do Sol. Os streamers mostram o campo magnético moldando esse plasma.'
+    },
     cycleMaximum: {
       headline: 'PICO DE ATIVIDADE',
       term: 'Máximo solar',
@@ -156,6 +174,22 @@ export const EDU_CONTENT = {
       headline: 'AN ACTIVE MAGNETIC REGION',
       term: 'Sunspot group',
       body: 'Strong magnetic fields reduce the heat reaching the surface. The spots look dark only because the surrounding surface is even brighter.'
+    },
+    // PR-8 (Série Museu) — spontaneous-discovery versions (see PT note).
+    surface: {
+      headline: 'THE LAYER WE SEE',
+      term: 'Photosphere and granulation',
+      body: 'Up close, the Sun’s “surface” simmers with grains of hot gas. Each bright grain is heat rising; along the dark edges, cooler gas sinks down.'
+    },
+    loops: {
+      headline: 'MAGNETIC ARCHITECTURE',
+      term: 'Coronal loops',
+      body: 'These bright arcs are hot plasma held along magnetic field lines. They link the two sides of an active region, above the surface.'
+    },
+    corona: {
+      headline: 'THE OUTER ATMOSPHERE',
+      term: 'Corona and streamers',
+      body: 'The soft glow around the disk is the corona, the Sun’s hot, rarefied outer atmosphere. Streamers show magnetic fields shaping that plasma.'
     },
     cycleMaximum: {
       headline: 'ACTIVITY AT ITS PEAK',

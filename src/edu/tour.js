@@ -341,11 +341,17 @@ export function createEduTour(ctx){
   function record(){
     if(state.recorded||!state.source.physical||!ctx.recordEduDiscovery)return;
     var id=current().id;
-    if(id==='active-region')ctx.recordEduDiscovery('spots','spots');
+    // PR-8: surface/loops/corona também são colecionáveis — a visita grava
+    // as mesmas famílias da exploração livre, sempre gated por
+    // source.physical (a sala indisponível/honesta nunca vira item).
+    if(id==='surface')ctx.recordEduDiscovery('surface','surface');
+    else if(id==='active-region')ctx.recordEduDiscovery('spots','spots');
+    else if(id==='loops')ctx.recordEduDiscovery('loops','loops');
     else if(id==='flare')ctx.recordEduDiscovery('flare','flare');
     else if(id==='cme')ctx.recordEduDiscovery('cme','cme');
     else if(id==='filament')ctx.recordEduDiscovery('prominence','filament');
     else if(id==='prominence')ctx.recordEduDiscovery('prominence','prominence');
+    else if(id==='corona')ctx.recordEduDiscovery('corona','corona');
     else if(id==='maximum')ctx.recordEduDiscovery('cycleMaximum','cycleMaximum');
     else if(id==='minimum')ctx.recordEduDiscovery('cycleMinimum','cycleMinimum');
     state.recorded=true;

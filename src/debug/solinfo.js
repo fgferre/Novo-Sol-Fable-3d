@@ -264,6 +264,17 @@ export function createSolInfo(ctx){
         return { sourceId:r.sourceId, generation:r.generation,
           dir:r.dir, strength:r.strength };
       };
+      // PR-8 — adaptadores de QA dos emissores da Onda 1, na fonte única:
+      // a MESMA âncora do loop mais forte que o emissor espontâneo usa
+      // (null sem linha traçada), e o estado do relógio de fótons da coroa.
+      window.__solInfo.eduLoopAnchor = function(){
+        return ctx.phenomena.loops.best();
+      };
+      window.__solInfo.eduCoronaState = function(){
+        return { photons: ctx.phenomena.corona.photons(),
+                 t: ctx.eduCoronaPhotonT || 0,
+                 explained: !!ctx.eduCoronaExplained };
+      };
       // FASE 3 — QA do ciclo de 11 anos: fase/índice/sinais correntes...
       window.__solInfo.cycleInfo = function(){
         var mul=cycleMultiplier();

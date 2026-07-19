@@ -3,10 +3,25 @@
 // linha curta de estado sem tomar o lugar do controle.
 
 import { EDU_CONTENT } from '../edu/content.js';
+import { PANEL_STRINGS, CONTROL_LABELS_EN } from './strings.js';
 
 export function createPanel(ctx){
   var hudEl = ctx.hudEl, TIER = ctx.TIER, TIER_ORDER = ctx.TIER_ORDER;
   var defs = ctx.CONTROL_SCHEMA.filter(function(d){ return !d.hidden; });
+
+  // PR-11 — i18n completo do painel: TODA string visível passa pelo
+  // resolvedor de idioma. Cada texto registra um aplicador em i18nApply;
+  // trocar de idioma re-executa todos (re-render ao vivo, sem recriar DOM
+  // nem perder estado de switches/sliders). O idioma vem de ctx.eduLang
+  // (resolvido no config: URL > storage > navegador) — sob ?det o default
+  // continua PT e nada muda.
+  function panelLang(){ return ctx.eduLang === 'en' ? 'en' : 'pt'; }
+  function S(){ return PANEL_STRINGS[panelLang()]; }
+  function controlLabel(d){
+    return panelLang() === 'en' ? (CONTROL_LABELS_EN[d.key] || d.label) : d.label;
+  }
+  var i18nApply = [];
+  function reg(apply){ i18nApply.push(apply); apply(); }
 
   var css = document.createElement('style');
   css.textContent = [
@@ -104,18 +119,26 @@ export function createPanel(ctx){
   panel.setAttribute('role','dialog'); panel.setAttribute('aria-modal','false');
   panel.setAttribute('aria-hidden','true'); panel.tabIndex=-1;
   panel.inert = true;
-  var head = document.createElement('h2'); head.id='knobPanelTitle';head.textContent = 'Ajustes';
+  var head = document.createElement('h2'); head.id='knobPanelTitle';
   panel.setAttribute('aria-labelledby',head.id);
   var sub = document.createElement('p'); sub.className = 'sub';
-  sub.textContent = 'cena, luz e câmera · salvo neste aparelho';
+  reg(function(){ head.textContent = S().title; sub.textContent = S().subtitle; });
+  // O painel declara o próprio lang: as leituras de acessibilidade seguem o
+  // idioma renderizado mesmo quando o lang do documento (edu.js) diverge.
+  reg(function(){ panel.setAttribute('lang', panelLang()==='en'?'en':'pt-BR'); });
   panel.appendChild(head); panel.appendChild(sub);
 
   if(!ctx.DET){
-    var eduSec=document.createElement('div'); eduSec.className='sec'; eduSec.textContent='experiência'; panel.appendChild(eduSec);
+    var eduSec=document.createElement('div'); eduSec.className='sec'; panel.appendChild(eduSec);
     var eduRow=document.createElement('div'); eduRow.className='switch'; eduRow.id='eduSwitchRow';
-    var eduLabel=document.createElement('span'); eduLabel.textContent='Descobertas educativas';
+    var eduLabel=document.createElement('span');
     var eduSwitch=document.createElement('button'); eduSwitch.className='sw'; eduSwitch.type='button';
-    eduSwitch.setAttribute('role','switch'); eduSwitch.setAttribute('aria-label','Descobertas educativas');
+    eduSwitch.setAttribute('role','switch');
+    reg(function(){
+      eduSec.textContent=S().sections['experiência'];
+      eduLabel.textContent=S().eduSwitch;
+      eduSwitch.setAttribute('aria-label',S().eduSwitch);
+    });
     function syncEdu(on){ eduSwitch.classList.toggle('on',!!on); eduSwitch.setAttribute('aria-checked',String(!!on)); }
     syncEdu(ctx.getControl('edu')>.5);
     eduSwitch.addEventListener('click',function(){ ctx.setControl('edu',ctx.getControl('edu')>.5?0:1); });
@@ -126,10 +149,10 @@ export function createPanel(ctx){
     // junto da camada educativa, antes de idioma/coleção, para ser achada
     // por quem chega pelo celular sem precisar entender os sliders.
     var tourButton=document.createElement('button');tourButton.type='button';tourButton.id='eduTourBtn';
-    tourButton.textContent='começar visita guiada';tourButton.setAttribute('aria-pressed','false');
+    tourButton.setAttribute('aria-pressed','false');
     function syncTour(info){
-      var active=!!(info&&info.active),en=ctx.eduLang==='en';
-      tourButton.textContent=en?(active?'guided visit in progress':'start guided visit'):(active?'visita guiada em andamento':'começar visita guiada');
+      var active=!!(info&&info.active);
+      tourButton.textContent=active?S().tourActive:S().tourStart;
       tourButton.setAttribute('aria-pressed',String(active));
     }
     tourButton.addEventListener('click',function(){
@@ -140,9 +163,13 @@ export function createPanel(ctx){
     ctx.onEduTourChange=syncTour;syncTour(ctx.eduTourInfo&&ctx.eduTourInfo());panel.appendChild(tourButton);
 
     var langRow=document.createElement('div'); langRow.className='choice'; langRow.id='eduLangRow';
-    var langLabel=document.createElement('span'); langLabel.textContent='Idioma / Language';
+    var langLabel=document.createElement('span');
     var langChoices=document.createElement('div'); langChoices.className='choiceBtns';
-    langChoices.setAttribute('role','group');langChoices.setAttribute('aria-label','Idioma da experiência educativa');
+    langChoices.setAttribute('role','group');
+    reg(function(){
+      langLabel.textContent=S().langLabel;
+      langChoices.setAttribute('aria-label',S().langGroupAria);
+    });
     var langButtons={};
     ['pt','en'].forEach(function(code){
       var button=document.createElement('button');button.type='button';button.dataset.lang=code;
@@ -179,11 +206,9 @@ export function createPanel(ctx){
       var readerBody=document.createElement('div'); readerBody.className='collectionDetailBody';
       collectionReader.appendChild(readerHead);collectionReader.appendChild(readerTerm);collectionReader.appendChild(readerBody);
       var collectionClear=document.createElement('button'); collectionClear.type='button'; collectionClear.id='eduCollectionClear'; collectionClear.className='collectionClear';
-      function collectionText(){
-        var en=ctx.eduLang==='en';
-        return en ? {section:'collection',open:'Collection',of:'of',observed:'observed',notSeen:'Not observed yet',views:'views seen',clear:'Clear observed discoveries',confirm:'Clear the discoveries observed on this device? This cannot be undone.'} :
-          {section:'coleção',open:'Coleção',of:'de',observed:'observadas',notSeen:'Ainda não observada',views:'vistas observadas',clear:'Limpar descobertas observadas',confirm:'Limpar as descobertas observadas neste aparelho? Esta ação não pode ser desfeita.'};
-      }
+      // PR-11: contador/aria/confirm da coleção vivem em PANEL_STRINGS
+      // (chrome do painel); o CONTEÚDO das descobertas segue em EDU_CONTENT.
+      function collectionText(){ return S().collection; }
       function collectionContentKey(id,item){
         if(id==='prominence') return item.views.filament && item.views.prominence ? 'prominenceFilament' : item.views.filament ? 'filament' : 'prominence';
         if(id==='cycle') return item.views.cycleMaximum && item.views.cycleMinimum ? 'cycle' : item.views.cycleMaximum ? 'cycleMaximum' : 'cycleMinimum';
@@ -242,12 +267,16 @@ export function createPanel(ctx){
   defs.forEach(function(d){
     if (d.section !== lastSection){
       lastSection = d.section;
-      var sec = document.createElement('div'); sec.className = 'sec'; sec.textContent = lastSection;
+      var sec = document.createElement('div'); sec.className = 'sec';
+      (function(sectionName){
+        reg(function(){ sec.textContent = S().sections[sectionName] || sectionName; });
+      })(lastSection);
       panel.appendChild(sec);
     }
     var row = document.createElement('div'); row.className = 'row'; row.dataset.control = d.key;
     var lab = document.createElement('label'); lab.className = 'lab'; lab.htmlFor = 'control-' + d.key;
-    var name = document.createElement('span'); name.textContent = d.label;
+    var name = document.createElement('span');
+    reg(function(){ name.textContent = controlLabel(d); });
     var val = document.createElement('span'); val.className = 'val';
     lab.appendChild(name); lab.appendChild(val);
     var input = document.createElement('input');
@@ -277,26 +306,34 @@ export function createPanel(ctx){
     // mesma física, tempo comprimido (activity.js)
     if(d.key==='cycle'){
       action=document.createElement('button');action.type='button';action.className='rowAction';
-      action.textContent='máximo solar';
-      action.setAttribute('aria-label','acelerar o ciclo até o máximo solar (prévia)');
       action.addEventListener('click',function(){
         if(ctx.previewSolarMax)ctx.previewSolarMax();
         refreshAvailability();
       });
       action2=document.createElement('button');action2.type='button';action2.className='rowAction';
-      action2.textContent='mínimo solar';
-      action2.setAttribute('aria-label','acelerar o ciclo até o mínimo solar (prévia)');
       action2.addEventListener('click',function(){
         if(ctx.previewSolarMin)ctx.previewSolarMin();
         refreshAvailability();
       });
+      (function(max,min){
+        reg(function(){
+          var a=S().actions;
+          max.textContent=a.solarMax; max.setAttribute('aria-label',a.solarMaxAria);
+          min.textContent=a.solarMin; min.setAttribute('aria-label',a.solarMinAria);
+        });
+      })(action,action2);
       row.appendChild(action);row.appendChild(action2);
     }
     if(d.key==='burst'||d.key==='cme'||d.key==='cvol'||d.key==='dof'){
       action=document.createElement('button');action.type='button';action.className='rowAction';
-      action.textContent=d.key==='dof'?'aproximar':d.key==='burst'?'disparar flare':d.key==='cme'?'ejetar CME':'reativar';
-      action.setAttribute('aria-label',d.key==='dof'?'aproximar para ativar foco raso':
-        d.key==='burst'?'disparar flare de prévia':d.key==='cme'?'ejetar CME de prévia':'reativar '+d.label);
+      (function(btn){
+        reg(function(){
+          var a=S().actions;
+          btn.textContent=d.key==='dof'?a.approach:d.key==='burst'?a.flare:d.key==='cme'?a.cme:a.reactivate;
+          btn.setAttribute('aria-label',d.key==='dof'?a.approachAria:
+            d.key==='burst'?a.flareAria:d.key==='cme'?a.cmeAria:a.reactivateAria.replace('{label}',controlLabel(d)));
+        });
+      })(action);
       action.addEventListener('click',function(){
         var info=ctx.getControlInfo(d.key);
         if((d.key==='cme'||d.key==='cvol')&&info.reason==='autotune-disabled'){
@@ -315,42 +352,38 @@ export function createPanel(ctx){
     entries[d.key] = { def:d, row:row, input:input, state:state, action:action, action2:action2, paint:paint };
   });
 
+  // Mensagens dinâmicas resolvem o idioma CORRENTE a cada chamada (S()):
+  // o refresh de 400ms com o painel aberto já as re-renderiza ao vivo.
   function stateMessage(info){
     if (!info) return '';
-    if (info.reason === 'director-override') return 'efetivo ' + (+info.effective).toFixed(2) + ' durante o diretor';
-    if (info.reason === 'tier-unavailable') return 'indisponível nesta qualidade';
-    if (info.reason === 'autotune-disabled') return 'desativado pelo ajuste automático';
-    if (info.reason === 'preparing') return 'preparando volume';
-    if (info.reason === 'waiting-flare') return 'aguardando flare';
-    if (info.reason === 'cooldown') return 'aguarde o rescaldo';
-    if (info.reason === 'fit-framing') return 'sem efeito no enquadramento geral';
-    if (info.reason === 'lapse-fallback') return 'profundidade automática: 100% pelo time-lapse';
+    var s=S();
+    if (info.reason === 'director-override')
+      return s.state['director-override'].replace('{value}',(+info.effective).toFixed(2));
+    if (s.state[info.reason]) return s.state[info.reason];
     if ((info.key === 'cycle' || info.key === 'lapse') && info.metrics.cycleOn){
       var seconds=info.metrics.duration, duration=seconds<90?Math.round(seconds)+' s':Math.round(seconds/60)+' min';
-      return info.metrics.multiplier.toFixed(info.metrics.multiplier<10?1:0)+'× · ciclo em ~'+duration;
+      return info.metrics.multiplier.toFixed(info.metrics.multiplier<10?1:0)+s.cycleIn+duration;
     }
-    if (info.key === 'grain' && info.metrics.amplitude8bit !== undefined)
-      return '≈ ±'+info.metrics.amplitude8bit.toFixed(1).replace('.',',')+' níveis (8-bit)';
+    if (info.key === 'grain' && info.metrics.amplitude8bit !== undefined){
+      var amplitude=info.metrics.amplitude8bit.toFixed(1);
+      if (s.decimalComma) amplitude=amplitude.replace('.',',');
+      return s.grainLevels.replace('{value}',amplitude);
+    }
     return '';
   }
   function previewMessage(reason){
-    if(reason==='source-empty')return 'defina intensidade para a prévia';
-    if(reason==='event-active')return 'evento em andamento';
-    if(reason==='cooldown')return 'aguarde o rescaldo';
-    if(reason==='not-visible')return 'nenhuma região visível';
-    if(reason==='tier-unavailable')return 'indisponível nesta qualidade';
-    if(reason==='autotune-disabled')return 'desativado pelo ajuste automático';
-    return '';
+    return S().preview[reason] || '';
   }
-  var TOUR_BLOCK_TITLE='indisponível durante a visita guiada';
   function blockActionForTour(btn,blocked){
     if(!btn)return;
     // PR-2: durante a visita guiada as prévias ficam indisponíveis — a
     // visita já coreografa flare/CME/ciclo e um disparo manual competiria
     // com a etapa em leitura. O refreshAvailability (400ms com o painel
     // aberto) desfaz o bloqueio assim que a visita termina.
-    if(blocked){btn.disabled=true;btn.title=TOUR_BLOCK_TITLE;}
-    else if(btn.title===TOUR_BLOCK_TITLE)btn.title='';
+    // PR-11: o desbloqueio compara contra o título dos DOIS idiomas — a
+    // troca de língua entre bloquear e desbloquear não deixa tooltip órfão.
+    if(blocked){btn.disabled=true;btn.title=S().tourBlocked;}
+    else if(btn.title===PANEL_STRINGS.pt.tourBlocked||btn.title===PANEL_STRINGS.en.tourBlocked)btn.title='';
   }
   function syncAction(key,e,info){
     if(!e.action)return;
@@ -370,12 +403,12 @@ export function createPanel(ctx){
       var fit=info.reason==='fit-framing';e.action.hidden=!fit;e.action.disabled=!fit;return;
     }
     if((key==='cme'||key==='cvol')&&info.reason==='autotune-disabled'){
-      e.action.hidden=false;e.action.disabled=false;e.action.textContent='reativar';
-      e.action.setAttribute('aria-label','reativar '+e.def.label);return;
+      e.action.hidden=false;e.action.disabled=false;e.action.textContent=S().actions.reactivate;
+      e.action.setAttribute('aria-label',S().actions.reactivateAria.replace('{label}',controlLabel(e.def)));return;
     }
     if(key==='cvol'){e.action.hidden=true;e.action.disabled=true;return;}
-    e.action.textContent=key==='burst'?'disparar flare':'ejetar CME';
-    e.action.setAttribute('aria-label',key==='burst'?'disparar flare de prévia':'ejetar CME de prévia');
+    e.action.textContent=key==='burst'?S().actions.flare:S().actions.cme;
+    e.action.setAttribute('aria-label',key==='burst'?S().actions.flareAria:S().actions.cmeAria);
     var state=key==='burst'?(ctx.canPreviewBurst&&ctx.canPreviewBurst()):(ctx.canPreviewCME&&ctx.canPreviewCME());
     if(!state){e.action.disabled=true;return;}
     e.action.hidden=false;e.action.disabled=!state.ok;
@@ -413,30 +446,45 @@ export function createPanel(ctx){
       localStorage.setItem('solKnobs', JSON.stringify(ctx.savedKnobs)); } catch(e){}
   }
   var idleRow=document.createElement('div'); idleRow.className='switch';
-  var idleLabel=document.createElement('span'); idleLabel.textContent='Respiração contemplativa';
+  var idleLabel=document.createElement('span');
   var idleSwitch=document.createElement('button'); idleSwitch.className='sw'+(ctx.IDLE_CINE?' on':'');
-  idleSwitch.type='button'; idleSwitch.setAttribute('role','switch'); idleSwitch.setAttribute('aria-label','Respiração contemplativa');
+  idleSwitch.type='button'; idleSwitch.setAttribute('role','switch');
+  reg(function(){
+    idleLabel.textContent=S().idleSwitch;
+    idleSwitch.setAttribute('aria-label',S().idleSwitch);
+  });
   function syncIdle(){ idleSwitch.classList.toggle('on',ctx.IDLE_CINE); idleSwitch.setAttribute('aria-checked',String(!!ctx.IDLE_CINE)); }
   syncIdle();
   idleSwitch.addEventListener('click',function(){ if(ctx.directorUserExit)ctx.directorUserExit(); ctx.IDLE_CINE=!ctx.IDLE_CINE; syncIdle(); saveIdle(); });
   idleRow.appendChild(idleLabel); idleRow.appendChild(idleSwitch); panel.appendChild(idleRow);
 
-  var lookSec=document.createElement('div'); lookSec.className='sec'; lookSec.textContent='look'; panel.appendChild(lookSec);
-  var lookBtn=document.createElement('button'); lookBtn.id='lookBtn'; lookBtn.textContent='aplicar look Sunshine';
+  var lookSec=document.createElement('div'); lookSec.className='sec'; panel.appendChild(lookSec);
+  var lookBtn=document.createElement('button'); lookBtn.id='lookBtn';
   lookBtn.addEventListener('click',function(){ if(ctx.directorUserExit)ctx.directorUserExit(); ctx.applyControlPreset('sunshine'); });
   panel.appendChild(lookBtn);
-  var dirBtn=document.createElement('button'); dirBtn.id='dirBtn'; dirBtn.textContent='▶ modo diretor (sequência)';
+  var dirBtn=document.createElement('button'); dirBtn.id='dirBtn';
   dirBtn.addEventListener('click',function(){ ctx.directorStart(); setPanelOpen(false); }); panel.appendChild(dirBtn);
+  reg(function(){
+    lookSec.textContent=S().sections['look'];
+    lookBtn.textContent=S().lookApply;
+    dirBtn.textContent=S().director;
+  });
 
-  var diagSec=document.createElement('div'); diagSec.className='sec'; diagSec.textContent='diagnóstico'; panel.appendChild(diagSec);
+  var diagSec=document.createElement('div'); diagSec.className='sec'; panel.appendChild(diagSec);
   var hudRow=document.createElement('div'); hudRow.className='switch';
-  var hudLabel=document.createElement('span'); hudLabel.textContent='HUD de FPS';
-  var hudSwitch=document.createElement('button'); hudSwitch.className='sw'; hudSwitch.type='button'; hudSwitch.setAttribute('role','switch'); hudSwitch.setAttribute('aria-label','HUD de FPS');
+  var hudLabel=document.createElement('span');
+  var hudSwitch=document.createElement('button'); hudSwitch.className='sw'; hudSwitch.type='button'; hudSwitch.setAttribute('role','switch');
+  reg(function(){
+    diagSec.textContent=S().sections['diagnóstico'];
+    hudLabel.textContent=S().hudSwitch;
+    hudSwitch.setAttribute('aria-label',S().hudSwitch);
+  });
   function syncHud(on){ hudSwitch.classList.toggle('on',on); hudSwitch.setAttribute('aria-checked',String(!!on)); }
   syncHud(ctx.hudOn); hudSwitch.addEventListener('click',function(){ ctx.setHudState(!ctx.hudOn); });
   ctx.onHudStateChange=syncHud; hudRow.appendChild(hudLabel); hudRow.appendChild(hudSwitch); panel.appendChild(hudRow);
 
-  var tierSec=document.createElement('div'); tierSec.className='sec'; tierSec.textContent='qualidade'; panel.appendChild(tierSec);
+  var tierSec=document.createElement('div'); tierSec.className='sec'; panel.appendChild(tierSec);
+  reg(function(){ tierSec.textContent=S().sections['qualidade']; });
   var tierRow=document.createElement('div'); tierRow.id='tierRow';
   function reloadWithoutTier(){
     var q=(location.search||'').replace(/^\?/,'').split('&').filter(function(kv){return kv&&kv.indexOf('tier=')!==0;}).join('&');
@@ -453,14 +501,15 @@ export function createPanel(ctx){
   var tierApply=document.createElement('button'); tierApply.id='tierApply';
   tierApply.addEventListener('click',function(){ if(ctx.applyRecommendedTier())reloadWithoutTier(); }); panel.appendChild(tierApply);
   function refreshTierRecommendation(){
-    var t=ctx.recommendedTier;
-    tierNote.textContent=t?'qualidade recomendada para a próxima carga: '+t:'trocar a qualidade recarrega a cena';
-    tierApply.style.display=t?'block':'none'; tierApply.textContent=t?'aplicar '+t+' e recarregar':'';
+    var t=ctx.recommendedTier,s=S();
+    tierNote.textContent=t?s.tierRecommended.replace('{tier}',t):s.tierReloadNote;
+    tierApply.style.display=t?'block':'none'; tierApply.textContent=t?s.tierApply.replace('{tier}',t):'';
   }
 
-  var reset=document.createElement('button'); reset.id='knobReset'; reset.textContent='restaurar padrão';
+  var reset=document.createElement('button'); reset.id='knobReset';
+  reg(function(){ reset.textContent=S().reset; });
   reset.addEventListener('click',function(){
-    if(!window.confirm('Restaurar toda a sessão e recarregar a cena?'))return;
+    if(!window.confirm(S().resetConfirm))return;
     if(ctx.directorUserExit)ctx.directorUserExit(); ctx.setHudState(false);
     if(ctx.setPerformanceKill){ctx.setPerformanceKill('cme',false,{source:'reset',notify:false});ctx.setPerformanceKill('cvol',false,{source:'reset',notify:false});}
     ctx.recommendedTier=null;
@@ -470,22 +519,23 @@ export function createPanel(ctx){
   });
   panel.appendChild(reset); document.body.appendChild(panel);
 
-  var gear=document.createElement('button'); gear.id='knobBtn'; gear.type='button'; gear.title='ajustes';
-  gear.setAttribute('aria-label','abrir ajustes'); gear.setAttribute('aria-controls',panel.id); gear.setAttribute('aria-expanded','false'); gear.textContent='⚙';
+  var gear=document.createElement('button'); gear.id='knobBtn'; gear.type='button'; gear.title=S().gearTitle;
+  gear.setAttribute('aria-label',S().gearOpen); gear.setAttribute('aria-controls',panel.id); gear.setAttribute('aria-expanded','false'); gear.textContent='⚙';
+  reg(function(){ gear.setAttribute('lang', panelLang()==='en'?'en':'pt-BR'); });
   var stateTimer=0;
   function performanceAttention(){
-    var states=[];
-    if(ctx.cmeKilled)states.push('CME desativada');
-    if(ctx.cvolKilled)states.push('coroa volumétrica desativada');
-    if(ctx.recommendedTier)states.push('qualidade '+ctx.recommendedTier+' recomendada');
+    var s=S(),states=[];
+    if(ctx.cmeKilled)states.push(s.attention.cmeOff);
+    if(ctx.cvolKilled)states.push(s.attention.cvolOff);
+    if(ctx.recommendedTier)states.push(s.attention.tierRecommended.replace('{tier}',ctx.recommendedTier));
     return states.join(', ');
   }
   function refreshPerformanceAttention(){
     if(!gear)return;
-    var attention=performanceAttention(),open=panel.classList.contains('open');
+    var s=S(),attention=performanceAttention(),open=panel.classList.contains('open');
     gear.classList.toggle('attention',!!attention);
-    gear.title=attention?'ajustes — '+attention:'ajustes';
-    gear.setAttribute('aria-label',(open?'fechar ajustes':'abrir ajustes')+(attention?' — atenção: '+attention:''));
+    gear.title=attention?s.gearTitle+' — '+attention:s.gearTitle;
+    gear.setAttribute('aria-label',(open?s.gearClose:s.gearOpen)+(attention?s.gearAttention+attention:''));
   }
   function setPanelOpen(open){
     if(!open&&panel.contains(document.activeElement))gear.focus();
@@ -512,4 +562,21 @@ export function createPanel(ctx){
   };
   refreshTierRecommendation();
   refreshPerformanceAttention();
+
+  // PR-11 — engate no hook existente: onEduLanguageChange já pertencia ao
+  // painel (seletor PT/EN + coleção + botão da visita). A re-renderização do
+  // painel INTEIRO COMPÕE com esse handler em vez de substituí-lo; sob ?det
+  // o handler anterior é undefined e o hook nunca dispara (setEduLang não
+  // existe — a fábrica edu nem roda), então nada muda no determinístico.
+  function applyPanelLanguage(){
+    i18nApply.forEach(function(fn){ fn(); });
+    refreshTierRecommendation();
+    refreshPerformanceAttention();
+    if(panel.classList.contains('open'))refreshAvailability();
+  }
+  var eduLanguageHandler=ctx.onEduLanguageChange;
+  ctx.onEduLanguageChange=function(code){
+    if(eduLanguageHandler)eduLanguageHandler(code);
+    applyPanelLanguage();
+  };
 }

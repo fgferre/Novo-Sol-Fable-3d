@@ -69,6 +69,13 @@ export const EDU_CONTENT = {
       term: 'Coroa e streamers',
       body: 'O brilho suave ao redor do disco é a coroa, a atmosfera quente e rarefeita do Sol. Os streamers mostram o campo magnético moldando esse plasma.'
     },
+    // PR-10 (Série Museu) — buraco coronal: descoberta espontânea nascida do
+    // marcador semântico do volume coronal (região unipolar rarefeita do bake).
+    coronalHole: {
+      headline: 'UMA JANELA NO CAMPO',
+      term: 'Buraco coronal',
+      body: 'Onde o campo magnético se abre para o espaço, a coroa fica rarefeita e escura. É por essas janelas que escapa o vento solar rápido.'
+    },
     cycleMaximum: {
       headline: 'PICO DE ATIVIDADE',
       term: 'Máximo solar',
@@ -214,6 +221,12 @@ export const EDU_CONTENT = {
       headline: 'THE OUTER ATMOSPHERE',
       term: 'Corona and streamers',
       body: 'The soft glow around the disk is the corona, the Sun’s hot, rarefied outer atmosphere. Streamers show magnetic fields shaping that plasma.'
+    },
+    // PR-10 (Série Museu) — coronal hole (see PT note).
+    coronalHole: {
+      headline: 'A WINDOW IN THE FIELD',
+      term: 'Coronal hole',
+      body: 'Where the magnetic field opens out into space, the corona turns rarefied and dark. Through these windows the fast solar wind escapes.'
     },
     cycleMaximum: {
       headline: 'ACTIVITY AT ITS PEAK',

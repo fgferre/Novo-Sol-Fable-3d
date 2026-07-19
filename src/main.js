@@ -342,7 +342,8 @@ function init(){
   ctx.camDirN = camDirN;
   var promNormal = new THREE.Vector3();
   var promWorldTmp = new THREE.Vector3();
-  // PR-8: scratch do emissor de loops (facing do arco mais forte)
+  // PR-8: scratch do emissor de loops (facing do arco mais forte);
+  // PR-10 reusa p/ o facing do buraco coronal (write-before-read por frame)
   var eduLoopWorldTmp = new THREE.Vector3();
   var camRightTmp = new THREE.Vector3();
   var camUpTmp = new THREE.Vector3();
@@ -866,6 +867,28 @@ function init(){
         if (ctx.eduCoronaPhotonT > 8 && ctx.eduEvent('corona',0,0,0,1,-1))
           ctx.eduCoronaExplained = true;
       } else ctx.eduCoronaPhotonT = 0;
+    }
+    // Museu Solar (PR-10) — buraco coronal: a última lacuna de cobertura
+    // assumida. O sinal é o marcador SEMÂNTICO que o bake do volume coronal
+    // publica atomicamente (fonte única: phenomena.corona.hole — direção e
+    // força da região unipolar rarefeita do PRÓPRIO volume na tela).
+    // Condições: volume ligado e bakeado (available), buraco claramente
+    // aberto (strength > CORONA_HOLE_MIN — no máximo do ciclo a coroa cheia
+    // publica strength baixo e nada dispara) e a direção no hemisfério
+    // visível (facing > 0.15) SUSTENTADA por >3s de relógio de parede
+    // (rawDelta, imune a ?speed; girar para longe reseta). Cartão LOCAL com
+    // âncora a 1.35R (ramo próprio em edu.js): o buraco vive na coroa.
+    // Latch por sessão (padrão PR-8); generation NÃO rearma — o conceito é
+    // um só e a coleção permite reler.
+    if (!DET && ctx.EDU_K > .5 && !ctx.eduCoronaHoleExplained){
+      var eduHole = ctx.phenomena.corona.hole();
+      if (eduHole.available && eduHole.strength > PHEN_T.CORONA_HOLE_MIN &&
+          eduLoopWorldTmp.copy(eduHole.dir).applyQuaternion(sunMesh.quaternion).dot(camDirN) > 0.15){
+        ctx.eduCoronaHoleT = (ctx.eduCoronaHoleT || 0) + rawDelta;
+        if (ctx.eduCoronaHoleT > 3 &&
+            ctx.eduEvent('coronalHole',eduHole.dir.x,eduHole.dir.y,eduHole.dir.z,eduHole.strength,-1,eduHole.generation))
+          ctx.eduCoronaHoleExplained = true;
+      } else ctx.eduCoronaHoleT = 0;
     }
     // Museu Solar (PR-9) — descobertas por APROXIMAÇÃO: o cartão é uma
     // recompensa pelo GESTO de chegar perto — nunca aparece sem ele. Os dois

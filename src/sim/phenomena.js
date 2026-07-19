@@ -72,7 +72,24 @@ export var PHEN_T = {
   // retrato 390×844: d≈5.0R, closeness≈1.30) — cruza ANTES do close-up no
   // zoom contínuo: primeiro a franja do limbo, depois só superfície.
   CLOSEUP_RATIO: 1.6,         // granulação: camDist < fitDist/1.6 sustentado
-  LIMB_FILL: 1.15             // espículas: disco estoura o quadro em 15%+
+  LIMB_FILL: 1.15,            // espículas: disco estoura o quadro em 15%+
+  // -- buraco coronal (PR-10, NOVO — nasce já nomeado) ----------------------
+  // Corte do marcador semântico do bake (ctx.coronaHoleStrength — casca
+  // dupla 1.02–1.30R/1.30–1.70R, janela estrita de unipolaridade 0.75–0.95,
+  // score = min(baixa,alta) do melhor setor; ver coronaVolume.js).
+  // Calibrado na cena museu (tier high, cvol 0.5, cycle=1, SwiftShader,
+  // reseed independente por amostra) via hook __solInfo.eduCoronaHoleState:
+  //   fase 0/1 (MÍNIMO, buracos polares claros), n=10: 0.480–0.529
+  //   fase 0.5 (MÁXIMO), n=18: 0.105–0.331 (mediana ≈0.18; a cauda ~0.33
+  //     é rara e veio com dir POLAR — seed em que dois pares de alta
+  //     latitude abrem o campo de verdade, i.e. não é "coroa cheia")
+  //   fase 0.35 (sol default): ≈0.18 — o Sol default não anuncia; o cartão
+  //     nasce quando o ciclo se aproxima do mínimo e o dipolo satura.
+  // Corte 0.40 ≈ média geométrica dos piores casos (0.331·0.480)^0.5≈0.399:
+  // o mínimo fica ≥20% acima e o máximo típico ≥45% abaixo. Honestidade:
+  // entre os regimes (fase de declínio, dipolo renascendo) valores 0.40+
+  // representam buracos polares REAIS em formação — anunciar é correto.
+  CORONA_HOLE_MIN: .40
 };
 
 export function createPhenomena(ctx){
@@ -196,6 +213,23 @@ export function createPhenomena(ctx){
         var u = ctx.coronaRaysUniforms;
         if (!u) return { halo: 0, ray: 0, activity: 0 };
         return { halo: u.uHalo.value, ray: u.uRayBoost.value, activity: u.uActivity.value };
+      },
+      // PR-10 — buraco coronal: leitura do marcador SEMÂNTICO que o bake do
+      // volume coronal publica na atomicidade do upload (coronaVolume.js —
+      // o sinal nasce no módulo DONO; aqui é só o adaptador). dir é o
+      // Vector3 vivo do ctx em espaço do OBJETO (leitura; não mutar — o
+      // consumidor aplica a quaternion do Sol). available = o volume está
+      // LIGADO (mesma régua do coronaInfo().on: tier com steps, knob,
+      // kill-switch e toggles) E já existe um bake publicado — sem volume
+      // na tela não há região escura a apontar ("nada prometido que não
+      // está na tela").
+      hole: function(){
+        return { dir: ctx.coronaHoleDir,
+                 strength: ctx.coronaHoleStrength || 0,
+                 generation: ctx.coronaHoleGeneration || 0,
+                 available: !!(ctx.CVOL_STEPS > 0 && ctx.CVOL_K > 0.001 &&
+                               !ctx.cvolKilled && ctx.subToggle.corona &&
+                               ctx.subToggle.corona3d && ctx.cvolReady) };
       }
     },
     cycle: {

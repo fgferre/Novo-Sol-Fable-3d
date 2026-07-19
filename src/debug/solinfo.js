@@ -286,6 +286,18 @@ export function createSolInfo(ctx){
                  granulationExplained: !!ctx.eduGranulationExplained,
                  spiculesExplained: !!ctx.eduSpiculesExplained };
       };
+      // PR-10 — adaptador de QA do emissor de buraco coronal, na fonte
+      // única (padrão eduCoronaState): o marcador publicado pelo bake
+      // (dir/strength/generation/available), o relógio de sustentação de
+      // 3s (rawDelta; reseta fora do hemisfério visível) e o latch.
+      window.__solInfo.eduCoronaHoleState = function(){
+        var h = ctx.phenomena.corona.hole();
+        return { available: h.available, strength: h.strength,
+                 generation: h.generation,
+                 dir: [h.dir.x, h.dir.y, h.dir.z],
+                 t: ctx.eduCoronaHoleT || 0,
+                 explained: !!ctx.eduCoronaHoleExplained };
+      };
       // FASE 3 — QA do ciclo de 11 anos: fase/índice/sinais correntes...
       window.__solInfo.cycleInfo = function(){
         var mul=cycleMultiplier();

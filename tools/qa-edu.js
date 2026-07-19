@@ -404,6 +404,15 @@ async function layoutState(page){
     donePanel.present&&!donePanel.hidden&&/Coleção completa/.test(donePanel.text)&&/11 de 11/.test(donePanel.toggle),
     JSON.stringify(donePanel));
   // Reload no MESMO contexto: celebrated sobrevive e o cartão não repete.
+  // ANTES de abrir a 2ª página, espere o flag ATERRISSAR no localStorage —
+  // a gravação acontece no ciclo do cartão e a nova página pode nascer
+  // antes dela (corrida flagrada num run de CI docs-only: celebrated=false
+  // no reload). O contrato provado é "persistiu → sobrevive", não "persiste
+  // instantaneamente".
+  await donePage.waitForFunction(()=>{
+    try{return JSON.parse(localStorage.getItem('solEduCollection.v1')||'{}').celebrated===true;}
+    catch(e){return false;}
+  },null,{timeout:60000});
   const donePage2=await doneContext.newPage();
   donePage2.setDefaultTimeout(240000);
   donePage2.on('pageerror',(e)=>errors.push('[complete-reload] '+e.message));

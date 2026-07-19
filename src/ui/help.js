@@ -6,8 +6,10 @@
 // clampado ao viewport. Interações:
 //   desktop  → mouseenter abre, mouseleave fecha (com tolerância para o
 //              ponteiro entrar no tooltip — WCAG 1.4.13: hoverable);
-//   teclado  → focus abre, blur/Esc fecha (o Esc do tooltip vence o Esc do
-//              painel via listener em captura, o drawer fica aberto);
+//   teclado  → Enter/Espaço alterna (foco NÃO abre sozinho: quem tabula
+//              pelo drawer manteria um tooltip aberto a cada parada e o
+//              Esc do contrato do drawer seria roubado — qa-control-state);
+//              blur fecha; Esc com tooltip aberto fecha SÓ o tooltip;
 //   touch    → press-and-hold ~450 ms abre (pedido literal do dono);
 //              cancela se o dedo mover >8 px ou soltar antes; soltar fora
 //              do "?" fecha; toque simples no "?" TAMBÉM abre — decisão
@@ -32,6 +34,10 @@ export function createPanelHelp(panel, opts){
   panel.appendChild(tip);
 
   var openBtn = null, closeTimer = 0, press = null, openedAt = 0;
+  // O toque sintetiza um 'click' depois do pointerup; sem esta janela, o
+  // click emendado no long-press/tap alternaria e FECHARIA o tooltip que o
+  // próprio gesto acabou de abrir (flagrado pelo qa:help no touch).
+  var suppressClickUntil = 0;
 
   function entryFor(key){
     var lang = opts.lang();
@@ -130,6 +136,7 @@ export function createPanelHelp(panel, opts){
                  ev.clientY >= r.top && ev.clientY <= r.bottom;
     if (!p.canceled && inside) open(p.btn);          // tap curto = bônus
     else if (openBtn === p.btn && !inside) close();  // soltar fora fecha
+    if (ev.pointerType === 'touch') suppressClickUntil = performance.now() + 500;
   }, true);
   window.addEventListener('pointercancel', function(){
     if (press){ clearTimeout(press.timer); press = null; }
@@ -144,9 +151,16 @@ export function createPanelHelp(panel, opts){
     });
     btn.addEventListener('mouseenter', function(){ open(btn); });
     btn.addEventListener('mouseleave', scheduleClose);
-    btn.addEventListener('focus', function(){ open(btn); });
+    // Foco NÃO abre sozinho: quem tabula pelo drawer não pode ter um tooltip
+    // aberto a cada parada roubando o Esc do contrato do drawer (flagrado
+    // pelo qa-control-state no CI do PR-14). Teclado abre por Enter/Espaço —
+    // o botão nativo dispara 'click' — e alterna; blur/Esc fecham.
     btn.addEventListener('blur', function(){ if (openBtn === btn) close(); });
-    btn.addEventListener('click', function(ev){ ev.preventDefault(); open(btn); });
+    btn.addEventListener('click', function(ev){
+      ev.preventDefault();
+      if (performance.now() < suppressClickUntil){ open(btn); return; }
+      if (openBtn === btn) close(); else open(btn);
+    });
     btn.addEventListener('contextmenu', function(ev){ ev.preventDefault(); });
     btn.addEventListener('pointerdown', function(ev){
       if (ev.pointerType !== 'touch') return;

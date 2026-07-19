@@ -3,7 +3,7 @@
 //       + 11 itens de chrome = 46) e ZERO console.warn('[help] …');
 //   (b) desktop — mouseenter abre o tooltip com as três seções (o que faz /
 //       o que você vê / nota ☉ quando houver), mouseleave fecha;
-//   (c) teclado — focus abre, Esc fecha SÓ o tooltip (drawer segue aberto);
+//   (c) teclado — foco não abre sozinho; Enter alterna; Esc fecha só o tooltip;
 //   (d) touch (hasTouch) — long-press ~450 ms via CDP abre e sobrevive ao
 //       soltar sobre o "?"; tap fora fecha; tap simples TAMBÉM abre (bônus
 //       documentado de acessibilidade — o long-press é o pedido literal);
@@ -129,16 +129,27 @@ function inViewport(t){return t.rect.x>=0&&t.rect.y>=0&&t.rect.right<=t.vw&&t.re
   await page.mouse.move(200,80);
   await page.waitForFunction(()=>document.querySelector('#helpTip').hidden);
 
-  // (c) teclado: focus abre, Esc fecha SÓ o tooltip.
+  // (c) teclado: foco NÃO abre sozinho (o Tab do drawer não pode ter um
+  // tooltip roubando o Esc do contrato do painel — qa-control-state);
+  // Enter alterna; Esc com tooltip aberto fecha SÓ o tooltip.
   await page.locator('.helpBtn[data-help-key="burst"]').scrollIntoViewIfNeeded();
   await page.locator('.helpBtn[data-help-key="burst"]').focus();
+  await page.waitForTimeout(250);
+  const focusIdle=await page.evaluate(()=>document.querySelector('#helpTip').hidden);
+  check('teclado: foco sozinho NÃO abre a ajuda (Tab limpo pelo drawer)',focusIdle===true,String(focusIdle));
+  await page.keyboard.press('Enter');
   await page.waitForFunction(()=>!document.querySelector('#helpTip').hidden);
   const burstPt=await page.evaluate(readTip);
-  check('teclado: focus abre a ajuda do controle focado',burstPt.describedBy==='burst',burstPt.describedBy);
+  check('teclado: Enter abre a ajuda do controle focado',burstPt.describedBy==='burst',burstPt.describedBy);
   await page.keyboard.press('Escape');
   await page.waitForFunction(()=>document.querySelector('#helpTip').hidden);
   const afterEsc=await page.evaluate(()=>document.querySelector('#knobBtn').getAttribute('aria-expanded'));
   check('teclado: Esc fecha o tooltip e o drawer PERMANECE aberto',afterEsc==='true',afterEsc);
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(()=>!document.querySelector('#helpTip').hidden);
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(()=>document.querySelector('#helpTip').hidden);
+  check('teclado: Enter alterna (abre e fecha) a ajuda',true);
 
   // (e) PT→EN: conteúdo dos sentinelas e aria-labels trocam.
   const grabTip=async(key)=>{

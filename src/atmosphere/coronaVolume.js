@@ -41,6 +41,20 @@ export function createCoronaVolume(ctx){
   //               desligar do efeito — QA baka com o volume oculto)
   ctx.cvolPhase = 'idle', ctx.cvolBudget = 0, ctx.cvolPending = false, ctx.cvolForced = false;
   ctx.CVOL_RATE = CVOL_RATE, ctx.CVOL_COOLDOWN = CVOL_COOLDOWN;
+  // PR-10 (Série Museu) — marcador SEMÂNTICO do buraco coronal, publicado
+  // junto de cada upload atômico do volume. Vive no ctx mesmo com
+  // CVOL_STEPS=0 (phenomena.corona.hole() lê em qualquer tier sem guarda):
+  //   coronaHoleDir        direção média (unit, espaço do OBJETO) das
+  //                        células mais unipolares/rarefeitas das cascas
+  //                        1.02–1.30R e 1.30–1.70R do ÚLTIMO bake publicado
+  //   coronaHoleStrength   0..1 — quão unipolar/vazia é essa região
+  //                        (min entre as duas cascas do resultante
+  //                        ponderado pela janela de unipolaridade,
+  //                        normalizado pelas células do setor)
+  //   coronaHoleGeneration incrementa a CADA publicação (o consumidor
+  //                        decide inércia; aqui só física do snapshot)
+  ctx.coronaHoleDir = new THREE.Vector3(0, 1, 0);
+  ctx.coronaHoleStrength = 0; ctx.coronaHoleGeneration = 0;
   var coronaVol = null, cvolUniforms = null, cvolTex = null;
   var cvolData = null, cvolStage = null;
   var cvolQ = new Float32Array(40);       // snapshot das 10 cargas (x,y,z,w)
@@ -66,9 +80,32 @@ export function createCoronaVolume(ctx){
   // unânime do painel de 3 juízes (0.9+ trunca as pétalas); com peso 0
   // a folha da F4 é bit-exata (somar 0.0 ao expoente não muda double).
   ctx.cvolWCusp = 0.6;
+  // PR-10 — canal lateral do bake p/ o marcador de buraco coronal: a cada
+  // célula, cvolDensity deixa aqui o raio e a unipolaridade |B·r̂|/|B| que
+  // ELA MESMA acabou de computar (leitura pelo bakeCvolSlice — zero
+  // refação do campo de 10 cargas, zero mudança na matemática da
+  // densidade). O marcador aplica sua própria janela, MAIS ESTRITA que a
+  // do carve de densidade (0.75–0.95 vs 0.60–0.90) — o mesmo padrão do
+  // gate de plumas do shader (0.74–0.92): o cartão só deve nascer de um
+  // buraco CLARAMENTE aberto.
+  var cvolCellR = 0, cvolCellUnip = 0;
+  // acumuladores do marcador, por SETOR de eixo dominante (±x,±y,±z — 6
+  // regiões congruentes da esfera) e por DUAS cascas de altura: baixa
+  // 1.02–1.30R (onde o termo de buraco rarefaz a coroa VISÍVEL) e alta
+  // 1.30–1.70R (persistência do campo aberto — o mesmo raciocínio do min()
+  // de duas alturas do gate de plumas do shader: campo fechado sobre pares
+  // bipolares perde a radialidade com a altura, buraco não). Dois buracos
+  // polares opostos no mínimo não se cancelam: cada polo acumula no seu
+  // setor e a publicação escolhe o melhor min(baixa,alta). Zerados a cada
+  // início de staging.
+  var holeLoX = new Float64Array(6), holeLoY = new Float64Array(6),
+      holeLoZ = new Float64Array(6), holeLoN = new Int32Array(6);
+  var holeHiX = new Float64Array(6), holeHiY = new Float64Array(6),
+      holeHiZ = new Float64Array(6), holeHiN = new Int32Array(6);
   // densidade coronal num ponto do espaço do objeto (esfera unitária)
   function cvolDensity(x, y, z){
     var r = Math.sqrt(x*x + y*y + z*z);
+    cvolCellR = r; cvolCellUnip = 0;
     if (r < 1.005 || r > CVOL_ROUT) return 0;
     var bx = 0, by = 0, bz = 0;
     for (var i = 0; i < 10; i++){
@@ -97,6 +134,7 @@ export function createCoronaVolume(ctx){
     hu = hu < 0 ? 0 : (hu > 1 ? 1 : hu);
     hu = hu*hu*(3.0 - 2.0*hu);
     var hole = hu * Math.exp(-(r - 1.0) * 3.3);
+    cvolCellUnip = unip;
     var dens = base * (ctx.cvolWBase + ctx.cvolWSheet*sheet + ctx.cvolWLoop*loopBase) * (1.0 - ctx.cvolWHole*hole);
     // fade externo: o shell de marcha não corta seco em ROUT
     var fo = (CVOL_ROUT - 0.06 - r) * 4.0;
@@ -111,9 +149,37 @@ export function createCoronaVolume(ctx){
     for (var iy = 0; iy < CVOL_N; iy++){
       var y = off + iy*inv, idx = rowBase + iy*CVOL_N;
       for (var ix = 0; ix < CVOL_N; ix++){
-        var d = cvolDensity(off + ix*inv, y, z);
+        var x = off + ix*inv;
+        var d = cvolDensity(x, y, z);
         // sqrt-encode: 8 bits rendem melhor onde a coroa é tênue
         cvolStage[idx + ix] = (Math.sqrt(d) * 255) | 0;
+        // PR-10 — acumulação do marcador de buraco coronal DURANTE o
+        // trabalho que já acontece: células das duas cascas entram no
+        // setor do seu eixo dominante; o peso é a janela ESTRITA de
+        // unipolaridade do marcador (smoothstep 0.75–0.95 sobre o MESMO
+        // unip que a densidade acabou de computar). Só leitura do canal
+        // lateral — a densidade bakeada não muda um bit. (Por que duas
+        // cascas: na calibração, uma casca baixa sozinha era poluída
+        // pelos picos de unip sobre as cargas do máximo, e uma casca
+        // alta sozinha via o eixo do dipolo residual sem rarefação
+        // visível embaixo — só o min(baixa,alta) da publicação separa
+        // o buraco de verdade.)
+        if (cvolCellR >= 1.02 && cvolCellR <= 1.70){
+          var hax = x < 0 ? -x : x, hay = y < 0 ? -y : y, haz = z < 0 ? -z : z;
+          var hb = hax >= hay && hax >= haz ? (x >= 0 ? 0 : 1)
+                 : hay >= haz ? (y >= 0 ? 2 : 3) : (z >= 0 ? 4 : 5);
+          var hw = (cvolCellUnip - 0.75) / 0.20;
+          hw = hw < 0 ? 0 : (hw > 1 ? 1 : hw);
+          hw = hw*hw*(3.0 - 2.0*hw);
+          var hinv = hw > 0 ? hw / cvolCellR : 0;
+          if (cvolCellR <= 1.30){
+            holeLoN[hb]++;
+            if (hinv > 0){ holeLoX[hb] += x*hinv; holeLoY[hb] += y*hinv; holeLoZ[hb] += z*hinv; }
+          } else {
+            holeHiN[hb]++;
+            if (hinv > 0){ holeHiX[hb] += x*hinv; holeHiY[hb] += y*hinv; holeHiZ[hb] += z*hinv; }
+          }
+        }
       }
     }
   }
@@ -123,6 +189,12 @@ export function createCoronaVolume(ctx){
   // snapshot mais novo (o QA salta fase do ciclo e re-baka em cima).
   function cvolStartCycle(forced){
     snapshotCvolCharges();
+    // PR-10: staging novo = acumuladores zerados (um restart forçado em
+    // voo descarta a acumulação parcial junto com as fatias parciais)
+    for (var hz = 0; hz < 6; hz++){
+      holeLoX[hz] = 0; holeLoY[hz] = 0; holeLoZ[hz] = 0; holeLoN[hz] = 0;
+      holeHiX[hz] = 0; holeHiY[hz] = 0; holeHiZ[hz] = 0; holeHiN[hz] = 0;
+    }
     ctx.cvolStep = 0; ctx.cvolBudget = 0;
     ctx.cvolPhase = 'baking';
     ctx.cvolForced = !!forced; ctx.cvolPending = false;
@@ -175,6 +247,32 @@ export function createCoronaVolume(ctx){
         if (ctx.cvolStep >= CVOL_N){
           cvolData.set(cvolStage);          // publicação atômica: sem tearing
           cvolTex.needsUpdate = true;
+          // PR-10 — o marcador semântico publica JUNTO do volume (mesma
+          // atomicidade: dir/strength descrevem exatamente a textura que
+          // acabou de subir, derivados do MESMO snapshot de cargas).
+          // Por setor: resultante normalizado de cada casca (0..1 por
+          // construção: |Σ w·dir| ≤ Σ w ≤ nº de células) e score =
+          // min(baixa, alta) — rarefação VISÍVEL embaixo E campo aberto
+          // em cima. Setor vencedor = maior score; dir = resultante das
+          // duas cascas somadas. Coroa cheia (máximo, sem buraco
+          // coerente) publica strength baixo — o emissor não dispara.
+          var hbBest = -1, hbScore = 0;
+          for (var hbi = 0; hbi < 6; hbi++){
+            if (!holeLoN[hbi] || !holeHiN[hbi]) continue;
+            var hlo = Math.sqrt(holeLoX[hbi]*holeLoX[hbi] + holeLoY[hbi]*holeLoY[hbi] + holeLoZ[hbi]*holeLoZ[hbi]) / holeLoN[hbi];
+            var hhi = Math.sqrt(holeHiX[hbi]*holeHiX[hbi] + holeHiY[hbi]*holeHiY[hbi] + holeHiZ[hbi]*holeHiZ[hbi]) / holeHiN[hbi];
+            var hsc = hlo < hhi ? hlo : hhi;
+            if (hsc > hbScore){ hbScore = hsc; hbBest = hbi; }
+          }
+          if (hbBest >= 0 && hbScore > 0){
+            var hbX = holeLoX[hbBest] + holeHiX[hbBest];
+            var hbY = holeLoY[hbBest] + holeHiY[hbBest];
+            var hbZ = holeLoZ[hbBest] + holeHiZ[hbBest];
+            var hbLen = Math.sqrt(hbX*hbX + hbY*hbY + hbZ*hbZ);
+            if (hbLen > 1e-9) ctx.coronaHoleDir.set(hbX/hbLen, hbY/hbLen, hbZ/hbLen);
+            ctx.coronaHoleStrength = hbScore > 1 ? 1 : hbScore;
+          } else ctx.coronaHoleStrength = 0;
+          ctx.coronaHoleGeneration++;
           ctx.cvolStep = -1; ctx.cvolForced = false;
           ctx.cvolReady = true; ctx.cvolCycles++;
           ctx.cvolPhase = 'cooldown'; ctx.cvolAccum = 0;

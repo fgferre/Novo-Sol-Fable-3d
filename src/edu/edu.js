@@ -144,8 +144,13 @@ export function createEdu(ctx){
   // shader não individualiza (mentira de museu). Prioridades 58/57: abaixo
   // de loops (60), acima só da coroa — recompensas de aproximação nunca
   // roubam a leitura de um evento localizado.
+  // PR-10: o buraco coronal é LOCAL (halo + linha) — a região unipolar tem
+  // direção real publicada pelo bake; a âncora vive a 1.35R, DENTRO da coroa
+  // volumétrica (o buraco é uma janela na coroa, não um ponto da superfície).
+  // Prioridade 56: entre espículas (57) e coroa (55) — nunca rouba a leitura
+  // de um evento localizado de plasma.
   function isGlobal(type){ return type === 'cycleMaximum' || type === 'cycleMinimum' || type === 'corona' || type === 'granulation' || type === 'spicules'; }
-  function eventPriority(type){ return type === 'cme' ? 100 : type === 'flare' ? 90 : type === 'prominence' ? 70 : type === 'granulation' ? 58 : type === 'spicules' ? 57 : type === 'corona' ? 55 : isGlobal(type) ? 65 : 60; }
+  function eventPriority(type){ return type === 'cme' ? 100 : type === 'flare' ? 90 : type === 'prominence' ? 70 : type === 'granulation' ? 58 : type === 'spicules' ? 57 : type === 'coronalHole' ? 56 : type === 'corona' ? 55 : isGlobal(type) ? 65 : 60; }
   function syncChrome(){
     // Marca única "SOL — uma estrela viva": ligar/desligar descobertas não
     // rebrandiza a página; só o idioma muda o chrome.
@@ -239,12 +244,17 @@ export function createEdu(ctx){
       anchorDistance = promOutside
         ? ctx.SUN_RADIUS + Math.max(ctx.SUN_RADIUS*.035,promHeight || ctx.SUN_RADIUS*.10)
         : ctx.SUN_RADIUS * 1.006;
+    } else if (eventType === 'coronalHole') {
+      // PR-10: a janela do campo aberto vive na COROA — âncora a 1.35R,
+      // sobre a região rarefeita do volume, nunca presa à fotosfera.
+      anchorDistance = ctx.SUN_RADIUS * 1.35;
     } else anchorDistance = ctx.SUN_RADIUS * 1.018;
     if (eventType === 'cme') inFront = facing > -0.08;
-    else if (eventType === 'prominence' && promOutside) {
+    else if ((eventType === 'prominence' && promOutside) || eventType === 'coronalHole') {
       // O ápice elevado pode continuar visível um pouco além do horizonte
       // da superfície; o limiar vem da tangência da linha de visada com a
       // esfera solar, não de um simples teste de profundidade NDC.
+      // PR-10: vale igualmente para a âncora coronal a 1.35R.
       var limbAllowance = Math.sqrt(Math.max(0,1-(ctx.SUN_RADIUS/anchorDistance)*(ctx.SUN_RADIUS/anchorDistance)));
       inFront = facing > -limbAllowance + .012;
     } else inFront = facing > horizon + .012;
@@ -474,6 +484,9 @@ export function createEdu(ctx){
     // âncora real); a coroa usa o caminho global (sem âncora — o fenômeno é
     // o anel inteiro em volta do disco).
     if (name === 'loops') return startEvent('loops',a,b,c,d,e,f);
+    // PR-10: buraco coronal é LOCAL — halo + linha na âncora coronal (1.35R,
+    // ramo próprio do projectAnchor); a direção vem do marcador do bake.
+    if (name === 'coronalHole') return startEvent('coronalHole',a,b,c,d,e,f);
     if (name === 'corona') return startGlobalEvent(name,d,e);
     // PR-9: descobertas por aproximação — globais (ver isGlobal). O emissor
     // de main.js retenta no frame seguinte se o palco estiver ocupado.
@@ -526,10 +539,11 @@ export function createEdu(ctx){
     }
     if (eventType === 'cme'){
       if (age > 16 || ctx.cmeT >= 900 || ctx.cmeT > 18){ finishEvent(); return; }
-    } else if (eventType === 'prominence' || eventType === 'spots' || eventType === 'loops') {
+    } else if (eventType === 'prominence' || eventType === 'spots' || eventType === 'loops' || eventType === 'coronalHole') {
       // PR-8: loops entram na janela conceitual de manchas/proeminências —
       // o ramo do flare abaixo amarra a vida do cartão a surfFlareT, que
-      // não descreve um arco ambiente.
+      // não descreve um arco ambiente. PR-10: o buraco coronal também é uma
+      // estrutura de vida longa — mesma janela de leitura.
       if (age > 9.5){ finishEvent(); return; }
     } else if (age > 7.5 || ctx.surfFlareT > 12){ finishEvent(); return; }
     syncEventContent();
@@ -538,7 +552,7 @@ export function createEdu(ctx){
     halo.position.copy(eventDir).multiplyScalar(anchorDistance);
     showVisual(); placeLabel(); rememberCurrentDiscovery();
     var pulse = reducedMotion ? 1 : 1 + .16*Math.sin(age*7.5)*Math.exp(-age*.22);
-    var haloScale = eventType === 'cme' ? .72 : eventType === 'prominence' ? .56 : eventType === 'spots' || eventType === 'loops' ? .52 : .48;
+    var haloScale = eventType === 'cme' ? .72 : eventType === 'coronalHole' ? .62 : eventType === 'prominence' ? .56 : eventType === 'spots' || eventType === 'loops' ? .52 : .48;
     halo.scale.setScalar(haloScale*pulse);
     haloMaterial.opacity = reducedMotion ? .62 : Math.max(.32,(eventType === 'cme' ? .72 : .80)-age*.045);
   };

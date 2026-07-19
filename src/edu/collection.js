@@ -15,8 +15,10 @@ var STORAGE_KEY = 'solEduCollection.v1';
 // PR-9 — 8→10 (mesma regra aditiva): granulation entra logo após surface (o
 // close-up da mesma camada) e spicules após prominence (a franja do limbo,
 // vizinha das estruturas de borda).
+// PR-10 — 10→11 (mesma regra aditiva): coronalHole logo após corona — a
+// janela escura é uma leitura da própria coroa volumétrica.
 var VERSION = 1;
-var ORDER = ['surface','granulation','spots','loops','flare','cme','prominence','spicules','corona','cycle'];
+var ORDER = ['surface','granulation','spots','loops','flare','cme','prominence','spicules','corona','coronalHole','cycle'];
 var FAMILIES = {
   surface:['surface'],
   granulation:['granulation'],
@@ -27,6 +29,7 @@ var FAMILIES = {
   prominence:['prominence','filament'],
   spicules:['spicules'],
   corona:['corona'],
+  coronalHole:['coronalHole'],
   cycle:['cycleMaximum','cycleMinimum']
 };
 
@@ -103,6 +106,7 @@ function discoveryFor(type,contentKey){
   if (type === 'loops') return {family:'loops',views:['loops']};
   if (type === 'spicules') return {family:'spicules',views:['spicules']};
   if (type === 'corona') return {family:'corona',views:['corona']};
+  if (type === 'coronalHole') return {family:'coronalHole',views:['coronalHole']};
   if (type === 'cycleMaximum') return {family:'cycle',views:['cycleMaximum']};
   if (type === 'cycleMinimum') return {family:'cycle',views:['cycleMinimum']};
   if (type === 'cycle'){
@@ -125,6 +129,7 @@ function discoveryFor(type,contentKey){
   if (key === 'loops') return {family:'loops',views:['loops']};
   if (key === 'spicules') return {family:'spicules',views:['spicules']};
   if (key === 'corona') return {family:'corona',views:['corona']};
+  if (key === 'coronalHole') return {family:'coronalHole',views:['coronalHole']};
   if (key === 'cycleMaximum') return {family:'cycle',views:['cycleMaximum']};
   if (key === 'cycleMinimum') return {family:'cycle',views:['cycleMinimum']};
   if (key === 'prominence' || key === 'filament' || key === 'prominenceFilament'){

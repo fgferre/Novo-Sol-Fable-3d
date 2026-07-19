@@ -598,6 +598,129 @@ async function layoutState(page){
     JSON.stringify(coronaNeg.state));
   await coronaOff.close();
 
+  // ————— PR-10 · Onda 3: buraco coronal —————
+  // O sinal é o marcador SEMÂNTICO publicado pelo bake atômico do volume
+  // coronal (fonte única: phenomena.corona.hole, hook white-box
+  // __solInfo.eduCoronaHoleState). A física é dirigida pelo relógio do
+  // ciclo: no MÍNIMO (setCyclePhase(1,true)) o dipolo polar satura e os
+  // buracos polares são claros (strength alto); no MÁXIMO (fase .5) o
+  // dipolo cruza zero e a coroa fica CHEIA (strength < corte — o mesmo
+  // valor de PHEN_T.CORONA_HOLE_MIN). halo/ray/spots/fprom/cme/loops saem
+  // da disputa; `cvol` fica no DEFAULT do museu (0.5) — a página não pina.
+  const holePage=await browser.newPage({viewport:{width:960,height:600},deviceScaleFactor:1});
+  holePage.setDefaultTimeout(300000);
+  holePage.on('pageerror',(e)=>errors.push('[corona-hole] '+e.message));
+  holePage.on('console',(m)=>{if(m.type()==='error')errors.push('[corona-hole] '+m.text());});
+  // edu começa DESLIGADO: a página primeiro fixa o regime físico (fase do
+  // ciclo + bake) e só então liga a experiência — sem isso, um bake da fase
+  // default anterior ao setup poderia disputar o latch da sessão.
+  await holePage.goto(base+'?edu=0&lang=pt&tier=high&scale=0.25&speed=0.05&cycle=1&spots=0&fprom=0&cme=0&loops=0&halo=0&ray=0&intro=0');
+  await holePage.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduCoronaHoleState);
+  await holePage.evaluate(()=>{window.__solInfo.setRotSpeed(0);for(let j=0;j<window.__solInfo.promLife().length;j++)window.__solInfo.setPromLife(j,.01);});
+  // NEGATIVO (regime que separa de verdade): MÁXIMO com coroa CHEIA — o
+  // bake publica strength ABAIXO do corte (PHEN_T.CORONA_HOLE_MIN=0.40) e o
+  // emissor nunca arma o relógio, mesmo com a câmera mirando a direção
+  // publicada. Calibração medida (n=18 reseeds na fase .5): 0.105–0.331,
+  // mediana ≈0.18 — mas uma minoria de seeds abre um buraco polar REAL
+  // mesmo no máximo (cauda ~0.33, dir polar). Como o alvo do negativo é o
+  // REGIME de coroa cheia (não um sorteio específico), reseeds sucessivos
+  // fixam esse regime; 4 tentativas cobrem a cauda com folga.
+  const holeMaxSamples=[];
+  for(let hk=0;hk<4;hk++){
+    const holeMaxTarget=await holePage.evaluate((k)=>{
+      window.__solInfo.setCyclePhase(.5+2*k,true);
+      return window.__solInfo.rebakeCorona().targetCycle;
+    },hk);
+    await holePage.waitForFunction((t)=>window.__solInfo.coronaInfo().cycles>=t,holeMaxTarget,{timeout:300000});
+    holeMaxSamples.push(await holePage.evaluate(()=>+window.__solInfo.eduCoronaHoleState().strength.toFixed(4)));
+    if(holeMaxSamples[holeMaxSamples.length-1]<.40)break;
+  }
+  await holePage.evaluate(()=>{
+    const h=window.__solInfo.eduCoronaHoleState(),s=window.__solInfo.state();
+    window.__solInfo.setView(Math.atan2(h.dir[2],h.dir[0])-s.rotY,Math.acos(Math.max(-1,Math.min(1,h.dir[1]))),s.fitDist*1.3);
+    window.__solInfo.setControl('edu',1,{persist:false});
+  });
+  await frames(holePage,20);
+  const holeMax=await holePage.evaluate(()=>({hole:window.__solInfo.eduCoronaHoleState(),corona:window.__solInfo.coronaInfo(),
+    info:window.__solInfo.eduInfo(),collection:window.__solInfo.eduCollectionInfo()}));
+  check('buraco coronal: máximo com coroa cheia publica strength<corte e nunca emite',
+    holeMax.hole.available&&holeMax.corona.ready&&holeMax.hole.strength<.40&&holeMax.hole.t===0&&!holeMax.hole.explained&&
+    !holeMax.info.active.some((x)=>x.type==='coronalHole')&&!holeMax.collection.items.coronalHole.seen,
+    JSON.stringify({samples:holeMaxSamples,t:holeMax.hole.t,cycles:holeMax.corona.cycles}));
+  // POSITIVO: MÍNIMO do ciclo — buracos polares claros. O re-bake parte do
+  // snapshot novo; o marcador publica strength acima do corte e a direção
+  // aponta o polo unipolar.
+  const holeMinTarget=await holePage.evaluate(()=>{
+    window.__solInfo.setCyclePhase(1,true);
+    return window.__solInfo.rebakeCorona().targetCycle;
+  });
+  await holePage.waitForFunction((t)=>window.__solInfo.coronaInfo().cycles>=t,holeMinTarget,{timeout:300000});
+  const holeMinSignal=await holePage.evaluate(()=>window.__solInfo.eduCoronaHoleState());
+  check('buraco coronal: mínimo publica marcador acima do corte (bake real)',
+    holeMinSignal.available&&holeMinSignal.strength>.40&&holeMinSignal.generation>0,
+    JSON.stringify({strength:holeMinSignal.strength,generation:holeMinSignal.generation,dir:holeMinSignal.dir.map((v)=>+v.toFixed(3))}));
+  // câmera na direção publicada (mesma conversão de forceVisible: dir é
+  // local ao Sol, a âncora aplica rotY) e sustentação >3s de parede — o
+  // cartão LOCAL nasce com âncora coronal na tela. Um cartão global de
+  // mínimo pode ocupar o palco primeiro (prioridade 65>56): o emissor
+  // retenta a cada frame e o waitForFunction cobre a janela de leitura.
+  await holePage.evaluate(()=>{
+    const h=window.__solInfo.eduCoronaHoleState(),s=window.__solInfo.state();
+    window.__solInfo.setView(Math.atan2(h.dir[2],h.dir[0])-s.rotY,Math.acos(Math.max(-1,Math.min(1,h.dir[1]))),s.fitDist*1.3);
+  });
+  await holePage.waitForFunction(()=>{const i=window.__solInfo.eduInfo().active[0];return !!(i&&i.type==='coronalHole'&&i.visible);},null,{timeout:300000});
+  await waitForLabelSettled(holePage);
+  const holeState=await holePage.evaluate(()=>({info:window.__solInfo.eduInfo(),hole:window.__solInfo.eduCoronaHoleState(),
+    collection:window.__solInfo.eduCollectionInfo(),text:document.querySelector('.edu-label').textContent,viewport:{w:innerWidth,h:innerHeight}}));
+  const holeItem=holeState.info.active[0];
+  const holeOnScreen=!!(holeItem&&holeItem.anchor&&holeItem.anchor.x>=0&&holeItem.anchor.x<=holeState.viewport.w&&holeItem.anchor.y>=0&&holeItem.anchor.y<=holeState.viewport.h);
+  check('buraco coronal: cartão LOCAL com âncora coronal na tela após >3s sustentados',
+    !!holeItem&&holeItem.type==='coronalHole'&&!holeItem.global&&holeItem.visible&&holeItem.haloVisible&&holeOnScreen&&
+    holeState.hole.t>3&&holeState.hole.explained&&/Buraco coronal/.test(holeState.text),
+    JSON.stringify({t:holeState.hole.t,anchor:holeItem&&holeItem.anchor,halo:holeItem&&holeItem.haloVisible,text:holeState.text.slice(0,60)}));
+  check('buraco coronal: coleção registra a família nova',
+    holeState.collection.items.coronalHole.seen&&holeState.collection.items.coronalHole.views.coronalHole===true);
+  const holeEnglish=await holePage.evaluate(()=>{window.__solInfo.setLang('en');return document.querySelector('.edu-label').textContent;});
+  check('buraco coronal troca para inglês',/Coronal hole/.test(holeEnglish));
+  // uma explicação por sessão: religar a experiência não repete o cartão
+  // nem duplica a coleção — mesmo com o marcador ainda acima do corte.
+  await holePage.evaluate(()=>{window.__solInfo.setControl('edu',0,{persist:false});window.__solInfo.setControl('edu',1,{persist:false});});
+  await frames(holePage,3);
+  const holeReplay=await holePage.evaluate(()=>({info:window.__solInfo.eduInfo(),hole:window.__solInfo.eduCoronaHoleState(),collection:window.__solInfo.eduCollectionInfo()}));
+  check('buraco coronal: uma explicação por sessão, sem duplicar coleção',
+    holeReplay.hole.strength>.40&&holeReplay.hole.explained&&!holeReplay.info.active.some((x)=>x.type==='coronalHole')&&
+    holeReplay.collection.items.coronalHole.discoveredViews===1,
+    JSON.stringify({strength:holeReplay.hole.strength,active:holeReplay.info.active.map((x)=>x.type)}));
+  await holePage.close();
+
+  // Controle NEGATIVO: com ?cvol=0 o volume nunca baka nem desenha — sem a
+  // região escura NA TELA não existe marcador disponível, relógio nem
+  // cartão, mesmo no mínimo profundo com o dipolo saturado.
+  const holeOff=await browser.newPage({viewport:{width:960,height:600},deviceScaleFactor:1});
+  holeOff.setDefaultTimeout(240000);
+  holeOff.on('pageerror',(e)=>errors.push('[corona-hole-neg] '+e.message));
+  holeOff.on('console',(m)=>{if(m.type()==='error')errors.push('[corona-hole-neg] '+m.text());});
+  await holeOff.goto(base+'?edu=1&lang=pt&tier=high&scale=0.25&speed=0.05&cycle=1&spots=0&fprom=0&cme=0&loops=0&halo=0&ray=0&cvol=0&intro=0');
+  await holeOff.waitForFunction(()=>window.__solInfo&&window.__solInfo.eduCoronaHoleState);
+  await holeOff.evaluate(()=>{
+    window.__solInfo.setRotSpeed(0);
+    for(let j=0;j<window.__solInfo.promLife().length;j++)window.__solInfo.setPromLife(j,.01);
+    window.__solInfo.setCyclePhase(1,true);
+    // mira o polo norte (a direção default do marcador): nem mirando o
+    // relógio anda sem volume na tela
+    const s=window.__solInfo.state();
+    window.__solInfo.setView(s.theta,0.18,s.fitDist*1.3);
+  });
+  await frames(holeOff,30);
+  const holeNeg=await holeOff.evaluate(()=>({hole:window.__solInfo.eduCoronaHoleState(),corona:window.__solInfo.coronaInfo(),
+    info:window.__solInfo.eduInfo(),collection:window.__solInfo.eduCollectionInfo()}));
+  check('cvol=0 nunca emite: marcador indisponível, relógio parado, sem cartão, sem coleção',
+    !holeNeg.hole.available&&holeNeg.hole.strength===0&&holeNeg.hole.generation===0&&holeNeg.hole.t===0&&!holeNeg.hole.explained&&
+    !holeNeg.corona.ready&&holeNeg.info.enabled&&!holeNeg.info.active.some((x)=>x.type==='coronalHole')&&
+    !holeNeg.collection.items.coronalHole.seen,
+    JSON.stringify({available:holeNeg.hole.available,strength:holeNeg.hole.strength,ready:holeNeg.corona.ready,t:holeNeg.hole.t}));
+  await holeOff.close();
+
   // ————— PR-9 · Onda 2: granulação por APROXIMAÇÃO —————
   // Página DEFAULT do museu (nenhum knob de física pinado — só scale p/ o
   // SwiftShader, speed p/ acalmar eventos concorrentes e intro=0 como em
@@ -764,24 +887,25 @@ async function layoutState(page){
   await surfacePage.evaluate(()=>window.__solInfo.eduTourExit());
   await surfacePage.waitForFunction(()=>!window.__solInfo.eduTourInfo().active);
   const surfaceRepeat=await surfacePage.evaluate(()=>window.__solInfo.eduCollectionInfo());
-  check('repetir a visita não duplica a coleção',surfaceRepeat.items.surface.discoveredViews===1&&surfaceRepeat.totalFamilies===10);
-  // painel: "N de 10" (PR-9), ordem narrativa e as famílias novas na lista
+  check('repetir a visita não duplica a coleção',surfaceRepeat.items.surface.discoveredViews===1&&surfaceRepeat.totalFamilies===11);
+  // painel: "N de 11" (PR-10), ordem narrativa e as famílias novas na lista
   await surfacePage.click('#knobBtn');await surfacePage.waitForTimeout(650);
   await surfacePage.click('#eduCollectionToggle');
   const surfacePanel=await surfacePage.evaluate(()=>{
     const info=window.__solInfo.eduCollectionInfo();
     const row=(id)=>{const e=document.querySelector('#eduCollectionItem-'+id);return e?{present:true,disabled:e.disabled,title:e.querySelector('.collectionItemTitle').textContent}:{present:false};};
     return {toggle:document.querySelector('#eduCollectionToggle').textContent,order:info.order.join(','),total:info.totalFamilies,
-      surface:row('surface'),loops:row('loops'),corona:row('corona'),granulation:row('granulation'),spicules:row('spicules')};
+      surface:row('surface'),loops:row('loops'),corona:row('corona'),granulation:row('granulation'),spicules:row('spicules'),coronalHole:row('coronalHole')};
   });
-  check('painel da coleção mostra "de 10" com as famílias novas listadas',
-    / de 10 /.test(surfacePanel.toggle)&&surfacePanel.total===10&&
-    surfacePanel.order==='surface,granulation,spots,loops,flare,cme,prominence,spicules,corona,cycle'&&
+  check('painel da coleção mostra "de 11" com as famílias novas listadas',
+    / de 11 /.test(surfacePanel.toggle)&&surfacePanel.total===11&&
+    surfacePanel.order==='surface,granulation,spots,loops,flare,cme,prominence,spicules,corona,coronalHole,cycle'&&
     surfacePanel.surface.present&&!surfacePanel.surface.disabled&&/Fotosfera e granulação/.test(surfacePanel.surface.title)&&
     surfacePanel.loops.present&&surfacePanel.loops.disabled&&/Loops coronais/.test(surfacePanel.loops.title)&&
     surfacePanel.corona.present&&surfacePanel.corona.disabled&&/Coroa e streamers/.test(surfacePanel.corona.title)&&
     surfacePanel.granulation.present&&surfacePanel.granulation.disabled&&/Granulação e fibrilas/.test(surfacePanel.granulation.title)&&
-    surfacePanel.spicules.present&&surfacePanel.spicules.disabled&&/Espículas/.test(surfacePanel.spicules.title),
+    surfacePanel.spicules.present&&surfacePanel.spicules.disabled&&/Espículas/.test(surfacePanel.spicules.title)&&
+    surfacePanel.coronalHole.present&&surfacePanel.coronalHole.disabled&&/Buraco coronal/.test(surfacePanel.coronalHole.title),
     JSON.stringify(surfacePanel));
   await surfaceContext.close();
 

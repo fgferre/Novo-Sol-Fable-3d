@@ -22,11 +22,12 @@ O modo determinístico (`?det=1`) não cria nenhuma das duas camadas.
 | 9 | Máximo solar | relógio físico acelerado até fase 0,5 | fase, amplitude e `hold` reais | `cycle` (vista `cycleMaximum`) |
 | 10 | Mínimo solar | relógio físico acelerado até fase 0/1 | fase, amplitude e `hold` reais | `cycle` (vista `cycleMinimum`) |
 
-A coleção tem **10 famílias** (`surface`, `granulation`, `spots`, `loops`,
-`flare`, `cme`, `prominence`, `spicules`, `corona`, `cycle` — ordem
-narrativa da visita, com o close-up da fotosfera logo após `surface` e a
-franja do limbo junto das estruturas de borda) desde o PR-9; o painel
-calcula "N de 10" dinamicamente a partir dessa ordem.
+A coleção tem **11 famílias** (`surface`, `granulation`, `spots`, `loops`,
+`flare`, `cme`, `prominence`, `spicules`, `corona`, `coronalHole`, `cycle`
+— ordem narrativa da visita, com o close-up da fotosfera logo após
+`surface`, a franja do limbo junto das estruturas de borda e a janela
+escura logo após a própria coroa) desde o PR-10; o painel calcula
+"N de 11" dinamicamente a partir dessa ordem.
 
 Em todas as etapas, a prova `npm run qa:tour` roda em ambiente de iPhone de verdade (UA Safari, toques e arrastes de TOQUE genuínos, `tier=mid` — o tier real do aparelho) e verifica, POR ETAPA: botões visíveis ≥44 px, cartão expandido sem estourar a tela, colisão cartão/disco, fonte física visível e leitura recolhida a 8% do tempo. A pausa com relógio físico parado é medida em dupla janela em três etapas representativas; a caminhada completa repete em paisagem 844×390; um gate DPR3 cobre a transação de display; controles negativos provam que loops/CME/coroa sem física reportam o texto honesto de indisponível; e o contraste WCAG do cartão (≥4.5) é medido por screenshot. A evidência (JSON + screenshots-chave) vai para `out/qa-tour/` e sobe como artifact do CI também em sucesso.
 
@@ -62,20 +63,46 @@ Controles negativos provados: 30 s parado no enquadramento cheio nunca emite
 (relógios white-box em `__solInfo.eduCloseupState`); afastar antes de 2 s
 reseta. Uma explicação por sessão cada (latch do padrão PR-8).
 
+**Buraco coronal (PR-10, Onda 3):** a última lacuna de cobertura assumida
+fechou pela regra do museu — o marcador SEMÂNTICO nasceu no módulo dono
+antes do cartão. O bake fatiado do volume coronal
+(`src/atmosphere/coronaVolume.js`) acumula, durante o trabalho que já
+acontece, a direção resultante das células claramente unipolares (janela
+estrita 0.75–0.95 sobre o MESMO `unip` que a densidade computa) em DUAS
+cascas — 1.02–1.30R (rarefação visível) e 1.30–1.70R (persistência do
+campo aberto em altura, o mesmo raciocínio do gate de plumas do shader) —
+e publica na atomicidade do upload `ctx.coronaHoleDir` +
+`ctx.coronaHoleStrength` (0..1, o `min` das duas cascas no melhor setor) +
+`ctx.coronaHoleGeneration`. A leitura é fonte única
+(`phenomena.corona.hole()`, corte nomeado `PHEN_T.CORONA_HOLE_MIN=0.40`,
+calibrado por medição: mínimo 0.48–0.53, máximo 0.10–0.33); o emissor
+exige volume ligado e bakeado, buraco claramente aberto e a direção no
+hemisfério visível sustentada >3 s de parede. O cartão é LOCAL com âncora
+coronal a 1.35R (o buraco vive na coroa, não na superfície). Negativo
+duplo provado: `cvol=0` nunca disponibiliza o marcador (sem a região
+escura na tela não há promessa) e o MÁXIMO com coroa cheia publica
+strength abaixo do corte e nunca emite. Uma explicação por sessão (latch
+PR-8; `generation` não rearma — a coleção permite reler).
+
 ## Lacunas assumidas — não vender como pronto ainda
 
 Estas partes visuais existem, mas ainda não têm a cadeia completa “fonte identificável → texto PT/EN → coleção → prova iPhone”:
 
 | Família | Próximo trabalho necessário |
 |---|---|
-| Buracos coronais e plumas | expor um marcador semântico no volume coronal antes de criar um cartão |
 | P-modes | tratar como experimento de laboratório avançado, não como descoberta automática |
 | Áudio reativo | **cortado de vez** — decisão do dono (2026-07-18); não é mais uma lacuna a fechar, ver não-objetivos abaixo |
 
 Espículas e granulação/fibrilas saíram desta tabela no PR-9 (cobertas pela
-descoberta por aproximação — ver acima). A lacuna restante tem PR planejado
-na série Museu (ver `docs/SERIE-MUSEU.md`): buracos coronais e plumas no
-PR-10; p-modes fica como não-objetivo consciente (tabela abaixo).
+descoberta por aproximação) e **buracos coronais e plumas saíram no PR-10**
+(cobertos pelo marcador semântico do volume coronal + cartão — ver acima).
+Nota de escopo do PR-10: a COBERTURA está fechada — o cartão explica a
+janela do campo aberto, que é onde as plumas vivem; qualquer refinamento
+adicional das plumas em si (FWHM/nitidez dos fios, herdado da F6/rodada de
+movimento) é débito VISUAL anotado no roadmap
+(`docs/roadmap-proximo-nivel.md`, `docs/rodada-movimento.md`), não lacuna
+de cobertura do museu. Não resta lacuna de cobertura com PR planejado;
+p-modes fica como não-objetivo consciente (tabela abaixo).
 
 ## Regra para ampliar o acervo
 

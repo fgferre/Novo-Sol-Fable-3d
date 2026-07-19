@@ -42,10 +42,15 @@ export function createIntro(ctx){
 
   // A abertura conta como vista já no início (padrão persistChip): quem a
   // interrompe com um gesto não é assediado com a mesma vinheta na volta.
-  try {
-    ctx.savedKnobs.introSeen = true;
-    localStorage.setItem('solKnobs', JSON.stringify(ctx.savedKnobs));
-  } catch(e){}
+  // PR-13: sob ?kiosk=1 nada persiste — introSeen não grava e a abertura
+  // roda a cada RELOAD do quiosque (não a cada volta do loop): cada
+  // visitante que chega a um aparelho recarregado ganha o plano-sequência.
+  if (!ctx.KIOSK){
+    try {
+      ctx.savedKnobs.introSeen = true;
+      localStorage.setItem('solKnobs', JSON.stringify(ctx.savedKnobs));
+    } catch(e){}
+  }
 
   // O chrome (título/subtítulo/hint) começa invisível e faz fade-in ao
   // final via transição CSS. As classes só são aplicadas QUANDO a abertura

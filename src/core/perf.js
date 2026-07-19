@@ -37,6 +37,9 @@ export function createPerf(ctx){
   // ~1s alterna (o arquivo aberto localmente no iPhone não tem como
   // receber query string nem abrir console — o gesto resolve os dois).
   var hudEl = document.createElement('div');
+  // PR-13: id só para introspecção de QA (o quiosque prova o gesto inerte
+  // lendo o display) — nenhum CSS/JS do produto seleciona por ele.
+  hudEl.id = 'perfHud';
   hudEl.style.cssText = 'position:fixed;top:10px;right:10px;z-index:40;' +
     'font:11px/1.5 ui-monospace,Menlo,monospace;color:#aef;' +
     'background:rgba(0,10,20,0.55);padding:6px 9px;border-radius:8px;' +
@@ -80,7 +83,8 @@ export function createPerf(ctx){
     ctx.tuneEvents++;
     ctx.diagEvent('autotune-scale', SCALE_STEPS[ctx.scaleIdx]);
   }
-  function persistTier(t){ try { localStorage.setItem('solTier', t); } catch(e){} }
+  // PR-13: sob ?kiosk=1 nada persiste (aparelho compartilhado).
+  function persistTier(t){ if (ctx.KIOSK) return; try { localStorage.setItem('solTier', t); } catch(e){} }
   var TIER_ORDER = ['low', 'mid', 'high', 'ultra'];
   ctx.recommendedTier = null;
   function notifyPerformanceState(){

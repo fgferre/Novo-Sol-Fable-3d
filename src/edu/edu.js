@@ -193,7 +193,10 @@ export function createEdu(ctx){
   function setLanguage(next){
     if (next !== 'pt' && next !== 'en') return false;
     lang = next; ctx.eduLang = next;
-    try { ctx.savedKnobs.lang = next; localStorage.setItem('solKnobs',JSON.stringify(ctx.savedKnobs)); } catch(e){}
+    // PR-13: quiosque não persiste idioma — a instalação fixa via ?lang=.
+    if (!ctx.KIOSK){
+      try { ctx.savedKnobs.lang = next; localStorage.setItem('solKnobs',JSON.stringify(ctx.savedKnobs)); } catch(e){}
+    }
     renderLanguage();
     if (active){
       var activeText = eventCopy();

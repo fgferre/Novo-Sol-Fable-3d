@@ -79,8 +79,12 @@ export function createRenderer(ctx){
   function detectTier(){
     if (TIER_PARAMS[urlQ.tier]) return urlQ.tier;
     try {
-      var saved = localStorage.getItem('solTier');   // auto-tune passado
-      if (TIER_PARAMS[saved]) return saved;
+      // PR-13: quiosque ignora recomendações persistidas de sessões
+      // anteriores (aparelho compartilhado) — o operador pina ?tier= na URL.
+      if (!ctx.KIOSK){
+        var saved = localStorage.getItem('solTier');   // auto-tune passado
+        if (TIER_PARAMS[saved]) return saved;
+      }
     } catch(e){}
     if (isSoftwareGL) return 'high';
     if (/apple gpu|apple a[0-9]|apple m[0-9]/.test(glStr)) return coarsePointer ? 'mid' : 'high';

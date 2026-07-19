@@ -142,6 +142,10 @@ jobs:
           path: dist-single
       - name: Visita guiada no iPhone (retrato mid + DPR3 + negativos + legibilidade)
         run: node tools/qa-edu-tour.js dist-single/index.html out/qa-tour --mode portrait
+      # PR-13: modo quiosque — auto-start/loop/toque devolve o controle,
+      # persistência OFF provada e negativo (sem ?kiosk=1 / sob ?det).
+      - name: Modo quiosque (auto-start, loop, persistência OFF, negativos)
+        run: node tools/qa-kiosk.js dist-single/index.html out/qa-kiosk
       # PR-6: a evidência (JSON + 2 screenshots-chave + contraste) sobe
       # TAMBÉM em sucesso — o dono pode olhar o cartão do último run verde.
       - name: Evidência da visita (sempre)
@@ -149,7 +153,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: qa-tour-evidencia
-          path: out/qa-tour/
+          path: |
+            out/qa-tour/
+            out/qa-kiosk/
           if-no-files-found: ignore
 
   qa-landscape:

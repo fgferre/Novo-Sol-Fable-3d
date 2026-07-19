@@ -22,6 +22,7 @@
     "qa:subtle": "node tools/qa-subtle-controls.js dist-single/index.html qa-subtle",
     "qa:edu": "node tools/qa-edu.js dist-single/index.html",
     "qa:i18n": "node tools/qa-panel-i18n.js dist-single/index.html",
+    "qa:kiosk": "node tools/qa-kiosk.js dist-single/index.html",
     "qa:tour": "node tools/qa-edu-tour.js dist-single/index.html",
     "qa:parity": "node tools/parity.js qa-out --file dist-single/index.html && node tools/imgdiff.js qa/baselines qa-out --max-frac 0 --mask 0,0,620,130 --mask 0,-90,9999,90",
     "qa:colorpatch": "node tools/qa-colorpatch.js dist-single/index.html",

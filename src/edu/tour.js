@@ -136,6 +136,8 @@ export function createEduTour(ctx){
   }catch(e){}
   chipState.seen++;
   function persistChip(){
+    // PR-13: quiosque não persiste — o contador do chip vive só em memória.
+    if(ctx.KIOSK)return;
     try{ctx.savedKnobs.tourChip={seen:chipState.seen,engaged:chipState.engaged};
       localStorage.setItem('solKnobs',JSON.stringify(ctx.savedKnobs));}catch(e){}
   }
@@ -146,7 +148,8 @@ export function createEduTour(ctx){
   function syncChip(){
     // PR-5: a abertura cinematográfica segura o palco; o relógio de 700ms
     // abaixo devolve o chip logo após o plano-sequência terminar.
-    chip.hidden=state.active||chipState.engaged||chipState.seen>2||!!(ctx.directorActive&&ctx.directorActive())
+    // PR-13: no quiosque o chip nunca aparece — o loop JÁ conduz a visita.
+    chip.hidden=!!ctx.KIOSK||state.active||chipState.engaged||chipState.seen>2||!!(ctx.directorActive&&ctx.directorActive())
       ||!!(ctx.introActive&&ctx.introActive());
   }
   chipCopy();syncChip();

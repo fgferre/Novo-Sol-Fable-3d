@@ -705,6 +705,13 @@ async function layoutState(page){
   const coronaEarly=await coronaPage.evaluate(()=>{
     window.__solInfo.setRotSpeed(0);
     for(let j=0;j<window.__solInfo.promLife().length;j++)window.__solInfo.setPromLife(j,.01);
+    // Uma proeminência pode ter subido ao palco ANTES do quiesce e, a
+    // speed=0.05, viver ~190s de parede — e a fila pendente promove a
+    // próxima quando ela morre (70>55: a coroa morreria de fome; corrida
+    // flagrada no CI do PR-14). Toggle edu off→on limpa palco E fila; com
+    // promLife zerada nada re-matura e a coroa entra sem esperar ninguém.
+    window.__solInfo.setControl('edu',0,{persist:false});
+    window.__solInfo.setControl('edu',1,{persist:false});
     return {state:window.__solInfo.eduCoronaState(),active:window.__solInfo.eduInfo().active.map((x)=>x.type)};
   });
   // A janela é respeitada: com o relógio ainda abaixo de 8s não pode haver

@@ -404,6 +404,15 @@ async function layoutState(page){
     donePanel.present&&!donePanel.hidden&&/Coleção completa/.test(donePanel.text)&&/11 de 11/.test(donePanel.toggle),
     JSON.stringify(donePanel));
   // Reload no MESMO contexto: celebrated sobrevive e o cartão não repete.
+  // ANTES de abrir a 2ª página, espere o flag ATERRISSAR no localStorage —
+  // a gravação acontece no ciclo do cartão e a nova página pode nascer
+  // antes dela (corrida flagrada num run de CI docs-only: celebrated=false
+  // no reload). O contrato provado é "persistiu → sobrevive", não "persiste
+  // instantaneamente".
+  await donePage.waitForFunction(()=>{
+    try{return JSON.parse(localStorage.getItem('solEduCollection.v1')||'{}').celebrated===true;}
+    catch(e){return false;}
+  },null,{timeout:60000});
   const donePage2=await doneContext.newPage();
   donePage2.setDefaultTimeout(240000);
   donePage2.on('pageerror',(e)=>errors.push('[complete-reload] '+e.message));
@@ -928,7 +937,15 @@ async function layoutState(page){
     JSON.stringify({antes:granReset.closeT,depois:granAfterReset.closeT}));
   // POSITIVO: aproximação sustentada >2s abre o cartão GLOBAL (a granulação
   // está em todo lugar — sem âncora/halo/linha) e grava a coleção.
-  const granApproach=await gran.evaluate(()=>{const s=window.__solInfo.state();window.__solInfo.setView(s.theta,s.phi,s.fitDist/1.8);return window.__solInfo.eduCloseupState();});
+  // Palco limpo determinístico (família das corridas do CI): proeminências
+  // sempre-on (70>58) podem ocupar o palco por ~190s de parede a speed
+  // baixa, com a fila promovendo a próxima — o cartão de 58 morreria de
+  // fome. Zera promLife e recicla o palco/fila via toggle edu.
+  const granApproach=await gran.evaluate(()=>{
+    for(let j=0;j<window.__solInfo.promLife().length;j++)window.__solInfo.setPromLife(j,.01);
+    window.__solInfo.setControl('edu',0,{persist:false});
+    window.__solInfo.setControl('edu',1,{persist:false});
+    const s=window.__solInfo.state();window.__solInfo.setView(s.theta,s.phi,s.fitDist/1.8);return window.__solInfo.eduCloseupState();});
   check('granulação: distância de prova cruza o limiar de close-up',granApproach.closeness>1.6,'closeness='+granApproach.closeness.toFixed(3));
   await gran.waitForFunction(()=>{const i=window.__solInfo.eduInfo().active[0];return !!(i&&i.type==='granulation'&&i.global&&i.visible);},null,{timeout:180000});
   const granState=await gran.evaluate(()=>({info:window.__solInfo.eduInfo(),closeup:window.__solInfo.eduCloseupState(),
@@ -995,7 +1012,12 @@ async function layoutState(page){
   // POSITIVO: franja de volta, mira sustentada >2s ⇒ cartão GLOBAL (as
   // espículas são a franja INTEIRA — apontar uma seria mentira; decisão
   // documentada em edu.js/MUSEU_SOL_COBERTURA.md) + coleção.
-  await spic.evaluate(()=>window.__solInfo.toggle('spicules',true));
+  // Mesmo palco limpo determinístico da granulação (57 contra 70 + fila).
+  await spic.evaluate(()=>{
+    for(let j=0;j<window.__solInfo.promLife().length;j++)window.__solInfo.setPromLife(j,.01);
+    window.__solInfo.setControl('edu',0,{persist:false});
+    window.__solInfo.setControl('edu',1,{persist:false});
+    window.__solInfo.toggle('spicules',true);});
   await spic.waitForFunction(()=>{const i=window.__solInfo.eduInfo().active[0];return !!(i&&i.type==='spicules'&&i.global&&i.visible);},null,{timeout:180000});
   const spicState=await spic.evaluate(()=>({info:window.__solInfo.eduInfo(),closeup:window.__solInfo.eduCloseupState(),
     collection:window.__solInfo.eduCollectionInfo(),text:document.querySelector('.edu-label').textContent}));

@@ -51,6 +51,19 @@ export const EDU_CONTENT = {
       term: 'Loops coronais',
       body: 'Esses arcos brilhantes são plasma quente preso a linhas de campo magnético. Eles ligam os dois lados de uma região ativa, acima da superfície.'
     },
+    // PR-9 (Série Museu) — descobertas por APROXIMAÇÃO: o cartão só nasce
+    // depois do gesto de chegar perto (close-up) ou de encher o quadro com a
+    // borda (limbo). São recompensas por explorar, não anúncios.
+    granulation: {
+      headline: 'O SOL DE PERTO',
+      term: 'Granulação e fibrilas',
+      body: 'Cada grão claro é uma coluna de gás quente subindo; nas bordas escuras, ele esfria e desce. As fibrilas finas desenham o campo magnético.'
+    },
+    spicules: {
+      headline: 'A FRANJA DA ESTRELA',
+      term: 'Espículas',
+      body: 'Jatos finos de plasma sobem e caem na borda do Sol o tempo todo, como capim ao vento — cada um dura só alguns minutos.'
+    },
     corona: {
       headline: 'A ATMOSFERA EXTERNA',
       term: 'Coroa e streamers',
@@ -185,6 +198,17 @@ export const EDU_CONTENT = {
       headline: 'MAGNETIC ARCHITECTURE',
       term: 'Coronal loops',
       body: 'These bright arcs are hot plasma held along magnetic field lines. They link the two sides of an active region, above the surface.'
+    },
+    // PR-9 (Série Museu) — approach-triggered discoveries (see PT note).
+    granulation: {
+      headline: 'THE SUN UP CLOSE',
+      term: 'Granulation and fibrils',
+      body: 'Each bright grain is a column of hot gas rising; along its darker edges, the gas cools and sinks. The thin fibrils trace the magnetic field.'
+    },
+    spicules: {
+      headline: 'THE FRINGE OF THE STAR',
+      term: 'Spicules',
+      body: 'Thin jets of plasma rise and fall along the Sun’s edge all the time, like grass in the wind — each one lasts only a few minutes.'
     },
     corona: {
       headline: 'THE OUTER ATMOSPHERE',

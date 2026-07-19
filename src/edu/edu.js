@@ -138,8 +138,14 @@ export function createEdu(ctx){
   // PR-8: a coroa também é GLOBAL (envolve o disco inteiro — sem âncora nem
   // halo, como máximo/mínimo), mas com prioridade 55: ela nunca rouba a
   // leitura de um fenômeno localizado; espera o palco vazio.
-  function isGlobal(type){ return type === 'cycleMaximum' || type === 'cycleMinimum' || type === 'corona'; }
-  function eventPriority(type){ return type === 'cme' ? 100 : type === 'flare' ? 90 : type === 'prominence' ? 70 : type === 'corona' ? 55 : isGlobal(type) ? 65 : 60; }
+  // PR-9: granulação e espículas são GLOBAIS por decisão consciente — a
+  // granulação está em toda a superfície e as espículas são a franja INTEIRA
+  // do limbo; ancorar uma célula/jato específico seria apontar algo que o
+  // shader não individualiza (mentira de museu). Prioridades 58/57: abaixo
+  // de loops (60), acima só da coroa — recompensas de aproximação nunca
+  // roubam a leitura de um evento localizado.
+  function isGlobal(type){ return type === 'cycleMaximum' || type === 'cycleMinimum' || type === 'corona' || type === 'granulation' || type === 'spicules'; }
+  function eventPriority(type){ return type === 'cme' ? 100 : type === 'flare' ? 90 : type === 'prominence' ? 70 : type === 'granulation' ? 58 : type === 'spicules' ? 57 : type === 'corona' ? 55 : isGlobal(type) ? 65 : 60; }
   function syncChrome(){
     // Marca única "SOL — uma estrela viva": ligar/desligar descobertas não
     // rebrandiza a página; só o idioma muda o chrome.
@@ -469,6 +475,9 @@ export function createEdu(ctx){
     // o anel inteiro em volta do disco).
     if (name === 'loops') return startEvent('loops',a,b,c,d,e,f);
     if (name === 'corona') return startGlobalEvent(name,d,e);
+    // PR-9: descobertas por aproximação — globais (ver isGlobal). O emissor
+    // de main.js retenta no frame seguinte se o palco estiver ocupado.
+    if (name === 'granulation' || name === 'spicules') return startGlobalEvent(name,d,e);
     // Um estado global vale somente enquanto ele está acontecendo. Ao
     // contrário de uma CME que emerge, máximo/mínimo não fica em fila:
     // o emissor físico tentará de novo no próximo frame ainda em hold.

@@ -12,15 +12,20 @@ var STORAGE_KEY = 'solEduCollection.v1';
 // store antigo simplesmente não tem as famílias novas — elas nascem "ainda
 // não observadas"). A ordem é a narrativa da visita guiada: da camada que se
 // enxerga primeiro até o ritmo de 11 anos.
+// PR-9 — 8→10 (mesma regra aditiva): granulation entra logo após surface (o
+// close-up da mesma camada) e spicules após prominence (a franja do limbo,
+// vizinha das estruturas de borda).
 var VERSION = 1;
-var ORDER = ['surface','spots','loops','flare','cme','prominence','corona','cycle'];
+var ORDER = ['surface','granulation','spots','loops','flare','cme','prominence','spicules','corona','cycle'];
 var FAMILIES = {
   surface:['surface'],
+  granulation:['granulation'],
   spots:['spots'],
   loops:['loops'],
   flare:['flare'],
   cme:['cme'],
   prominence:['prominence','filament'],
+  spicules:['spicules'],
   corona:['corona'],
   cycle:['cycleMaximum','cycleMinimum']
 };
@@ -92,9 +97,11 @@ function discoveryFor(type,contentKey){
   if (type === 'flare') return {family:'flare',views:['flare']};
   if (type === 'cme') return {family:'cme',views:['cme']};
   if (type === 'spots') return {family:'spots',views:['spots']};
-  // PR-8: famílias de vista única — o tipo do emissor É a família.
+  // PR-8/PR-9: famílias de vista única — o tipo do emissor É a família.
   if (type === 'surface') return {family:'surface',views:['surface']};
+  if (type === 'granulation') return {family:'granulation',views:['granulation']};
   if (type === 'loops') return {family:'loops',views:['loops']};
+  if (type === 'spicules') return {family:'spicules',views:['spicules']};
   if (type === 'corona') return {family:'corona',views:['corona']};
   if (type === 'cycleMaximum') return {family:'cycle',views:['cycleMaximum']};
   if (type === 'cycleMinimum') return {family:'cycle',views:['cycleMinimum']};
@@ -114,7 +121,9 @@ function discoveryFor(type,contentKey){
   if (key === 'cme') return {family:'cme',views:['cme']};
   if (key === 'spots') return {family:'spots',views:['spots']};
   if (key === 'surface') return {family:'surface',views:['surface']};
+  if (key === 'granulation') return {family:'granulation',views:['granulation']};
   if (key === 'loops') return {family:'loops',views:['loops']};
+  if (key === 'spicules') return {family:'spicules',views:['spicules']};
   if (key === 'corona') return {family:'corona',views:['corona']};
   if (key === 'cycleMaximum') return {family:'cycle',views:['cycleMaximum']};
   if (key === 'cycleMinimum') return {family:'cycle',views:['cycleMinimum']};

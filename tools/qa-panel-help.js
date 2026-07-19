@@ -195,7 +195,12 @@ function inViewport(t){return t.rect.x>=0&&t.rect.y>=0&&t.rect.right<=t.vw&&t.re
   await tpage.waitForTimeout(700); // drawer termina o slide (transform .55s)
 
   // (d) long-press ~450 ms via CDP (toque genuíno do Chromium).
+  // As fontes do CI deixam o painel mais alto que no desktop local — o "?"
+  // de spots pode cair abaixo da dobra e o toque erraria o alvo. Rolar
+  // ANTES do gesto (o grace de scroll do tooltip não se aplica: nada aberto).
   const cdp=await touchCtx.newCDPSession(tpage);
+  await tpage.locator('.helpBtn[data-help-key="spots"]').scrollIntoViewIfNeeded();
+  await tpage.waitForTimeout(350);
   const box=await tpage.locator('.helpBtn[data-help-key="spots"]').boundingBox();
   await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:box.x+box.width/2,y:box.y+box.height/2}]});
   await tpage.waitForFunction(()=>!document.querySelector('#helpTip').hidden,null,{timeout:8000});

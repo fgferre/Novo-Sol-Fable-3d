@@ -26,6 +26,7 @@ import { createPerf } from './core/perf.js';
 import { createFlares } from './surface/flares.js';
 import { createDirector } from './camera/director.js';
 import { createPanel } from './ui/panel.js';
+import { PANEL_STRINGS } from './ui/strings.js';
 import { createSolInfo } from './debug/solinfo.js';
 import { createGpuProfile } from './debug/gpuprofile.js';
 import { createDiag } from './debug/diag.js';
@@ -66,6 +67,12 @@ function init(){
   var ctx = {};
   ctx.container = container;
   createConfig(ctx);
+  // PR-11: o #loading do index.html é fallback PT (pré-JS). Com o idioma já
+  // resolvido pelo config (URL > storage > navegador), o texto vira a língua
+  // da sessão ANTES do boot pesado. Decisão documentada: as DUAS mensagens
+  // de erro de boot acima (motor 3D ausente / WebGL falhou) seguem PT-only —
+  // podem disparar antes de qualquer resolução de idioma e são pré-experiência.
+  loadingEl.textContent = PANEL_STRINGS[ctx.eduLang === 'en' ? 'en' : 'pt'].loading;
   var urlQ = ctx.urlQ, DET = ctx.DET, DET_HOLD = ctx.DET_HOLD, srand = ctx.srand,
       knob = ctx.knob, lk = ctx.lk, LOOK = ctx.LOOK, LOOK_SUNSHINE = ctx.LOOK_SUNSHINE,
       RENDER_SCALE = ctx.RENDER_SCALE, loopRand = ctx.loopRand, cmeRand = ctx.cmeRand;

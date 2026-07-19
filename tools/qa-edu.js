@@ -705,6 +705,13 @@ async function layoutState(page){
   const coronaEarly=await coronaPage.evaluate(()=>{
     window.__solInfo.setRotSpeed(0);
     for(let j=0;j<window.__solInfo.promLife().length;j++)window.__solInfo.setPromLife(j,.01);
+    // Uma proeminência pode ter subido ao palco ANTES do quiesce e, a
+    // speed=0.05, viver ~190s de parede — e a fila pendente promove a
+    // próxima quando ela morre (70>55: a coroa morreria de fome; corrida
+    // flagrada no CI do PR-14). Toggle edu off→on limpa palco E fila; com
+    // promLife zerada nada re-matura e a coroa entra sem esperar ninguém.
+    window.__solInfo.setControl('edu',0,{persist:false});
+    window.__solInfo.setControl('edu',1,{persist:false});
     return {state:window.__solInfo.eduCoronaState(),active:window.__solInfo.eduInfo().active.map((x)=>x.type)};
   });
   // A janela é respeitada: com o relógio ainda abaixo de 8s não pode haver
@@ -810,10 +817,15 @@ async function layoutState(page){
     JSON.stringify({strength:holeMinSignal.strength,generation:holeMinSignal.generation,dir:holeMinSignal.dir.map((v)=>+v.toFixed(3))}));
   // câmera na direção publicada (mesma conversão de forceVisible: dir é
   // local ao Sol, a âncora aplica rotY) e sustentação >3s de parede — o
-  // cartão LOCAL nasce com âncora coronal na tela. Um cartão global de
-  // mínimo pode ocupar o palco primeiro (prioridade 65>56): o emissor
-  // retenta a cada frame e o waitForFunction cobre a janela de leitura.
+  // cartão LOCAL nasce com âncora coronal na tela. O cartão global de
+  // mínimo (65>56) pode ter nascido durante o warp e, a speed=0.05, viver
+  // ~200s de parede — corrida flagrada no CI do PR-14 (estourou os 300s
+  // por segundos). Palco limpo determinístico: toggle edu off→on (padrão
+  // do forceCycleDiscovery); o mínimo NÃO re-dispara (eduCycleMinKey
+  // travada) e o buraco entra sem esperar ninguém morrer.
   await holePage.evaluate(()=>{
+    window.__solInfo.setControl('edu',0,{persist:false});
+    window.__solInfo.setControl('edu',1,{persist:false});
     const h=window.__solInfo.eduCoronaHoleState(),s=window.__solInfo.state();
     window.__solInfo.setView(Math.atan2(h.dir[2],h.dir[0])-s.rotY,Math.acos(Math.max(-1,Math.min(1,h.dir[1]))),s.fitDist*1.3);
   });

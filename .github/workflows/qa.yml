@@ -93,6 +93,11 @@ jobs:
       # DOM com sentinelas nos dois idiomas, sem string residual.
       - name: QA do i18n do painel (PT↔EN sem resíduo)
         run: node tools/qa-panel-i18n.js dist-single/index.html
+      # PR-14: ajuda "?" em TODOS os controles — completude por walk do DOM
+      # (zero console.warn '[help]'), hover/teclado/long-press/tap, PT→EN e
+      # tooltip sempre dentro do viewport (960×600 e 390×844).
+      - name: QA da ajuda "?" do painel (completude + interações + PT→EN)
+        run: node tools/qa-panel-help.js dist-single/index.html
       # As máscaras excluem as duas faixas de texto DOM (título e base):
       # fontes rasterizam diferente por SO e não são o objeto deste gate —
       # o render da estrela continua comparado pixel a pixel, sem máscara.

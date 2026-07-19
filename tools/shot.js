@@ -9,7 +9,9 @@ const { chromium } = require('playwright');
 const outDir = process.argv[2] || 'shots';
 const fileArgIdx = process.argv.indexOf('--file');
 const htmlFile = fileArgIdx > -1 ? process.argv[fileArgIdx + 1] : 'dist-single/index.html';
-const url = 'file://' + path.resolve(htmlFile);
+// intro=0 (PR-5): as fotos assumem a câmera no fit — sem a abertura
+// cinematográfica do 1º acesso (que roda em contexto sem storage).
+const url = 'file://' + path.resolve(htmlFile) + '?intro=0';
 
 (async () => {
   fs.mkdirSync(outDir, { recursive: true });

@@ -110,9 +110,14 @@ export function createEduTour(ctx){
   var actions=document.createElement('div');actions.className='tour-actions';
   var expand=document.createElement('button');expand.type='button';expand.className='primary';expand.id='eduTourExpand';
   var next=document.createElement('button');next.type='button';next.className='primary';next.id='eduTourNext';
+  // PR-5 — sessão de cinema: só existe na última sala, quando a etapa está
+  // pronta. Encerra a visita e entrega ao director (que devolve a câmera em
+  // qualquer input) — a saída da visita continua sendo o botão `next`/`exit`.
+  var cinema=document.createElement('button');cinema.type='button';cinema.className='primary';cinema.id='eduTourCinema';
+  cinema.hidden=true;
   var resume=document.createElement('button');resume.type='button';resume.className='quiet';resume.id='eduTourResume';
   var exit=document.createElement('button');exit.type='button';exit.className='quiet';exit.id='eduTourExit';
-  actions.appendChild(expand);actions.appendChild(next);actions.appendChild(resume);actions.appendChild(exit);
+  actions.appendChild(expand);actions.appendChild(next);actions.appendChild(cinema);actions.appendChild(resume);actions.appendChild(exit);
   card.appendChild(kicker);card.appendChild(progress);card.appendChild(term);card.appendChild(headline);card.appendChild(status);card.appendChild(body);card.appendChild(actions);root.appendChild(card);ui.appendChild(root);
 
   // Chip de palco: o convite à visita fica visível no palco, fora da
@@ -134,13 +139,42 @@ export function createEduTour(ctx){
   ui.appendChild(chip);
   function chipCopy(){var t=copy();chip.textContent=t.chip;chip.setAttribute('aria-label',t.chipAria);}
   function syncChip(){
-    chip.hidden=state.active||chipState.engaged||chipState.seen>2||!!(ctx.directorActive&&ctx.directorActive());
+    // PR-5: a abertura cinematográfica segura o palco; o relógio de 700ms
+    // abaixo devolve o chip logo após o plano-sequência terminar.
+    chip.hidden=state.active||chipState.engaged||chipState.seen>2||!!(ctx.directorActive&&ctx.directorActive())
+      ||!!(ctx.introActive&&ctx.introActive());
   }
   chipCopy();syncChip();
   chip.addEventListener('click',function(){start();});
   // O diretor liga/desliga fora do nosso fluxo; um relógio lento basta para
   // o chip ceder o palco à sessão de cinema e voltar depois.
   setInterval(syncChip,700);
+
+  // PR-5 — halo de destaque da visita: o MESMO padrão do hotspot de edu.js
+  // (canvas radial-gradient → CanvasTexture → SpriteMaterial aditivo com
+  // profundidade, filho do sunMesh). Criado UMA vez; posicionado por etapa
+  // na direção OBJECT-space da fonte real. eduTourActive já suprime o halo
+  // da exploração livre (eduEvent retorna cedo e eduTick esconde o visual),
+  // então nunca há dois destaques disputando a cena.
+  var haloCanvas=document.createElement('canvas');
+  haloCanvas.width=haloCanvas.height=128;
+  var h2=haloCanvas.getContext('2d');
+  var haloGrad=h2.createRadialGradient(64,64,25,64,64,62);
+  haloGrad.addColorStop(0,'rgba(255,214,155,0)');
+  haloGrad.addColorStop(.46,'rgba(255,196,112,.12)');
+  haloGrad.addColorStop(.62,'rgba(255,174,80,.95)');
+  haloGrad.addColorStop(.69,'rgba(255,128,38,.20)');
+  haloGrad.addColorStop(1,'rgba(255,100,20,0)');
+  h2.fillStyle=haloGrad;h2.fillRect(0,0,128,128);
+  var haloTexture=new THREE.CanvasTexture(haloCanvas);
+  var haloMaterial=new THREE.SpriteMaterial({map:haloTexture,color:0xffc080,transparent:true,
+    opacity:0,depthTest:true,depthWrite:false,blending:THREE.AdditiveBlending});
+  var halo=new THREE.Sprite(haloMaterial);
+  halo.visible=false;halo.renderOrder=8;
+  ctx.sunMesh.add(halo);
+  var haloDir=new THREE.Vector3();
+  var reducedMotion=false;
+  try{reducedMotion=!!(window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches);}catch(e){}
 
   function current(){return STEPS[state.index];}
   function lang(){return ctx.eduLang==='en'?'en':'pt';}
@@ -158,6 +192,7 @@ export function createEduTour(ctx){
       cardRect:cardRect,diskRect:{x:w*.5-radius,y:h*.5-radius,width:radius*2,height:radius*2},
       safeRect:{x:14,y:70,width:w-28,height:Math.max(0,cardRect.y-86)},
       chip:{visible:!!(chip&&!chip.hidden),rect:rectOf(chip)},
+      halo:{visible:!!halo.visible,opacity:haloMaterial.opacity},
       settled:state.ready&&(!state.assist||cameraSettled())
     };
   }
@@ -200,6 +235,10 @@ export function createEduTour(ctx){
     expand.disabled=!state.ready;
     next.textContent=state.index===STEPS.length-1?t.exit:t.next;
     next.disabled=!state.ready&&!state.source.unavailable;
+    // PR-5 — a última sala oferece a sessão de cinema quando está pronta.
+    // A chave de memoização já cobre index/ready/idioma: nada extra aqui.
+    cinema.hidden=!(state.index===STEPS.length-1&&state.ready);
+    cinema.textContent=t.cinema;
     resume.hidden=state.assist;resume.textContent=t.resume;
     exit.textContent=t.exit;
     // Os pontos de progresso só dependem de index/total.
@@ -250,7 +289,15 @@ export function createEduTour(ctx){
     if(!state.sourceDir)return null;
     return out.set(state.sourceDir[0],state.sourceDir[1],state.sourceDir[2]).applyQuaternion(ctx.sunMesh.quaternion).normalize();
   }
-  function cameraSettled(){return Math.abs(ctx.camDist-ctx.targetCamDist)<.035;}
+  function cameraSettled(){
+    // Com a rampa de entrada do cameraTick, o alvo de distância demora a
+    // sair do lugar — comparar camDist só com targetCamDist deixava o
+    // "settled" verdadeiro ANTES do enquadramento da visita abrir espaço
+    // para o cartão (flagrado em paisagem: cartão sobre o disco). Assentado
+    // de verdade = câmera E alvo convergidos à distância desejada da etapa.
+    var want=state.assist?desiredDistance():ctx.targetCamDist;
+    return Math.abs(ctx.camDist-want)<.05&&Math.abs(ctx.targetCamDist-want)<.05;
+  }
   function hasAmbientLoop(){
     for(var i=0;i<ctx.loopStatesA.length;i++)if(ctx.loopStatesA[i].ok)return true;
     return false;
@@ -408,6 +455,8 @@ export function createEduTour(ctx){
       }
     }
     state.active=false;state.phase='free';state.expanded=false;state.ready=false;state.timeFactor=1;state.panelOpen=false;
+    // PR-5: o tick não roda mais com a visita inativa — o halo apaga aqui.
+    halo.visible=false;haloMaterial.opacity=0;
     ctx.eduTourActive=false;ctx.eduTourTimeFactor=1;root.hidden=true;syncChip();notify();
     return reason||true;
   }
@@ -440,6 +489,14 @@ export function createEduTour(ctx){
   function cameraTick(rawDelta){
     if(!state.active||!state.assist||state.panelOpen)return;
     var step=current(),k=1-Math.exp(-Math.max(0,rawDelta)*3.5);
+    // PR-5 — envelope de entrada da etapa: nos primeiros ~0.9s após o
+    // configure() o ganho sobe em ease-in (rampa quadrática sobre
+    // state.entered) — a câmera ACELERA em direção ao alvo em vez de partir
+    // no ganho máximo. Após a rampa, o comportamento é o histórico. O micro
+    // push-in do cartão expandido continua via desiredDistance/targetCamDist
+    // (o mesmo suavizador) e não é tocado aqui.
+    var ramp=Math.min(1,state.entered/0.9);
+    k*=ramp*ramp;
     ctx.targetCamDist+= (desiredDistance()-ctx.targetCamDist)*k;
     var target=sourceWorld(world);
     if(!target||step.aim==='wide')return;
@@ -449,6 +506,36 @@ export function createEduTour(ctx){
     }else aim.copy(target);
     var th=Math.atan2(aim.z,aim.x),ph=Math.acos(clamp(aim.y,-1,1));
     ctx.theta=lerpAngle(ctx.theta,th,k);ctx.phi+= (ph-ctx.phi)*k;ctx.phi=clamp(ctx.phi,.18,Math.PI-.18);ctx.thetaVel=0;ctx.phiVel=0;
+  }
+  // PR-5 — halo de destaque nas etapas com fonte local. Visível apenas com
+  // etapa ativa, pronta, fonte disponível e mira ancorada (aim!=='wide' —
+  // as salas globais surface/corona/maximum/minimum não têm "um lugar").
+  // Guarda local (padrão updateSourceVisibility): estrutura ausente esconde
+  // o halo e registra no ring, sem derrubar o tick da visita.
+  function haloTick(){
+    try{
+      var step=current();
+      var show=state.active&&state.ready&&!state.source.unavailable&&step.aim!=='wide';
+      if(show){
+        if(step.id==='filament'||step.id==='prominence'){
+          var prom=ctx.promStates[state.source.sourceId];
+          if(prom)haloDir.copy(prom.meshes[0].userData.dir);else show=false;
+        }else if(step.id==='flare')haloDir.copy(ctx.surfFlareDir);
+        else if(step.id==='cme')haloDir.copy(ctx.cmeDir);
+        else if(state.sourceDir)haloDir.set(state.sourceDir[0],state.sourceDir[1],state.sourceDir[2]);
+        else show=false;
+      }
+      halo.visible=!!show;
+      if(!show){haloMaterial.opacity=0;return;}
+      // CME: a âncora acompanha a FRENTE da ejeção (cmeDir a 1.2R), não um
+      // ponto preso à superfície; nas demais, logo acima da fotosfera.
+      var anchor=step.id==='cme'?ctx.SUN_RADIUS*1.2:ctx.SUN_RADIUS*1.03;
+      halo.position.copy(haloDir).normalize().multiplyScalar(anchor);
+      halo.scale.setScalar(ctx.SUN_RADIUS*.3);
+      // Pulso de opacidade (padrão edu.js): presença viva sem gritar sobre
+      // o texto; com prefers-reduced-motion o brilho fica estável.
+      haloMaterial.opacity=reducedMotion?.5:.42+.16*Math.sin(state.entered*2.6);
+    }catch(e){halo.visible=false;haloMaterial.opacity=0;ctx.eduFault('tour-halo',e);}
   }
   function restoreTick(rawDelta){
     // Qualquer gesto NOVO durante o retorno cancela na hora — nunca
@@ -470,6 +557,7 @@ export function createEduTour(ctx){
     if(state.panelOpen){render();return;}
     state.entered+=Math.max(0,rawDelta);
     if(!state.ready)tickStep();else{updateSourceVisibility();syncFactor();}
+    haloTick();
     render();
   }
 
@@ -481,6 +569,17 @@ export function createEduTour(ctx){
   next.addEventListener('click',function(){markUser();nextStep();});
   exit.addEventListener('click',function(){markUser();end('user');});
   resume.addEventListener('click',function(){markUser();resumeFrame();});
+  // PR-5 — sessão de cinema: encerra a visita e entrega ao director. O
+  // retorno suave de pose que o end() arma é desligado — o director assume
+  // a câmera JÁ, e duas autorias lerpando a mesma pose seria briga. O
+  // director devolve o controle em qualquer input (directorUserExit).
+  cinema.addEventListener('click',function(){
+    if(!state.active||state.index!==STEPS.length-1||!state.ready)return;
+    markUser();
+    end('cinema');
+    restore.active=false;
+    if(ctx.directorStart)ctx.directorStart();
+  });
   ctx.eduTourStart=start;ctx.eduTourNext=nextStep;ctx.eduTourExit=end;ctx.eduTourExpand=setExpanded;ctx.eduTourUserExit=userExit;
   ctx.eduTourResumeFrame=resumeFrame;ctx.eduTourPanelChanged=panelChanged;ctx.eduTourCameraTick=cameraTick;ctx.eduTourTick=tick;ctx.eduTourInfo=stateSnapshot;
   ctx.onEduTourLanguageChange=function(){chipCopy();render();notify();};ctx.eduTourTimeFactor=1;ctx.eduTourActive=false;

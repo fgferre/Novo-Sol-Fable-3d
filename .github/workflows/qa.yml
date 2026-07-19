@@ -1,11 +1,14 @@
 name: QA
 
-# QA automatizado em todo push/PR: build Vite + regressão de paridade
-# visual (modo determinístico ?det=1 comparado pixel a pixel contra os
-# baselines commitados em qa/baselines) + QA de controles. O render usa
-# SwiftShader (software), então as imagens são reprodutíveis entre runs.
+# QA automatizado: build Vite + regressão de paridade visual (modo
+# determinístico ?det=1 comparado pixel a pixel contra os baselines
+# commitados em qa/baselines) + QA de controles. O render usa SwiftShader
+# (software), então as imagens são reprodutíveis entre runs.
+# PR-5 (Museu): push só dispara no main — em branches de PR o gatilho
+# pull_request já cobre; antes cada PR pagava 2 runs idênticos.
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 

@@ -73,6 +73,9 @@ export function createControls(ctx){
   function onPointerDown(e){
     // A visita nunca disputa uma câmera que a pessoa acabou de tocar: ela
     // mantém a etapa/cartão, mas solta o reenquadramento automático.
+    // PR-5: o mesmo gesto pula a abertura cinematográfica (hook ausente
+    // fora dela e sob ?det — if falsy, custo zero).
+    if (ctx.introUserSkip) ctx.introUserSkip();
     if (ctx.eduTourUserExit) ctx.eduTourUserExit('gesture');
     ctx.directorUserExit();   // FASE 5: input devolve a câmera ao usuário
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -185,6 +188,9 @@ export function createControls(ctx){
 
   function onWheel(e){
     e.preventDefault();
+    // PR-5: o skip vem ANTES do ajuste de zoom — a abertura solta a câmera
+    // no fit e a roda ajusta a partir dele, sem disputa de autoria.
+    if (ctx.introUserSkip) ctx.introUserSkip();
     if (ctx.eduTourUserExit) ctx.eduTourUserExit('gesture');
     ctx.directorUserExit();   // FASE 5: input devolve a câmera ao usuário
     ctx.targetCamDist += e.deltaY*0.0035*ctx.targetCamDist;
@@ -230,6 +236,7 @@ export function createControls(ctx){
     // Tab, Escape e qualquer tecla alheia à câmera não são edição da cena.
     // A guarda vem antes de devolver o controle do diretor ao usuário.
     if (!handled) return;
+    if (ctx.introUserSkip) ctx.introUserSkip();   // PR-5: tecla pula a abertura
     if (ctx.eduTourUserExit) ctx.eduTourUserExit('keyboard');
     ctx.directorUserExit();   // FASE 5: input de câmera devolve o controle
     // passo imediato + impulso de inércia: responde já no keydown mesmo

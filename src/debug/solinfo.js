@@ -256,15 +256,13 @@ export function createSolInfo(ctx){
       };
       // Adaptador de QA para a MESMA região magnética que ancora o grupo
       // educativo de manchas. Não lê os spots virtuais do shader.
+      // PR-7: consumidor da fonte única (sim/phenomena.js) — mesma conta,
+      // MESMO retorno de sempre (sourceId/generation/dir/strength).
       window.__solInfo.eduSpotRegion = function(i){
         var idx = Math.max(0,Math.min(pairStates.length-1,i|0));
-        var ps = pairStates[idx];
-        var x = ps.lead.x + ps.foll.x, y = ps.lead.y + ps.foll.y, z = ps.lead.z + ps.foll.z;
-        var l = Math.sqrt(x*x+y*y+z*z) || 1;
-        var leadK = Math.abs(ps.lead.w)/Math.max(.001,Math.abs(ps.baseQ));
-        var follK = Math.abs(ps.foll.w)/Math.max(.001,Math.abs(ps.baseQ)*.85);
-        return { sourceId:idx, generation:ps.eduGeneration,
-          dir:[x/l,y/l,z/l], strength:Math.min(leadK,follK) };
+        var r = ctx.phenomena.spots.region(idx);
+        return { sourceId:r.sourceId, generation:r.generation,
+          dir:r.dir, strength:r.strength };
       };
       // FASE 3 — QA do ciclo de 11 anos: fase/índice/sinais correntes...
       window.__solInfo.cycleInfo = function(){

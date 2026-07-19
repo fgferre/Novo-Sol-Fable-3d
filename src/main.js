@@ -8,6 +8,7 @@ import { NOISE_GLSL as NOISE_GLSL_SRC, WORLEY_GLSL, SFTDIR_GLSL, BFIELD_GLSL, LI
 import { createConfig } from './core/config.js';
 import { createGranulation } from './sim/granulation.js';
 import { createActivity } from './sim/activity.js';
+import { createPhenomena, PHEN_T } from './sim/phenomena.js';
 import { createPIL } from './surface/pil.js';
 import { createChromo } from './surface/chromo.js';
 import { createSunBase, createSunUniforms, createSunMesh } from './surface/sun.js';
@@ -206,6 +207,11 @@ function init(){
   // dos gates de knob).
   createGpuProfile(ctx);
   var gpuFrameBegin = ctx.gpuFrameBegin, gpuFrameEnd = ctx.gpuFrameEnd;
+
+  // PR-7 — fonte única da física observável (ctx.phenomena). Leitura pura
+  // fechando sobre ctx; construída SEMPRE (inclusive sob ?det=1 — não toca
+  // DOM/GPU/estado/tempo), ANTES do solinfo e dos consumidores edu/tour.
+  createPhenomena(ctx);
 
   createSolInfo(ctx);
 
@@ -506,12 +512,13 @@ function init(){
       // (fase/amplitude), e a chave por meio-ciclo impede repetição.
       if (!DET && ctx.EDU_K > .5 && ctx.eduEvent){
         var eduCycleTotal=CYCLE_PHASE0+ctx.cycleTime/CYCLE_PERIOD;
-        // O mínimo atravessa a fronteira 0/1; +.04 torna os dois lados da
-        // mesma janela a mesma chave (evita explicar duas vezes a virada).
+        // O mínimo atravessa a fronteira 0/1; +CYCLE_PHASE_WIN torna os dois
+        // lados da mesma janela a mesma chave (evita explicar 2x a virada).
+        // PR-7: máximo/mínimo saem da fonte única (mesmos limiares da visita).
         var eduMaxKey=Math.floor(eduCycleTotal)*2+1;
-        var eduMinKey=Math.floor(eduCycleTotal+.04)*2;
-        var atMax=Math.abs(ctx.cyclePhase01-.5)<.04&&ctx.cycleAmpK>1.12;
-        var atMin=(ctx.cyclePhase01<.04||ctx.cyclePhase01>.96)&&ctx.cycleAmpK<.50;
+        var eduMinKey=Math.floor(eduCycleTotal+PHEN_T.CYCLE_PHASE_WIN)*2;
+        var atMax=ctx.phenomena.cycle.atMax();
+        var atMin=ctx.phenomena.cycle.atMin();
         if(atMax){
           if(ctx.eduCycleMaxKey!==eduMaxKey&&ctx.eduEvent('cycleMaximum',ctx.cyclePhase01,ctx.cycleAmpK,ctx.cyclePolF,1,eduMaxKey))ctx.eduCycleMaxKey=eduMaxKey;
         }else if(atMin){
@@ -674,22 +681,18 @@ function init(){
       }
       for (var epi=0; epi<promStates.length; epi++){
         var eps = promStates[epi];
-        var edir = eps.meshes[0].userData.dir;
-        var eEmit = Math.max(eps.meshes[0].material.uniforms.uIntensity.value,
-          eps.meshes[1].material.uniforms.uIntensity.value);
-        var eAbsorb = eps.flat && eps.flat.visible ? eps.flat.material.uniforms.uAbsorb.value : 0;
-        var eFacing = promWorldTmp.copy(edir).applyQuaternion(prominenceGroup.quaternion).dot(camDirN);
         // O mesmo limiar que a cena usa para tornar a estrutura legível:
         // emissão fora do limbo; absorção real sobre o disco. A faixa de
         // sobreposição vira uma única narrativa "filamento e proeminência".
-        var isFilament = eAbsorb >= 0.055;
-        var isProminence = eEmit >= 0.34 && eFacing < 0.28;
-        ctx.promEduModes[epi] = isFilament ? (isProminence ? 3 : 2) : 1;
+        // PR-7: a fotografia observável (emit/absorb/facing/mode) vem da
+        // fonte única — o fluxo (arrays p/ edu.js, anúncio, inércia) fica.
+        var ep = ctx.phenomena.prominence.state(epi);
+        ctx.promEduModes[epi] = ep.mode;
         ctx.promEduHeights[epi] = (eps.eduHeight || SUN_RADIUS*0.12) * 0.56;
-        if (eps.eduAnnouncedGeneration !== eps.eduGeneration && eps.env >= 0.98 &&
-            eps.fieldK >= 0.52 && (isFilament || isProminence)){
-          if (ctx.eduEvent('prominence',edir.x,edir.y,edir.z,Math.max(eEmit,eAbsorb),epi,eps.eduGeneration))
-            eps.eduAnnouncedGeneration = eps.eduGeneration;
+        if (eps.eduAnnouncedGeneration !== ep.generation && ep.env >= PHEN_T.PROM_ENV_EMIT &&
+            ep.fieldK >= PHEN_T.PROM_FIELD_EMIT && (ep.isFilament || ep.isProminence)){
+          if (ctx.eduEvent('prominence',ep.dir.x,ep.dir.y,ep.dir.z,Math.max(ep.emit,ep.absorb),epi,ep.generation))
+            eps.eduAnnouncedGeneration = ep.generation;
         }
       }
     }
@@ -815,20 +818,16 @@ function init(){
     // desativada: a coleção e o cartão devem sempre corresponder a algo que
     // a pessoa consegue ver na cena, não apenas ao campo magnético interno.
     if (!DET && ctx.EDU_K > .5 && ctx.SPOTS_K > .5 && !ctx.eduSpotExplained){
+      // PR-7: força/direção do grupo vêm da fonte única (phenomena.spots);
+      // a inércia (eduAnnouncedGeneration/eduSpotExplained) continua aqui.
       for (var eduSpotI=0; eduSpotI<pairStates.length; eduSpotI++){
         var eduSpot = pairStates[eduSpotI];
-        if (eduSpot.eduAnnouncedGeneration === eduSpot.eduGeneration) continue;
-        var leadStrength = Math.abs(eduSpot.lead.w) / Math.max(.001,Math.abs(eduSpot.baseQ));
-        var follStrength = Math.abs(eduSpot.foll.w) / Math.max(.001,Math.abs(eduSpot.baseQ)*.85);
-        var groupStrength = Math.min(leadStrength,follStrength);
-        if (groupStrength < .70) continue;
-        var groupX = eduSpot.lead.x + eduSpot.foll.x;
-        var groupY = eduSpot.lead.y + eduSpot.foll.y;
-        var groupZ = eduSpot.lead.z + eduSpot.foll.z;
-        var groupLen = Math.sqrt(groupX*groupX + groupY*groupY + groupZ*groupZ);
-        if (groupLen < .001) continue;
-        if (ctx.eduEvent('spots',groupX/groupLen,groupY/groupLen,groupZ/groupLen,groupStrength,eduSpotI,eduSpot.eduGeneration)){
-          eduSpot.eduAnnouncedGeneration = eduSpot.eduGeneration;
+        var eduRegion = ctx.phenomena.spots.region(eduSpotI);
+        if (eduSpot.eduAnnouncedGeneration === eduRegion.generation) continue;
+        if (eduRegion.strength < PHEN_T.SPOTS_STRENGTH_EMIT) continue;
+        if (eduRegion.len < .001) continue;
+        if (ctx.eduEvent('spots',eduRegion.dir[0],eduRegion.dir[1],eduRegion.dir[2],eduRegion.strength,eduSpotI,eduRegion.generation)){
+          eduSpot.eduAnnouncedGeneration = eduRegion.generation;
           ctx.eduSpotExplained = true;
           break;
         }

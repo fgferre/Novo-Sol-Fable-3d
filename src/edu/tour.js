@@ -5,6 +5,9 @@
 
 import * as THREE from 'three';
 import { EDU_CONTENT } from './content.js';
+// PR-7: toda pergunta de física observável ("há flare? qual o melhor par?")
+// passa por ctx.phenomena (sim/phenomena.js) — os limiares nomeados moram lá.
+import { PHEN_T } from '../sim/phenomena.js';
 
 function clamp(v,min,max){ return Math.max(min,Math.min(max,v)); }
 function lerpAngle(a,b,k){
@@ -256,16 +259,11 @@ export function createEduTour(ctx){
   function clearOverrides(){if(ctx.clearControlOverrides)ctx.clearControlOverrides('edu-tour');}
   function setOverride(key,value){if(ctx.setControlOverride)ctx.setControlOverride('edu-tour',key,value);}
   function frontPair(){
-    var best=-1,bestK=-1;
-    for(var i=0;i<ctx.pairStates.length;i++){
-      var ps=ctx.pairStates[i];
-      var k=Math.min(Math.abs(ps.lead.w)/Math.max(.001,Math.abs(ps.baseQ)),Math.abs(ps.foll.w)/Math.max(.001,Math.abs(ps.baseQ)*.85));
-      if(k>bestK){bestK=k;best=i;}
-    }
-    if(best<0)return false;
-    var pair=ctx.pairStates[best],x=pair.lead.x+pair.foll.x,y=pair.lead.y+pair.foll.y,z=pair.lead.z+pair.foll.z,l=Math.sqrt(x*x+y*y+z*z)||1;
-    state.source={kind:'active-region',sourceId:best,generation:pair.eduGeneration,physical:bestK>=.55,visible:false,unavailable:false};
-    state.sourceDir=[x/l,y/l,z/l];return true;
+    // PR-7: o "melhor par magnético" vem da fonte única (phenomena.spots).
+    var best=ctx.phenomena.spots.best();
+    if(!best)return false;
+    state.source={kind:'active-region',sourceId:best.sourceId,generation:best.generation,physical:best.strength>=PHEN_T.PAIR_STRENGTH_TOUR,visible:false,unavailable:false};
+    state.sourceDir=best.dir;return true;
   }
   function matureProm(){
     var best=-1,bestK=-1;
@@ -275,7 +273,7 @@ export function createEduTour(ctx){
     }
     if(best<0)return false;
     var p=ctx.promStates[best],d=p.meshes[0].userData.dir;
-    state.source={kind:current().kind,sourceId:best,generation:p.eduGeneration,physical:bestK>.1,visible:false,unavailable:false};
+    state.source={kind:current().kind,sourceId:best,generation:p.eduGeneration,physical:bestK>PHEN_T.PROM_MATURE_TOUR,visible:false,unavailable:false};
     state.sourceDir=[d.x,d.y,d.z];return true;
   }
   function sourceWorld(out){
@@ -286,8 +284,8 @@ export function createEduTour(ctx){
       if(!prom)return null;
       return out.copy(prom.meshes[0].userData.dir).applyQuaternion(ctx.prominenceGroup.quaternion).normalize();
     }
-    if(step.id==='flare')return out.copy(ctx.surfFlareDir).applyQuaternion(ctx.sunMesh.quaternion).normalize();
-    if(step.id==='cme')return out.copy(ctx.cmeDir).applyQuaternion(ctx.sunMesh.quaternion).normalize();
+    if(step.id==='flare')return ctx.phenomena.flare.dir(out).applyQuaternion(ctx.sunMesh.quaternion).normalize();
+    if(step.id==='cme')return ctx.phenomena.cme.dir(out).applyQuaternion(ctx.sunMesh.quaternion).normalize();
     if(!state.sourceDir)return null;
     return out.set(state.sourceDir[0],state.sourceDir[1],state.sourceDir[2]).applyQuaternion(ctx.sunMesh.quaternion).normalize();
   }
@@ -300,21 +298,8 @@ export function createEduTour(ctx){
     var want=state.assist?desiredDistance():ctx.targetCamDist;
     return Math.abs(ctx.camDist-want)<.05&&Math.abs(ctx.targetCamDist-want)<.05;
   }
-  function hasAmbientLoop(){
-    for(var i=0;i<ctx.loopStatesA.length;i++)if(ctx.loopStatesA[i].ok)return true;
-    return false;
-  }
-  // PR-6 — gate da coroa por FÓTONS, não por objeto. O antigo
-  // `physical=!!ctx.coronaRays` era tautológico (o mesh existe em todo
-  // tier). Físico de verdade = o plano de raias está no draw E os uniforms
-  // que produzem luz no anel (uHalo/uRayBoost, alimentados pelos overrides
-  // halo/ray do configure) são positivos. Se o subsistema estiver desligado
-  // ou os overrides não produzirem fótons, a etapa reporta indisponível com
-  // o texto honesto — nada de prometer uma coroa que não está na tela.
-  function coronaPhotons(){
-    var u=ctx.coronaRaysUniforms;
-    return !!(ctx.coronaRays&&ctx.coronaRays.visible&&u&&u.uHalo&&u.uHalo.value>0&&u.uRayBoost&&u.uRayBoost.value>0);
-  }
+  // PR-7: hasAmbientLoop e coronaPhotons (gate por fótons do PR-6) migraram
+  // para sim/phenomena.js — a visita consome ctx.phenomena.loops/corona.
   function desiredDistance(){
     // O cartão expandido cresce para cima no retrato. Abrimos espaço de
     // verdade (em vez de deixar o texto cobrir a borda do disco), e a câmera
@@ -334,21 +319,23 @@ export function createEduTour(ctx){
     // Os acessos profundos (uniforms de materiais que a simulação pode
     // recriar) ficam sob guarda: uma estrutura ausente marca a fonte como
     // não-física em vez de derrubar o tick da visita.
+    // PR-7: as perguntas de física saem de ctx.phenomena — mesmos sinais,
+    // mesmos limiares (agora nomeados em PHEN_T), só a fonte mudou.
     try{
-      var step=current(),p=sourceProjection();
+      var step=current(),p=sourceProjection(),phen=ctx.phenomena;
       state.source.visible=!!p.visible;
-      if(step.id==='flare')state.source.physical=ctx.surfFlareT<12&&ctx.surfFlareAmp>0;
-      else if(step.id==='cme')state.source.physical=ctx.cmeT<900&&ctx.cmeT>0;
-      else if(step.id==='loops')state.source.physical=hasAmbientLoop();
+      if(step.id==='flare')state.source.physical=phen.flare.active();
+      else if(step.id==='cme')state.source.physical=phen.cme.active();
+      else if(step.id==='loops')state.source.physical=phen.loops.anyAmbient();
       else if(step.id==='filament'){
-        var fil=ctx.promStates[state.source.sourceId];
-        state.source.physical=!!(fil&&fil.flat&&fil.flat.visible&&fil.flat.material.uniforms.uAbsorb.value>.02);
+        var fil=phen.prominence.state(state.source.sourceId);
+        state.source.physical=!!(fil&&fil.absorb>PHEN_T.FILAMENT_ABSORB_TOUR);
       }else if(step.id==='prominence'){
-        var prom=ctx.promStates[state.source.sourceId];
-        state.source.physical=!!(prom&&Math.max(prom.meshes[0].material.uniforms.uIntensity.value,prom.meshes[1].material.uniforms.uIntensity.value)>.04);
-      }else if(step.id==='corona')state.source.physical=coronaPhotons();
-      else if(step.id==='maximum')state.source.physical=Math.abs(ctx.cyclePhase01-.5)<.04&&ctx.cycleAmpK>1.12;
-      else if(step.id==='minimum')state.source.physical=(ctx.cyclePhase01<.04||ctx.cyclePhase01>.96)&&ctx.cycleAmpK<.5;
+        var prom=phen.prominence.state(state.source.sourceId);
+        state.source.physical=!!(prom&&prom.emit>PHEN_T.PROM_EMIT_TOUR);
+      }else if(step.id==='corona')state.source.physical=phen.corona.photons();
+      else if(step.id==='maximum')state.source.physical=phen.cycle.atMax();
+      else if(step.id==='minimum')state.source.physical=phen.cycle.atMin();
     }catch(e){state.source.physical=false;ctx.eduFault('source-visibility',e);}
   }
   function record(){
@@ -380,13 +367,13 @@ export function createEduTour(ctx){
     if(id==='flare')setOverride('burst',.55);
     if(id==='cme'){
       setOverride('burst',.55);setOverride('cme',.92);
-      if(ctx.CME_STEPS<=0||ctx.cmeKilled)state.source.unavailable=true;
+      if(!ctx.phenomena.cme.available())state.source.unavailable=true;
     }
     if(id==='filament'||id==='prominence'){setOverride('fprom',.9);matureProm();}
     // PR-6: o físico da coroa é lido DEPOIS dos overrides — são eles que
     // garantem fótons mesmo com halo/ray zerados pelo visitante (a visita
     // re-ilumina por empréstimo e devolve tudo no clearOverrides do fim).
-    if(id==='corona'){setOverride('halo',.9);setOverride('ray',1.15);setOverride('cact',.7);state.source.physical=coronaPhotons();}
+    if(id==='corona'){setOverride('halo',.9);setOverride('ray',1.15);setOverride('cact',.7);state.source.physical=ctx.phenomena.corona.photons();}
     if(id==='maximum'||id==='minimum'){setOverride('cycle',1);state.source.kind=id==='maximum'?'cycleMaximum':'cycleMinimum';}
     if(id==='surface'){state.source.physical=!!ctx.sunMesh;}
     syncFactor();render();notify();
@@ -398,7 +385,7 @@ export function createEduTour(ctx){
     try{return fn();}catch(e){ctx.eduFault(label,e);return null;}
   }
   function tickStep(){
-    var id=current().id;
+    var id=current().id,phen=ctx.phenomena;
     if(state.source.unavailable){if(state.entered>.15)ready();return;}
     if(id==='surface'){
       if(state.entered>.22)ready();return;
@@ -407,7 +394,7 @@ export function createEduTour(ctx){
       // PR-6: só libera com fótons de verdade no anel; os overrides são
       // síncronos, então 2.5s sem luz significa subsistema desligado —
       // a etapa assume o texto honesto de indisponível.
-      state.source.physical=coronaPhotons();
+      state.source.physical=phen.corona.photons();
       if(state.source.physical){if(state.entered>.22)ready();}
       else if(state.entered>2.5){state.source.unavailable=true;ready();}
       return;
@@ -418,7 +405,7 @@ export function createEduTour(ctx){
     if(id==='loops'){
       // O mesh pode estar ligado antes de haver uma linha de campo traçada.
       // Só liberamos a narrativa depois de uma estrutura real existir.
-      if(state.source.sourceId>=0&&ctx.LOOP_K>.01&&hasAmbientLoop())ready();
+      if(state.source.sourceId>=0&&ctx.LOOP_K>PHEN_T.LOOP_KNOB_MIN&&phen.loops.anyAmbient())ready();
       else if(state.entered>15){state.source.unavailable=true;ready();}
       return;
     }
@@ -427,14 +414,14 @@ export function createEduTour(ctx){
         var flare=canRun(ctx.canPreviewBurst,'can-preview-burst');
         if(flare&&flare.ok){var fired=canRun(ctx.previewBurst,'preview-burst');if(fired&&fired.ok){state.fired=true;state.source.kind='flare';state.source.physical=true;state.source.sourceId=state.source.sourceId<0?0:state.source.sourceId;}}
       }
-      if(state.fired&&ctx.surfFlareT>.08&&ctx.surfFlareT<10)ready();return;
+      if(state.fired&&phen.flare.t()>PHEN_T.FLARE_READY_MIN&&phen.flare.t()<PHEN_T.FLARE_READY_MAX)ready();return;
     }
     if(id==='cme'){
       if(!state.fired){
         var cme=canRun(ctx.canPreviewCME,'can-preview-cme');
         if(cme&&cme.ok){var launched=canRun(ctx.previewCME,'preview-cme');if(launched&&launched.ok){state.fired=true;state.source.kind='cme';state.source.physical=true;}}
       }
-      if(state.fired&&ctx.cmeT>.18&&ctx.cmeT<10)ready();return;
+      if(state.fired&&phen.cme.t()>PHEN_T.CME_READY_MIN&&phen.cme.t()<PHEN_T.CME_READY_MAX)ready();return;
     }
     if(id==='filament'||id==='prominence'){
       updateSourceVisibility();
@@ -545,8 +532,8 @@ export function createEduTour(ctx){
         if(step.id==='filament'||step.id==='prominence'){
           var prom=ctx.promStates[state.source.sourceId];
           if(prom)haloDir.copy(prom.meshes[0].userData.dir);else show=false;
-        }else if(step.id==='flare')haloDir.copy(ctx.surfFlareDir);
-        else if(step.id==='cme')haloDir.copy(ctx.cmeDir);
+        }else if(step.id==='flare')ctx.phenomena.flare.dir(haloDir);
+        else if(step.id==='cme')ctx.phenomena.cme.dir(haloDir);
         else if(state.sourceDir)haloDir.set(state.sourceDir[0],state.sourceDir[1],state.sourceDir[2]);
         else show=false;
       }

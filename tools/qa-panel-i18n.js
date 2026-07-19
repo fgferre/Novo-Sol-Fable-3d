@@ -56,6 +56,8 @@ const SENTINELS=[
   ['coleção','collection'],
   ['Ainda não observada','Not observed yet'],
   ['Limpar descobertas observadas','Clear observed discoveries'],
+  // PR-12: postal na seção experiência.
+  ['Guardar esta vista','Save this view'],
 ];
 function present(capture,needle){return capture.some((s)=>s.indexOf(needle)>=0);}
 function missing(capture,side){

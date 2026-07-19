@@ -388,6 +388,16 @@ function init(){
   ctx.hideHint = function(){ if(hintEl) hintEl.style.opacity='0'; };
   ctx.hintHideTimer = setTimeout(ctx.hideHint, 6000);
 
+  // PR-12 — postal "guardar esta vista": o canvas WebGL NÃO tem
+  // preserveDrawingBuffer (custo permanente de cópia por frame só para uma
+  // captura eventual), então toDataURL fora do frame devolve preto. O hook
+  // agenda um callback; o FIM do animate corrente (logo após o composite ir
+  // para a tela) faz o toDataURL — mesma tarefa JS, buffer ainda válido.
+  // Sob ?det o botão do painel nem existe; aqui sobra só o if falsy por
+  // frame (convenção dos gates de knob) — paridade por construção.
+  var postcardCapture = null;
+  ctx.capturePostcard = function(cb){ postcardCapture = cb || null; return !!cb; };
+
   // Camada educativa opt-in. Sob ?det=1 a fábrica retorna antes de criar
   // DOM, textura, listener ou tick; ?edu=1 habilita a primeira fatia.
   createEdu(ctx);
@@ -924,6 +934,17 @@ function init(){
           ctx.eduSpiculesExplained = true;
       } else ctx.eduLimbT = 0;
     }
+    // Museu Solar (PR-12) — conclusão da coleção: quando a 11ª família entra
+    // no store (ou uma carga chega completa de outra aba/restauração), o
+    // collection.js arma um LATCH booleano — aqui é só um if falsy por
+    // frame, nunca uma leitura de localStorage no caminho quente. O cartão
+    // é GLOBAL com prioridade 110 (assume o palco de qualquer leitura) e a
+    // emissão retenta a cada frame: durante a visita guiada eduEvent recusa
+    // e o cartão espera a exploração livre voltar. Só o aceite desarma o
+    // latch e persiste `celebrated` — uma vez na vida do aparelho.
+    if (!DET && ctx.EDU_K > .5 && ctx.eduCollectionCelebrationPending &&
+        ctx.eduEvent('collectionComplete',0,0,0,1,-1) && ctx.markEduCollectionCelebrated)
+      ctx.markEduCollectionCelebrated();
     // PR-2: mesma blindagem — a descoberta espontânea nunca derruba a cena.
     if (ctx.eduTick){
       try { ctx.eduTick(rawDelta); }
@@ -1015,6 +1036,19 @@ function init(){
     renderer.setRenderTarget(null);
     renderer.render(compScene, quadCamera);
     if (gpuFrameEnd) gpuFrameEnd();
+
+    // PR-12 — captura do postal NO MESMO FRAME: o composite acabou de ir ao
+    // backbuffer nesta mesma tarefa JS, então toDataURL lê a imagem real sem
+    // preserveDrawingBuffer. Depois do gpuFrameEnd: o readback síncrono não
+    // contamina o timer de GPU do ?profile=1. Uma captura por clique; o
+    // callback (composição/entrega no painel) roda fora do caminho quente.
+    if (postcardCapture){
+      var postcardCb = postcardCapture; postcardCapture = null;
+      var postcardData = '';
+      try { postcardData = renderer.domElement.toDataURL('image/png'); } catch(e){}
+      try { postcardCb(postcardData); }
+      catch(e){ ctx.eduFault('postcard-capture', e); }
+    }
 
     // HUD: atualiza a ~2Hz com as mesmas métricas do __solInfo.perf()
     ctx.hudAccum += rawDelta;

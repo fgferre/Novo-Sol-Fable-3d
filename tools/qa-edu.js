@@ -1,7 +1,11 @@
 // QA da primeira fatia educativa: flare real, idioma, layout, oclusão,
-// movimento reduzido e guarda absoluta do modo determinístico.
+// movimento reduzido, guarda absoluta do modo determinístico e o gate da
+// coroa por FÓTONS (PR-6): o knob `ray` precisa mudar luz de verdade no
+// anel 1.15R–1.6R ao redor do disco.
+const fs=require('fs');
 const path=require('path');
 const{chromium}=require('playwright');
+const{PNG}=require('pngjs');
 const htmlFile=process.argv[2]||'dist-single/index.html';
 const base='file://'+path.resolve(htmlFile);
 let browser,fails=0;
@@ -535,6 +539,69 @@ async function layoutState(page){
   const reducedInfo=await reduced.evaluate(()=>window.__solInfo.eduInfo());
   check('movimento reduzido preserva conteúdo sem pulso',!!reducedFired&&reducedInfo.reducedMotion&&reducedInfo.active[0].visible);
   await reducedContext.close();
+
+  // ————— PR-6 · Gate de coroa por FÓTONS —————
+  // A visita afirma "coroa e streamers" — este gate garante que o knob que
+  // ela empresta (`ray`) produz LUZ mensurável, não só um objeto na cena.
+  // Método (documentado): página det-estável (?det&hold — mesma família de
+  // parâmetros do parity, frames congelados e reprodutíveis), dois
+  // screenshots com ray=0 e ray=1.15 (o valor do override da visita),
+  // amostragem do anel 1.15R–1.6R do disco (raio em px derivado do estado
+  // real: R = minDist/1.5, mesma projeção do diskRect do tour; câmera
+  // recuada a 5R para o anel caber na tela), luminância média LINEARIZADA
+  // (fótons somam em linear, não em sRGB). Calibração medida neste gate
+  // (SwiftShader, tier high, scale 0.25, viewport 640×640, seed 7, hold
+  // 48, 112524 px amostrados): L(ray=0)=8.96e-3, L(ray=1.15)=1.08e-2 ⇒
+  // razão = 1.207. Limiar 1.15: sob det a medida é bit-estável (variância
+  // zero run-a-run) — qualquer regressão que apague os streamers cai a
+  // ~1.00 e fica bem abaixo do limiar.
+  const coronaOut='out/qa-edu-corona';
+  fs.mkdirSync(coronaOut,{recursive:true});
+  function ringLuminance(file,geom){
+    function lin(c){c/=255;return c<=0.03928?c/12.92:Math.pow((c+0.055)/1.055,2.4);}
+    const png=PNG.sync.read(fs.readFileSync(file));
+    const cx=png.width*.5,cy=png.height*.5,r0=geom.radius*1.15,r1=geom.radius*1.6;
+    let sum=0,n=0;
+    for(let y=0;y<png.height;y++)for(let x=0;x<png.width;x++){
+      const d=Math.hypot(x+.5-cx,y+.5-cy);
+      if(d<r0||d>r1)continue;
+      const i=(y*png.width+x)*4;
+      sum+=0.2126*lin(png.data[i])+0.7152*lin(png.data[i+1])+0.0722*lin(png.data[i+2]);
+      n++;
+    }
+    return {mean:n?sum/n:0,samples:n};
+  }
+  const photon=await browser.newPage({viewport:{width:640,height:640},deviceScaleFactor:1});
+  photon.setDefaultTimeout(300000);
+  photon.on('pageerror',(e)=>errors.push('[corona] '+e.message));
+  photon.on('console',(m)=>{if(m.type()==='error')errors.push('[corona] '+m.text());});
+  await photon.goto(base+'?det=1&seed=7&hold=48&tier=high&scale=0.25');
+  await photon.waitForFunction(()=>window.__solInfo&&window.__solInfo.frame>51,null,{timeout:420000});
+  // No fit o disco tem ~295px de raio em 640×640 — o anel 1.6R cairia fora
+  // da tela. A câmera recua para 5R (ainda dentro de maxDist) e o raio em
+  // px é recalculado do ESTADO REAL pós-clamp, nunca de uma constante.
+  await photon.evaluate(()=>{const s=__solInfo.state(),R=s.minDist/1.5;__solInfo.setView(s.theta,s.phi,5*R);});
+  const f0=await photon.evaluate(()=>window.__solInfo.frame);
+  await photon.waitForFunction((f)=>window.__solInfo.frame>f+4,f0,{timeout:120000});
+  const coronaGeom=await photon.evaluate(()=>{
+    const s=__solInfo.state(),R=s.minDist/1.5,half=42*Math.PI/360;
+    return {radius:Math.tan(Math.asin(Math.min(1,R/s.camDist)))/Math.tan(half)*innerHeight*.5,w:innerWidth,h:innerHeight};
+  });
+  await photon.evaluate(()=>__solInfo.setControl('ray',0,{persist:false}));
+  await frame(photon);await frame(photon);
+  const shotRay0=path.join(coronaOut,'ray0.png');
+  await photon.screenshot({path:shotRay0});
+  await photon.evaluate(()=>__solInfo.setControl('ray',1.15,{persist:false}));
+  await frame(photon);await frame(photon);
+  const shotRay115=path.join(coronaOut,'ray115.png');
+  await photon.screenshot({path:shotRay115});
+  const lum0=ringLuminance(shotRay0,coronaGeom),lum1=ringLuminance(shotRay115,coronaGeom);
+  const coronaRatio=lum0.mean>0?lum1.mean/lum0.mean:Infinity;
+  check('coroa responde a fótons no anel 1.15R–1.6R (razão > 1.15)',
+    lum0.samples>1000&&coronaRatio>1.15,
+    'razão='+coronaRatio.toFixed(3)+' L0='+lum0.mean.toExponential(3)+' L1='+lum1.mean.toExponential(3)+
+    ' amostras='+lum0.samples+' raioDisco='+coronaGeom.radius.toFixed(1)+'px');
+  await photon.close();
 
   check('console permanece limpo',errors.length===0,errors.slice(0,3).join(' | '));
   await browser.close();browser=null;

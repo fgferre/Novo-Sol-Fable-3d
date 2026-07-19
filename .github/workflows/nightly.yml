@@ -1,0 +1,48 @@
+name: Nightly
+
+# Provas caras/informativas (PR-6 da série Museu). NADA gateia nelas: o
+# pages.yml só escuta o workflow QA — uma noite vermelha aqui não bloqueia
+# merge nem deploy, é sinal para investigar de manhã. Melhoria futura
+# anotada: abrir issue automática em falha (por ora, olhar o histórico do
+# workflow basta).
+#   1. Caminhada COMPLETA da visita em DPR3 (custo ~4× — fora do gate).
+#   2. Caminhada COMPLETA em inglês (?lang=en).
+#   3. Autoteste do runner A/B (base==head ⇒ 0 px, prova que o comparador
+#      não perdeu a sensibilidade).
+# Sequencial num job só: uma suíte SwiftShader por vez.
+on:
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Build (arquivo único)
+        run: npm run build:single
+      - name: Visita completa em DPR3
+        run: node tools/qa-edu-tour.js dist-single/index.html out/nightly-dpr3 --mode dpr3full
+      - name: Visita completa em inglês
+        run: node tools/qa-edu-tour.js dist-single/index.html out/nightly-en --mode en
+      - name: Autoteste do comparador A/B (base==head ⇒ 0 px)
+        run: node tools/qa-ab.js dist-single/index.html dist-single/index.html out/nightly-ab
+      - name: Evidência do nightly
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-evidencia
+          retention-days: 14
+          path: |
+            out/nightly-dpr3/
+            out/nightly-en/
+            out/nightly-ab/
+          if-no-files-found: ignore

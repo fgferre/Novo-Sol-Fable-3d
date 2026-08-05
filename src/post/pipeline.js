@@ -626,7 +626,11 @@ export function createPipeline(ctx){
     // ramo linear, 0.4396·V^-0.5833 acima) — o grão mantém a MESMA amplitude
     // de display de antes (~1.6/255) em vez de explodir ×13 nos pretos.
     '  float dlum = dot(color, vec3(0.3333));',
-    '  float dith = smoothstep(0.0732, 0.0049, dlum);',
+    // bordas invertidas (edge0 > edge1) são INDEFINIDAS na GLSL — em alguns
+    // drivers viram NaN, e aqui, na saída do pipeline, um pixel NaN pinta a
+    // tela. Mesma rampa, na forma definida (o gate do uKnee lá em cima já
+    // trata o caso degenerado do smoothstep; este ponto faltava).
+    '  float dith = 1.0 - smoothstep(0.0049, 0.0732, dlum);',
     '  float dslope = (dlum > 0.0031308) ? 2.2749*pow(max(dlum, 0.0), 0.58333) : 0.0774;',
     '  color += (hash12(gl_FragCoord.xy) - 0.5) * (1.6/255.0) * dith * uGrain * dslope;',
     // Achado 4 — patch numérico de QA (?colorpatch=1): quadrantes de cinza

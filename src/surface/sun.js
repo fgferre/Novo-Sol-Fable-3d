@@ -814,7 +814,11 @@ export function createSunMesh(ctx){
     // --- escurecimento + avermelhamento de limbo (lei linear, u=0.72) ---
     '  float limbU = 0.30;',   // núcleo H-alfa: u≈0.25-0.30 na literatura (bem mais suave que contínuo)
     '  color *= (1.0-limbU) + limbU*mu;',
-    '  float edge = pow(1.0-mu, 1.7);',
+    // max(...,0.0) na base: mu tem piso em 0 mas NÃO tem teto em 1 — dois
+    // vetores normalizados podem dar dot 1+ε em float, e pow de base
+    // negativa com expoente fracionário é indefinido na GLSL (NaN, que o
+    // bloom espalha). Onde 1.0-mu >= 0 o valor é o mesmo de antes.
+    '  float edge = pow(max(1.0-mu, 0.0), 1.7);',
     '  color.g *= 1.0 - edge*0.30;',
     '  color.b *= 1.0 - edge*0.50;',
     '  color *= 1.0 - edge*0.15;',
@@ -824,7 +828,8 @@ export function createSunMesh(ctx){
     // limbo; 1.30 já começava a ler como anel em monitor claro
     // no máximo solar o limbo arde forte (fonte HDR p/ o bloom do
     // glow); 1.15 + 0.85*0.0 = 1.15 exato com o ciclo desligado
-    '  color += vec3(1.0, 0.30, 0.10) * pow(1.0-mu, 3.5) * (1.15 + 0.85*uMaxK) * spic;',
+    // mesma guarda de base do `edge` acima (pow de base negativa = NaN)
+    '  color += vec3(1.0, 0.30, 0.10) * pow(max(1.0-mu, 0.0), 3.5) * (1.15 + 0.85*uMaxK) * spic;',
     // plage como fonte HDR (>1.0): é o que faz o bloom finalmente ler
     // como bloom (glow suave em volta das regiões ativas, ref-03) sem
     // tocar na luminância mediana do disco

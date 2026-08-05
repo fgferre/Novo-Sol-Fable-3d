@@ -518,7 +518,11 @@ export function createSunMesh(ctx){
     // --- estrutura baked: R=larga escala, G=filamento, B=plage.
     // De longe usa o passe calmo (o seeing borraria os feixes); de perto
     // o passe com LIC iterado, onde tudo é feito de fios varridos ---
-    '  float close = smoothstep(6.2, 3.4, uCamDist);',
+    // NOTA (auditoria do projeto Viagem): smoothstep com edge0 > edge1 é
+    // INDEFINIDO na GLSL — em alguns drivers vira NaN, e um pixel NaN sob
+    // o bloom pinta a tela inteira de branco. Forma equivalente e definida:
+    // rampa crescente invertida com 1.0 - smoothstep(menor, maior, x).
+    '  float close = 1.0 - smoothstep(3.4, 6.2, uCamDist);',
     '  float kNear = clamp(close*1.2 + 0.15, 0.0, 1.0);',
     // FERVURA contínua (feature nº1 da auditoria de movimento): o bake
     // dá a EVOLUÇÃO do conteúdo (~8Hz + crossfade), mas entre poses nada
@@ -581,7 +585,8 @@ export function createSunMesh(ctx){
     '    float fibF = licFibril(sp, fdir, uGranFreq*3.5, 0.22, t*1.3);',
     '    heat += close * fibF * 0.16;',
     // camada micro: só em zoom máximo, fios finíssimos
-    '    float closer = smoothstep(4.8, 3.5, uCamDist);',
+    // mesma correção do `close` acima: bordas invertidas = indefinido na GLSL
+    '    float closer = 1.0 - smoothstep(3.5, 4.8, uCamDist);',
     '    if (closer > 0.003){',
     '      heat += closer * licFibril(sp, fdir, uGranFreq*7.0, 0.08, t*1.6) * 0.20;',
     '    }',

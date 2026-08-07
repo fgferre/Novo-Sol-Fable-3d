@@ -250,6 +250,21 @@ function init(){
   var pendingCssW = window.innerWidth, pendingCssH = window.innerHeight;
   var pendingDpr = window.devicePixelRatio || 1;
   var lastCssW = -1, lastCssH = -1, lastPhysW = -1, lastPhysH = -1;
+  // O fit muda com a dimensão limitante do viewport. Guardamos a razão
+  // lógica mesmo quando a distância física precisa ser clampada: sem isso,
+  // portrait→landscape podia bater em minDist e o retorno a portrait
+  // reconstruía o zoom a partir do clamp, não da intenção anterior.
+  var resizeCamRatio = ctx.fitDist > 0 ? ctx.camDist / ctx.fitDist : 1;
+  var resizeTargetRatio = ctx.fitDist > 0 ? ctx.targetCamDist / ctx.fitDist : 1;
+  var resizeCamBound = 0, resizeTargetBound = 0; // -1=min, 0=livre, 1=max
+  function fitRatioForResize(value, fit, stored, bound){
+    var eps = 1e-4;
+    if (bound < 0 && value <= minDist + eps) return stored;
+    if (bound > 0 && value >= maxDist - eps) return stored;
+    return fit > 0 ? value / fit : stored;
+  }
+  function clampCameraDistance(value){ return Math.max(minDist, Math.min(maxDist, value)); }
+  function cameraBoundFor(value){ return value < minDist ? -1 : (value > maxDist ? 1 : 0); }
   ctx.displayDirty = false;
   ctx.displayApplies = 0;    // passes de aplicação consumidos (QA: ≤1/frame)
   ctx.displayReallocs = 0;   // realocações de attachments (QA: 0 idempotente)
@@ -299,10 +314,15 @@ function init(){
       camera.aspect = cssW / cssH;
       camera.updateProjectionMatrix();
       var newFit = computeFitDist();
-      if (ctx.fitDist > 0){ ctx.camDist *= newFit / ctx.fitDist; ctx.targetCamDist *= newFit / ctx.fitDist; }
+      resizeCamRatio = fitRatioForResize(ctx.camDist, ctx.fitDist, resizeCamRatio, resizeCamBound);
+      resizeTargetRatio = fitRatioForResize(ctx.targetCamDist, ctx.fitDist, resizeTargetRatio, resizeTargetBound);
+      var scaledCamDist = resizeCamRatio * newFit;
+      var scaledTargetCamDist = resizeTargetRatio * newFit;
       ctx.fitDist = newFit;
-      ctx.camDist = Math.max(minDist, Math.min(maxDist, ctx.camDist));
-      ctx.targetCamDist = Math.max(minDist, Math.min(maxDist, ctx.targetCamDist));
+      ctx.camDist = clampCameraDistance(scaledCamDist);
+      ctx.targetCamDist = clampCameraDistance(scaledTargetCamDist);
+      resizeCamBound = cameraBoundFor(scaledCamDist);
+      resizeTargetBound = cameraBoundFor(scaledTargetCamDist);
       lastCssW = cssW; lastCssH = cssH;
       updateCamera();
     }

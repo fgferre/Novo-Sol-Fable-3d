@@ -171,9 +171,16 @@ export function createPipeline(ctx){
     '  gl_FragColor = vec4(texture2D(tDiffuse, vUv).rgb, 1.0);',
     '}'
   ].join('\n');
+  // RGB preserva exatamente o dual-Kawase aditivo (src*alpha + dst). Alpha,
+  // porém, fica no valor já gravado pelo downsample em vez de somar 1 a cada
+  // mip: hoje o composite lê só RGB, mas o alvo continua válido para captura,
+  // inspeção e futuros consumidores RGBA.
   var upsampleMaterial = new THREE.ShaderMaterial({
     uniforms: upsampleUniforms, vertexShader: quadVertex, fragmentShader: upsampleFragment,
-    transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, depthTest:false
+    transparent:true, blending:THREE.CustomBlending,
+    blendEquation:THREE.AddEquation, blendSrc:THREE.SrcAlphaFactor, blendDst:THREE.OneFactor,
+    blendEquationAlpha:THREE.AddEquation, blendSrcAlpha:THREE.ZeroFactor, blendDstAlpha:THREE.OneFactor,
+    depthWrite:false, depthTest:false
   });
   var upsampleScene = makeFullscreenScene(upsampleMaterial);
 

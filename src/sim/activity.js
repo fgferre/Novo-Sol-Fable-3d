@@ -320,8 +320,12 @@ export function createActivity(ctx){
       // FASE 3: polSign (flip de Hale) e cycleAmpK (envelope de
       // atividade do ciclo) valem 1 com o ciclo desligado — o produto
       // por 1.0 é bit-exato, o caminho default não muda
-      ps.lead.w =  ps.baseQ * ps.polSign * Math.max(env, 0.03) * ctx.cycleAmpK;
-      ps.foll.w = -ps.baseQ * ps.polSign * 0.85 * Math.max(env, 0.03) * ctx.cycleAmpK;
+      // A posição nova é sorteada na fase morta (x>=0.90). O piso antigo
+      // mantinha 3% de carga nesse instante e teleportava um campo ainda
+      // observável pela cromosfera/coroa. O envelope já chega suavemente a
+      // zero; respeitá-lo torna a relocação eletricamente invisível.
+      ps.lead.w =  ps.baseQ * ps.polSign * env * ctx.cycleAmpK;
+      ps.foll.w = -ps.baseQ * ps.polSign * 0.85 * env * ctx.cycleAmpK;
       // MACRO_SLOW: a advecção do sim desacelera junto (SIM_DT) — as
       // cargas derivam na mesma escala para as manchas não descolarem
       // da plage (família do bug 4 da auditoria de movimento)

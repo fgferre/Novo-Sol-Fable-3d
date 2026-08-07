@@ -254,6 +254,25 @@ export function createSolInfo(ctx){
                     pol: ps.polSign, generation:ps.eduGeneration };
         });
       };
+      // QA do ciclo de vida das regiões magnéticas: fotografa a mesma fase
+      // usada por updateActiveRegions e permite posicionar um par sem esperar
+      // minutos. A API só existe no adaptador de diagnóstico __solInfo.
+      window.__solInfo.regionLife = function(){
+        var now = ctx.elapsed + ctx.cycleWarp;
+        return pairStates.map(function(ps){
+          var x = ((now + ps.phase) % ps.period) / ps.period;
+          return { x:x, env:lifeEnvelope(x), w:ps.lead.w, baseQ:ps.baseQ,
+                   generation:ps.eduGeneration, dir:[ps.lead.x,ps.lead.y,ps.lead.z] };
+        });
+      };
+      window.__solInfo.setRegionLife = function(i, x){
+        var ps = pairStates[Math.max(0,Math.min(pairStates.length-1,i|0))];
+        x = ((Number(x) % 1) + 1) % 1;
+        var now = ctx.elapsed + ctx.cycleWarp;
+        ps.phase = ((x*ps.period - now) % ps.period + ps.period) % ps.period;
+        if (x < 0.90) ps.reborn = false;
+        return window.__solInfo.regionLife()[Math.max(0,Math.min(pairStates.length-1,i|0))];
+      };
       // Adaptador de QA para a MESMA região magnética que ancora o grupo
       // educativo de manchas. Não lê os spots virtuais do shader.
       // PR-7: consumidor da fonte única (sim/phenomena.js) — mesma conta,
